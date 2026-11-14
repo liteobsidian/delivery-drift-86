@@ -6,7 +6,7 @@
 
 ## Играть
 
-Открой GitHub Pages деплой этого репозитория (или собери локально — см. ниже). Игра рассчитана на iPhone в Chrome, но отлично работает и на десктопе.
+Открой [Delivery Drift 86](https://drift-game.liteobsidian.ru/) или собери игру локально. Игра рассчитана на iPhone в Chrome, но отлично работает и на десктопе.
 
 ## Управление
 
@@ -50,7 +50,7 @@
 ## Разработка
 
 ```bash
-npm install
+npm ci
 npm run dev        # dev-сервер с HMR
 npm run build      # production-сборка в dist/
 npm run check      # проверка типов
@@ -58,9 +58,6 @@ npm run check      # проверка типов
 
 ## CI / CD
 
-GitHub Actions (`.github/workflows/ci.yml`):
+На pull request в `main` и push в `main` GitHub Actions проверяет типы, собирает игру и запускает браузерную проверку рендера и управления.
 
-- **CI** — на каждый push: установка зависимостей, проверка типов и сборка.
-- **Pages** — на push в `main`: деплой на GitHub Pages.
-
-> Для работы Pages включи один раз: **Settings → Pages → Source = GitHub Actions**.
+После успешной проверки push в `main` готовая сборка публикуется на [IT-Garage](https://drift-game.liteobsidian.ru/) по SFTP. GitHub Actions использует секрет репозитория `DRIFT_GAME_SFTP_KEY` и сверяет файлы опубликованной версии по HTTPS. Та же сборка публикуется на [GitHub Pages](https://liteobsidian.github.io/delivery-drift-86/).

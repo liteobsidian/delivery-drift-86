@@ -6,21 +6,28 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    name: Typecheck & Build
+    name: Verify game
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Typecheck
         run: npm run check
@@ -28,15 +35,28 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Install Chromium for the smoke test
+        run: npx playwright install --with-deps --only-shell chromium
+
+      - name: Check render and gameplay in Chromium
+        run: npm run verify
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist
+          if-no-files-found: error
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
 
   pages:
     name: Deploy to GitHub Pages
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -46,28 +66,54 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build
-        run: npm run build
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  deploy-drift:
+    name: Deploy to IT-Garage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: drift-game-deploy
+      cancel-in-progress: false
+    environment:
+      name: drift-game
+      url: https://drift-game.liteobsidian.ru
+    steps:
+      - name: Checkout deploy script
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download verified build
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: ${{ runner.temp }}/drift-dist
+
+      - name: Publish and verify the game over HTTPS
+        env:
+          DRIFT_GAME_SFTP_KEY: ${{ secrets.DRIFT_GAME_SFTP_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DRIFT_GAME_SFTP_KEY:-}" ]]; then
+            echo "::error::Repository Actions secret DRIFT_GAME_SFTP_KEY is missing."
+            exit 1
+          fi
+
+          # A slower older build must not replace a newer main revision.
+          main_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$main_sha" != "$GITHUB_SHA" ]]; then
+            echo "Skipping publication of a superseded revision."
+            exit 0
+          fi
+
+          umask 077
+          key_file="$(mktemp "$RUNNER_TEMP/drift-game-sftp-key.XXXXXX")"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s\n' "$DRIFT_GAME_SFTP_KEY" > "$key_file"
+          unset DRIFT_GAME_SFTP_KEY
+          bash scripts/deploy-drift.sh "$RUNNER_TEMP/drift-dist" "$key_file"
