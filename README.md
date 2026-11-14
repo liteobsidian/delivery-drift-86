@@ -60,4 +60,4 @@ npm run check      # проверка типов
 
 На pull request в `main` и push в `main` GitHub Actions проверяет типы, собирает игру и запускает браузерную проверку рендера и управления.
 
-После успешной проверки push в `main` готовая сборка публикуется на [IT-Garage](https://drift-game.liteobsidian.ru/) по SFTP. GitHub Actions использует секрет репозитория `DRIFT_GAME_SFTP_KEY` и сверяет файлы опубликованной версии по HTTPS. Та же сборка публикуется на [GitHub Pages](https://liteobsidian.github.io/delivery-drift-86/).
+После успешной проверки push в `main` готовая сборка публикуется на [IT-Garage](https://drift-game.liteobsidian.ru/) по SFTP. GitHub Actions использует секрет репозитория `DRIFT_GAME_SFTP_KEY` и сверяет файлы опубликованной версии по HTTPS.
