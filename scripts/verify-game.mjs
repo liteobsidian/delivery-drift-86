@@ -180,26 +180,33 @@ await page.screenshot({ path: join(SHOTS, "01-title.png") });
 await page.keyboard.press("Space");
 await page.waitForTimeout(400);
 
-// 3) Direction assertions: pressing W must move forward (moving in the z-decreasing direction), pressing D must move right (x increasing)
-async function playerPos() {
-  return page.evaluate(() => window.__gameProbe ? window.__gameProbe() : null);
-}
-async function deltaAfter(key, ms = 500) {
-  const before = await playerPos();
-  if (!before) return null;
+// 3) Check direction without assuming a fixed frame rate on software-rendered CI.
+async function checkDirection(key, axis, direction) {
+  const before = await page.evaluate(() => window.__gameProbe());
   await page.keyboard.down(key);
-  await page.waitForTimeout(ms);
-  await page.keyboard.up(key);
-  const after = await playerPos();
-  return after ? { dx: after.x - before.x, dz: after.z - before.z } : null;
+  try {
+    await page.waitForFunction(
+      ({ start, axis, direction }) => (window.__gameProbe()[axis] - start) * direction > 0.05,
+      { start: before[axis], axis, direction },
+      { timeout: 4000 },
+    );
+    return true;
+  } catch (error) {
+    if (error.name !== "TimeoutError") throw error;
+    return false;
+  } finally {
+    await page.keyboard.up(key);
+  }
 }
 
 const probe = await page.evaluate(() => !!window.__gameProbe);
 if (probe) {
-  const dW = await deltaAfter("KeyW");
-  if (dW && dW.dz >= -0.05) fail(`W did not move forward (dz=${dW?.dz.toFixed(3)}) — direction mapping looks reversed`);
-  const dD = await deltaAfter("KeyD");
-  if (dD && dD.dx <= 0.05) fail(`D did not move right (dx=${dD?.dx.toFixed(3)}) — direction mapping looks reversed`);
+  if (!await checkDirection("KeyW", "z", -1)) fail("W did not move forward");
+  // Steering changes heading while gas keeps the car moving.
+  await page.keyboard.down("KeyW");
+  const steeredRight = await checkDirection("KeyD", "x", 1);
+  await page.keyboard.up("KeyW");
+  if (!steeredRight) fail("D did not move right");
 } else {
   console.warn("WARN: window.__gameProbe not injected, skipping direction assertions (expose a player-coordinate probe in src/game/boot.ts)");
 }
