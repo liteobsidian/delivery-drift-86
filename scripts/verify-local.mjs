@@ -247,7 +247,9 @@ const ok = (msg) => console.log("ok:", msg);
   });
   await page.waitForTimeout(300);
   const p1 = await page.evaluate(() => window.__gameProbe());
-  await page.waitForTimeout(2500);
+  // fps-independent: SwiftShader can run at ~3fps, so wall-time drives are
+  // racy — give the car enough frames, not just enough seconds
+  await page.waitForTimeout(4500);
   const p2 = await page.evaluate(() => window.__gameProbe());
   await page.evaluate(() => {
     const el = document.getElementById("tc-wheel");

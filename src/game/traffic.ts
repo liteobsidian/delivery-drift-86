@@ -78,8 +78,41 @@ export class Traffic {
   /** swap placeholder boxes for loaded 3D car models (nose must face -z) */
   setCarModels(models: THREE.Group[]): void {
     if (models.length === 0) return;
+    // unlit glow quads: cars must read at night from any distance
+    const headMat = new THREE.MeshBasicMaterial({ color: 0xfff3c0 });
+    const tailMat = new THREE.MeshBasicMaterial({ color: 0xff2d22 });
+    const headGeo = new THREE.PlaneGeometry(0.4, 0.26);
+    const tailGeo = new THREE.PlaneGeometry(0.34, 0.2);
+    // shared model materials: give the body a faint self-glow so cars are
+    // visible from the side too, not only head-on (materials are shared
+    // between clones, so each is lifted exactly once)
+    const lifted = new Set<THREE.Material>();
+    const lift = (o: THREE.Object3D) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.material) return;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        if (lifted.has(m)) continue;
+        lifted.add(m);
+        const std = m as THREE.MeshStandardMaterial;
+        if (std.emissive && std.color) {
+          std.emissive.copy(std.color).multiplyScalar(0.28);
+          std.emissiveIntensity = 1;
+        }
+      }
+    };
+    models.forEach((m) => m.traverse(lift));
     this.cars.forEach((c, i) => {
       const clone = models[i % models.length].clone(true);
+      // headlights (nose at local -z) and taillights (+z)
+      for (const s of [-1, 1]) {
+        const h = new THREE.Mesh(headGeo, headMat);
+        h.position.set(s * 0.62, 0.75, -2.02);
+        h.rotation.y = Math.PI;
+        clone.add(h);
+        const t = new THREE.Mesh(tailGeo, tailMat);
+        t.position.set(s * 0.62, 0.75, 2.0);
+        clone.add(t);
+      }
       c.mesh.clear();
       c.mesh.add(clone);
     });
@@ -120,12 +153,17 @@ export class Traffic {
         if (dToStop > -1 && dToStop < 12) wantSpeed = 0;
         void dist;
       }
-      // player proximity: light braking only — darting in front of a car
-      // at speed means a genuine collision (closing speed is what hurts)
+      // player in the same lane ahead -> brake for a red-style stop; but if
+      // the player is beside/behind, keep going: ramming must actually collide
       const dx = px - c.x;
       const dz = pz - c.z;
       const d2 = dx * dx + dz * dz;
-      if (d2 < 64) wantSpeed = Math.min(wantSpeed, Math.sqrt(d2) * 1.1);
+      if (d2 < 64) {
+        const ahead = c.axis === 0 ? dx * c.dir : dz * c.dir;
+        const lateral = c.axis === 0 ? dz : dx;
+        if (ahead > -1 && Math.abs(lateral) < 3.4)
+          wantSpeed = Math.min(wantSpeed, Math.sqrt(d2) * 1.1);
+      }
       if (
         c.nearCooldown === 0 &&
         playerSpeed > 12 &&
@@ -152,7 +190,7 @@ export class Traffic {
       const cdx = c.x - px;
       const cdz = c.z - pz;
       const cd = Math.hypot(cdx, cdz);
-      if (cd < 2.6 && c.hitCooldown === 0) {
+      if (cd < 3.1 && c.hitCooldown === 0) {
         const cvx = c.axis === 0 ? c.dir * wantSpeed : 0;
         const cvz = c.axis === 1 ? c.dir * wantSpeed : 0;
         const closing = Math.hypot(pvx - cvx, pvz - cvz);
@@ -161,7 +199,7 @@ export class Traffic {
           hit = Math.max(hit, closing);
           // push the traffic car out so it doesn't grind inside the player
           if (cd > 0.001) {
-            const push = 2.6 - cd + 0.05;
+            const push = 3.1 - cd + 0.05;
             c.x += (cdx / cd) * push;
             c.z += (cdz / cd) * push;
           }

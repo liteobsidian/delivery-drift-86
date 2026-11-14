@@ -57,6 +57,9 @@ export interface LightVisual {
   state: number; // 0: x-axis green, 1: x-axis red
   timer: number;
   phaseId: number;
+  /** glowing stop-line strips on the road, [+x, -x, +z, -z]; x entries follow
+   * the x-road lamp state, z entries the z-road state */
+  strips: THREE.MeshBasicMaterial[];
   /** per-head lamp materials, index 0 = red, 1 = yellow, 2 = green */
   lampsX: THREE.MeshStandardMaterial[];
   lampsZ: THREE.MeshStandardMaterial[];
@@ -243,13 +246,37 @@ export class World {
           ? 2
           : 1
         : 0;
+      const LAMP_COLORS = [0xff2233, 0xffcc22, 0x22ff66];
       for (let k = 0; k < 3; k++) {
         const mx = l.lampsX[k];
         const mz = l.lampsZ[k];
-        // lit lens blazes, unlit ones stay as dim colored glass
-        mx.emissiveIntensity = k === xLamp ? 3.4 : 0.22;
-        mz.emissiveIntensity = k === zLamp ? 3.4 : 0.22;
+        // one lens blazes in its color; the other two are dark glass —
+        // a traffic light must never read as "all colors at once"
+        const xOn = k === xLamp;
+        const zOn = k === zLamp;
+        mx.color.setHex(xOn ? LAMP_COLORS[k] : 0x14161c);
+        mx.emissive.setHex(LAMP_COLORS[k]);
+        mx.emissiveIntensity = xOn ? 5.2 : 0;
+        mz.color.setHex(zOn ? LAMP_COLORS[k] : 0x14161c);
+        mz.emissive.setHex(LAMP_COLORS[k]);
+        mz.emissiveIntensity = zOn ? 5.2 : 0;
       }
+      // paint the stop line with the active color; green = strip off
+      const paint = (lamp: number, mat: THREE.MeshBasicMaterial) => {
+        if (lamp === 0) {
+          mat.color.setHex(0xff2a2a);
+          mat.opacity = 0.62;
+        } else if (lamp === 1) {
+          mat.color.setHex(0xffc22a);
+          mat.opacity = 0.62;
+        } else {
+          mat.opacity = 0;
+        }
+      };
+      paint(xLamp, l.strips[0]);
+      paint(xLamp, l.strips[1]);
+      paint(zLamp, l.strips[2]);
+      paint(zLamp, l.strips[3]);
     }
     // puddle shimmer
     for (let i = 0; i < this.puddleMeshes.length; i++) {
@@ -1329,8 +1356,10 @@ export class World {
       const z = vertical ? along : c;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, 0.02, z);
-      // ramp rises opposite to the travel direction so cars launch off the top
-      const angle = vertical ? Math.PI / 2 : 0;
+      // geometry runs 7m along local z, 6.4m wide along local x — the slope
+      // must lie ALONG the travel direction, not across the road
+      // vertical road: travel along z -> rotY 0/PI; horizontal: rotY ±PI/2
+      const angle = vertical ? 0 : Math.PI / 2;
       const rotY = rng() < 0.5 ? angle : angle + Math.PI;
       mesh.rotation.y = rotY;
       g.add(mesh);
@@ -1340,9 +1369,10 @@ export class World {
       this.ramps.push({
         x,
         z,
-        w: vertical ? 7 : 13,
-        h: vertical ? 13 : 7,
-        angle,
+        // AABB: along-travel extent 7m, across-travel extent 6.4m
+        w: vertical ? 6.6 : 7,
+        h: vertical ? 7 : 6.6,
+        angle: rotY,
         dx,
         dz,
       });
@@ -1427,12 +1457,37 @@ export class World {
           cz + ROAD_W / 2 + 1.2
         );
         g.add(headZ.group);
+        // glowing stop-line strips on each approach: red/yellow paint the road
+        const stop = ROAD_W / 2 + 1.6;
+        const stripGeo = new THREE.PlaneGeometry(ROAD_W - 2, 1.5);
+        const strips: THREE.MeshBasicMaterial[] = [];
+        const stripDefs: [number, number, number][] = [
+          [cx + stop, cz, Math.PI / 2],
+          [cx - stop, cz, Math.PI / 2],
+          [cx, cz + stop, 0],
+          [cx, cz - stop, 0],
+        ];
+        for (const [sx, sz, rot] of stripDefs) {
+          const sm = new THREE.MeshBasicMaterial({
+            color: 0xff2a2a,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+          });
+          const strip = new THREE.Mesh(stripGeo, sm);
+          strip.rotation.x = -Math.PI / 2;
+          strip.rotation.z = rot;
+          strip.position.set(sx, 0.04, sz);
+          g.add(strip);
+          strips.push(sm);
+        }
         const light: LightVisual = {
           cx,
           cz,
           state: 0,
           timer: ((i + j) * 1.7) % ((LIGHT_CYCLE + LIGHT_YELLOW) * 2),
           phaseId: 0,
+          strips,
           lampsX: headX.mats,
           lampsZ: headZ.mats,
         };
