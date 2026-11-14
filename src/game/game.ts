@@ -217,6 +217,7 @@ export class Game {
       () => ({ x: this.car.pos.x, y: this.car.pos.y, z: this.car.pos.z });
     // verification hook (not user-facing)
     (window as unknown as { __gameDebug: unknown }).__gameDebug = {
+      scene: this.scene,
       teleport: (x: number, z: number, heading?: number) => {
         this.car.pos.set(x, 0, z);
         this.car.vel.set(0, 0, 0);

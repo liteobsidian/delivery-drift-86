@@ -76,6 +76,17 @@ export class World {
   private puddleMeshes: THREE.Mesh[] = [];
   private heroSpots: { x: number; z: number; w: number; h: number; d: number }[] =
     [];
+  /** AABBs reserved for real mid-rise models — no neon/signs placed there */
+  private heroAABBs: AABB[] = [];
+  /** tall buildings that get rooftop billboards */
+  private roofSpots: { x: number; z: number; w: number; h: number; d: number }[] =
+    [];
+  private billboardTex: THREE.Texture[] = [];
+  private flickerMats: THREE.MeshBasicMaterial[] = [];
+  private chevronMats: THREE.Matrix4[] = [];
+  /** building heights aligned with this.buildings (AABBs carry no height) */
+  private buildingHeights: number[] = [];
+  private flickerT = 0;
   private marker = new THREE.Group();
   private markerRing!: THREE.Mesh;
   private time = 0;
@@ -85,6 +96,10 @@ export class World {
     this.group.add(this.buildGround());
     this.group.add(this.buildBuildings());
     this.group.add(this.buildStreetProps());
+    this.group.add(this.buildBladeSigns());
+    this.group.add(this.buildBillboards());
+    this.group.add(this.buildNeonStrips());
+    this.group.add(this.buildRoadSigns());
     this.group.add(this.buildPuddles());
     this.group.add(this.buildRamps());
     this.group.add(this.buildLights());
@@ -246,6 +261,20 @@ export class World {
     this.markerRing.rotation.z += dt * 1.5;
     const s = 1 + Math.sin(this.time * 4) * 0.12;
     this.markerRing.scale.set(s, s, 1);
+    // rooftop billboards scroll their text
+    for (const t of this.billboardTex) {
+      t.offset.x = (t.offset.x + dt * 0.018) % 1;
+    }
+    // neon signs buzz and occasionally drop out
+    this.flickerT += dt;
+    for (let i = 0; i < this.flickerMats.length; i++) {
+      const m = this.flickerMats[i];
+      const base = m.userData.base as THREE.Color;
+      const t = this.flickerT;
+      const buzz = 0.82 + 0.18 * Math.sin(t * 29 + i * 7.3) * Math.sin(t * 7.1 + i);
+      const gate = Math.sin(t * 1.4 + i * 2.6) > -0.985 ? 1 : 0.08;
+      m.color.copy(base).multiplyScalar(buzz * gate);
+    }
   }
 
   // ---------- builders ----------
@@ -400,9 +429,47 @@ export class World {
     }
     g.setLineDash([]);
 
-    // enforced intersections: crosswalk + stop lines
+    // enforced intersections: crosswalk + stop lines + lane arrows
     const stop = ROAD_W / 2 + 1.6;
     g.fillStyle = "#9aa2b5";
+    const drawArrow = (
+      x: number,
+      z: number,
+      angle: number,
+      turn: 0 | 1 | -1
+    ) => {
+      g.save();
+      g.translate(u(x), u(z));
+      g.rotate(angle);
+      g.fillStyle = "#aab2c4";
+      const L = w(2.7);
+      const W = w(0.75);
+      if (turn === 0) {
+        g.fillRect(-L / 2, -W / 2, L * 0.62, W);
+        g.beginPath();
+        g.moveTo(L * 0.08, -W * 1.2);
+        g.lineTo(L * 0.56, 0);
+        g.lineTo(L * 0.08, W * 1.2);
+        g.closePath();
+        g.fill();
+      } else {
+        // bent tail + head turning left/right
+        g.fillRect(-L / 2, -W / 2, L * 0.42, W);
+        g.save();
+        g.translate(-L * 0.08, 0);
+        g.rotate(turn * 1.1);
+        g.fillRect(0, -W / 2, L * 0.34, W);
+        g.beginPath();
+        g.moveTo(L * 0.26, -W * 1.2);
+        g.lineTo(L * 0.62, 0);
+        g.lineTo(L * 0.26, W * 1.2);
+        g.closePath();
+        g.fill();
+        g.restore();
+      }
+      g.restore();
+    };
+    let arrowK = 0;
     for (let i = 0; i < GRID_N; i += 2) {
       for (let j = 0; j < GRID_N; j += 2) {
         const cx = -WORLD_HALF + i * CELL;
@@ -419,6 +486,18 @@ export class World {
         g.fillRect(u(cx + stop - 0.5), u(cz - ROAD_W / 2 + 1), w(1), w(ROAD_W - 2));
         g.fillRect(u(cx - ROAD_W / 2 + 1), u(cz - stop - 0.5), w(ROAD_W - 2), w(1));
         g.fillRect(u(cx - ROAD_W / 2 + 1), u(cz + stop - 0.5), w(ROAD_W - 2), w(1));
+        // lane arrows before the stop lines (one straight, one turn)
+        arrowK++;
+        const turnDir = arrowK % 2 === 0 ? (1 as const) : (-1 as const);
+        const ad = stop + 3.4;
+        drawArrow(cx + ad, cz - 3.3, Math.PI, 0);
+        drawArrow(cx + ad, cz + 3.3, Math.PI, turnDir);
+        drawArrow(cx - ad, cz - 3.3, 0, turnDir);
+        drawArrow(cx - ad, cz + 3.3, 0, 0);
+        drawArrow(cx - 3.3, cz + ad, -Math.PI / 2, 0);
+        drawArrow(cx + 3.3, cz + ad, -Math.PI / 2, turnDir);
+        drawArrow(cx - 3.3, cz - ad, Math.PI / 2, turnDir);
+        drawArrow(cx + 3.3, cz - ad, Math.PI / 2, 0);
       }
     }
 
@@ -502,6 +581,7 @@ export class World {
             minZ: z - d / 2,
             maxZ: z + d / 2,
           });
+          this.buildingHeights.push(h);
         }
       }
     }
@@ -514,6 +594,12 @@ export class World {
       if (i % 5 === 2) {
         // reserve this spot for a real mid-rise model (dropped in when assets load)
         this.heroSpots.push(p);
+        this.heroAABBs.push({
+          minX: p.x - p.w / 2,
+          maxX: p.x + p.w / 2,
+          minZ: p.z - p.d / 2,
+          maxZ: p.z + p.d / 2,
+        });
         m.compose(
           new THREE.Vector3(p.x, -60, p.z),
           q,
@@ -531,6 +617,7 @@ export class World {
       const shade = 0.85 + rng() * 0.35;
       col.setRGB(shade, shade, shade * 1.08);
       inst.setColorAt(i, col);
+      if (p.h > 38) this.roofSpots.push(p);
     });
     inst.castShadow = false;
     inst.receiveShadow = false;
@@ -679,6 +766,473 @@ export class World {
       }
       g.stroke();
     }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  // ---------- city dressing: neon / signs / road signs ----------
+
+  private static readonly NEON = [0xff2d95, 0x00e5ff, 0x22ff88, 0xffd24a, 0xb14aff];
+
+  private isHeroSpot(b: AABB): boolean {
+    for (const h of this.heroAABBs)
+      if (b.minX === h.minX && b.minZ === h.minZ) return true;
+    return false;
+  }
+
+  /** stroke-cluster glyphs, drawn by hand so no font/CJK support is needed */
+  private drawGlyphStrokes(
+    g: CanvasRenderingContext2D,
+    rng: () => number,
+    x: number,
+    y: number,
+    w: number,
+    h: number
+  ): void {
+    g.save();
+    g.translate(x, y);
+    g.lineWidth = Math.max(2, w * 0.09);
+    g.lineCap = "round";
+    const cols = Math.max(1, Math.round(w / 26));
+    for (let c = 0; c < cols; c++) {
+      const cw = w / cols;
+      const ox = c * cw + cw * 0.18;
+      const iw = cw * 0.64;
+      const n = 2 + Math.floor(rng() * 3);
+      for (let k = 0; k < n; k++) {
+        const yy = h * (0.12 + 0.76 * rng());
+        g.beginPath();
+        g.moveTo(ox, yy);
+        g.lineTo(ox + iw * (0.5 + rng() * 0.5), yy);
+        g.stroke();
+        if (rng() < 0.65) {
+          const xx = ox + iw * rng();
+          g.beginPath();
+          g.moveTo(xx, yy + 2);
+          g.lineTo(xx, yy + h * (0.1 + rng() * 0.18));
+          g.stroke();
+        }
+      }
+    }
+    g.restore();
+  }
+
+  /** vertical blade sign face (128x256) */
+  private makeBladeTexture(kind: number): THREE.CanvasTexture {
+    const cv = document.createElement("canvas");
+    cv.width = 128;
+    cv.height = 256;
+    const g = cv.getContext("2d")!;
+    const rng = mulberry32(6000 + kind * 77);
+    g.strokeStyle = "#ffffff";
+    g.fillStyle = "#ffffff";
+    // rounded frame
+    g.lineWidth = 5;
+    g.beginPath();
+    g.roundRect(7, 7, 114, 242, 14);
+    g.stroke();
+    if (kind === 0) {
+      // steaming bowl
+      g.beginPath();
+      g.arc(64, 150, 30, 0, Math.PI);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(30, 150);
+      g.lineTo(98, 150);
+      g.stroke();
+      for (const sx of [-16, 0, 16]) {
+        g.beginPath();
+        g.moveTo(64 + sx, 128);
+        g.quadraticCurveTo(64 + sx + 8, 108, 64 + sx, 88);
+        g.stroke();
+      }
+      g.beginPath();
+      g.moveTo(42, 108);
+      g.lineTo(86, 108);
+      g.stroke();
+    } else if (kind === 1) {
+      // bottle
+      g.beginPath();
+      g.moveTo(56, 60);
+    g.lineTo(56, 96);
+        g.lineTo(44, 116);
+        g.lineTo(44, 200);
+        g.lineTo(84, 200);
+        g.lineTo(84, 116);
+        g.lineTo(72, 96);
+        g.lineTo(72, 60);
+        g.closePath();
+        g.stroke();
+      g.beginPath();
+      g.moveTo(44, 150);
+      g.lineTo(84, 150);
+      g.stroke();
+    } else if (kind === 2) {
+      g.font = "900 64px sans-serif";
+      g.textAlign = "center";
+      g.fillText("24H", 64, 128);
+      g.font = "900 34px sans-serif";
+      g.fillText("OPEN", 64, 178);
+    } else {
+      // music note
+      g.beginPath();
+      g.ellipse(52, 186, 16, 12, -0.3, 0, Math.PI * 2);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(66, 182);
+      g.lineTo(66, 84);
+      g.lineTo(96, 96);
+      g.stroke();
+    }
+    this.drawGlyphStrokes(g, rng, 24, 208, 80, 36);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  /** projecting vertical neon signs on building walls, plus a few flickering ones */
+  private buildBladeSigns(): THREE.Group {
+    const g = new THREE.Group();
+    const rng = mulberry32(80808);
+    const geo = new THREE.PlaneGeometry(1.15, 3.6);
+    const kinds = [0, 1, 2, 3].map((k) => this.makeBladeTexture(k));
+    const perKind: THREE.Matrix4[][] = [[], [], [], []];
+    const placements: { x: number; z: number; ry: number; y: number }[] = [];
+    for (const b of this.buildings) {
+      if (this.isHeroSpot(b) || rng() < 0.42) continue;
+      const cx = (b.minX + b.maxX) / 2;
+      const cz = (b.minZ + b.maxZ) / 2;
+      const cands = [
+        { d: this.distToLine(b.minX), x: b.minX - 0.5, z: cz, ry: -Math.PI / 2 },
+        { d: this.distToLine(b.maxX), x: b.maxX + 0.5, z: cz, ry: Math.PI / 2 },
+        { d: this.distToLine(b.minZ), x: cx, z: b.minZ - 0.5, ry: Math.PI },
+        { d: this.distToLine(b.maxZ), x: cx, z: b.maxZ + 0.5, ry: 0 },
+      ];
+      cands.sort((a, bb) => a.d - bb.d);
+      const c = cands[0];
+      if (c.d > 11) continue;
+      placements.push({ x: c.x, z: c.z, ry: c.ry, y: 3.4 + rng() * 4.6 });
+    }
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const eul = new THREE.Euler();
+    const col = new THREE.Color();
+    for (const p of placements) {
+      const k = Math.floor(rng() * 4);
+      eul.set(0, p.ry, 0);
+      q.setFromEuler(eul);
+      m.compose(new THREE.Vector3(p.x, p.y, p.z), q, new THREE.Vector3(1, 1, 1));
+      perKind[k].push(m.clone());
+    }
+    for (let k = 0; k < 4; k++) {
+      const list = perKind[k];
+      if (!list.length) continue;
+      const mat = new THREE.MeshBasicMaterial({
+        map: kinds[k],
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const inst = new THREE.InstancedMesh(geo, mat, list.length);
+      list.forEach((mm, i) => {
+        inst.setMatrixAt(i, mm);
+        col.setHex(World.NEON[Math.floor(rng() * World.NEON.length)]);
+        inst.setColorAt(i, col);
+      });
+      g.add(inst);
+    }
+    // individually flickering signs
+    for (let i = 0; i < 5 && i < placements.length; i++) {
+      const p = placements[Math.floor(rng() * placements.length)];
+      const kind = Math.floor(rng() * 4);
+      const base = new THREE.Color(
+        World.NEON[Math.floor(rng() * World.NEON.length)]
+      );
+      const mat = new THREE.MeshBasicMaterial({
+        map: kinds[kind],
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        color: base.clone(),
+      });
+      mat.userData.base = base;
+      const sign = new THREE.Mesh(geo, mat);
+      sign.position.set(p.x, p.y + 0.4, p.z);
+      sign.rotation.y = p.ry;
+      g.add(sign);
+      this.flickerMats.push(mat);
+    }
+    return g;
+  }
+
+  /** scrolling text texture for rooftop billboards */
+  private makeBillboardTexture(seed: number): THREE.CanvasTexture {
+    const cv = document.createElement("canvas");
+    cv.width = 256;
+    cv.height = 128;
+    const g = cv.getContext("2d")!;
+    const rng = mulberry32(seed);
+    g.fillStyle = "#0a0616";
+    g.fillRect(0, 0, 256, 128);
+    g.strokeStyle = "#ffffff";
+    g.fillStyle = "#ffffff";
+    this.drawGlyphStrokes(g, rng, 10, 14, 236, 44);
+    g.font = "900 30px sans-serif";
+    g.textAlign = "center";
+    g.fillText(seed % 2 ? "DRIFT 86" : "NIGHT CITY", 128, 96);
+    g.strokeRect(4, 4, 248, 120);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    return tex;
+  }
+
+  /** bright rooftop billboards on the tallest buildings */
+  private buildBillboards(): THREE.Group {
+    const g = new THREE.Group();
+    const rng = mulberry32(515151);
+    const texA = this.makeBillboardTexture(11);
+    const texB = this.makeBillboardTexture(22);
+    this.billboardTex.push(texA, texB);
+    const boardGeo = new THREE.PlaneGeometry(9, 4.5);
+    const legGeo = new THREE.BoxGeometry(0.25, 2.6, 0.25);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x2a3040 });
+    const spots = [...this.roofSpots].sort(() => rng() - 0.5).slice(0, 6);
+    spots.forEach((s, i) => {
+      const grp = new THREE.Group();
+      const mat = new THREE.MeshBasicMaterial({
+        map: i % 2 ? texA : texB,
+        side: THREE.DoubleSide,
+        fog: false,
+      });
+      const board = new THREE.Mesh(boardGeo, mat);
+      board.position.y = 3.4;
+      grp.add(board);
+      for (const lx of [-3.4, 3.4]) {
+        const leg = new THREE.Mesh(legGeo, legMat);
+        leg.position.set(lx, 1.3, 0);
+        grp.add(leg);
+      }
+      grp.position.set(s.x, s.h, s.z);
+      grp.rotation.y = Math.floor(rng() * 4) * (Math.PI / 2);
+      g.add(grp);
+    });
+    return g;
+  }
+
+  /** neon edge strips on building corners and rooflines */
+  private buildNeonStrips(): THREE.Group {
+    const g = new THREE.Group();
+    const rng = mulberry32(919191);
+    const mats: { m: THREE.Matrix4; c: number }[] = [];
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const col = new THREE.Color();
+    for (let bi = 0; bi < this.buildings.length; bi++) {
+      const b = this.buildings[bi];
+      if (this.isHeroSpot(b) || rng() < 0.35) continue;
+      const w = b.maxX - b.minX;
+      const h = b.maxZ - b.minZ;
+      const height = this.buildingHeights[bi];
+      const c = World.NEON[Math.floor(rng() * World.NEON.length)];
+      // vertical corner strips
+      const corners: [number, number][] = [
+        [b.minX, b.minZ],
+        [b.maxX, b.minZ],
+        [b.minX, b.maxZ],
+        [b.maxX, b.maxZ],
+      ];
+      const nv = rng() < 0.5 ? 1 : 2;
+      for (let k = 0; k < nv; k++) {
+        const [x, z] = corners[Math.floor(rng() * 4)];
+        const out = 0.1;
+        const sx = x === b.minX ? -out : out;
+        const sz = z === b.minZ ? -out : out;
+        m.compose(
+          new THREE.Vector3(x + sx, height / 2, z + sz),
+          q.identity(),
+          new THREE.Vector3(0.14, height, 0.14)
+        );
+        mats.push({ m: m.clone(), c });
+      }
+      // roofline strip
+      if (rng() < 0.6) {
+        const horiz = rng() < 0.5;
+        m.compose(
+          new THREE.Vector3(
+            (b.minX + b.maxX) / 2,
+            height,
+            horiz ? b.minZ - 0.1 : (b.minZ + b.maxZ) / 2
+          ),
+          q.identity(),
+          horiz
+            ? new THREE.Vector3(w + 0.2, 0.14, 0.14)
+            : new THREE.Vector3(0.14, 0.14, h + 0.2)
+        );
+        mats.push({ m: m.clone(), c });
+      }
+    }
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const mat = new THREE.MeshBasicMaterial({});
+    const inst = new THREE.InstancedMesh(geo, mat, mats.length);
+    mats.forEach((e, i) => {
+      inst.setMatrixAt(i, e.m);
+      col.setHex(e.c);
+      inst.setColorAt(i, col);
+    });
+    g.add(inst);
+    return g;
+  }
+
+  /** Japanese-style direction guide sign face (256x128) */
+  private makeGuideTexture(dir: "left" | "right" | "up"): THREE.CanvasTexture {
+    const cv = document.createElement("canvas");
+    cv.width = 256;
+    cv.height = 128;
+    const g = cv.getContext("2d")!;
+    const grad = g.createLinearGradient(0, 0, 0, 128);
+    grad.addColorStop(0, "#1557b0");
+    grad.addColorStop(1, "#0d3a8a");
+    g.fillStyle = grad;
+    g.beginPath();
+    g.roundRect(2, 2, 252, 124, 18);
+    g.fill();
+    g.strokeStyle = "#ffffff";
+    g.lineWidth = 5;
+    g.beginPath();
+    g.roundRect(6, 6, 244, 116, 14);
+    g.stroke();
+    // white arrow
+    g.fillStyle = "#ffffff";
+    g.save();
+    g.translate(150, 64);
+    if (dir === "left") g.rotate(Math.PI);
+    else if (dir === "up") g.rotate(-Math.PI / 2);
+    g.beginPath();
+    g.moveTo(52, 0);
+    g.lineTo(18, -26);
+    g.lineTo(18, -10);
+    g.lineTo(-52, -10);
+    g.lineTo(-52, 10);
+    g.lineTo(18, 10);
+    g.lineTo(18, 26);
+    g.closePath();
+    g.fill();
+    g.restore();
+    // destination glyph strokes + route number
+    g.strokeStyle = "#ffffff";
+    const rng = mulberry32(dir === "left" ? 31 : dir === "right" ? 32 : 33);
+    this.drawGlyphStrokes(g, rng, 20, 30, 66, 66);
+    g.font = "900 26px sans-serif";
+    g.textAlign = "center";
+    g.fillStyle = "#0d3a8a";
+    g.fillStyle = "#ffffff";
+    g.fillText(dir === "left" ? "R 17" : dir === "right" ? "R 58" : "R 86", 58, 112);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  /** direction guide signs on light poles + chevron boards on the other corners */
+  private buildRoadSigns(): THREE.Group {
+    const g = new THREE.Group();
+    const guideGeo = new THREE.PlaneGeometry(1.7, 0.85);
+    const kinds = {
+      left: this.makeGuideTexture("left"),
+      right: this.makeGuideTexture("right"),
+      up: this.makeGuideTexture("up"),
+    } as const;
+    const per: Record<"left" | "right" | "up", THREE.Matrix4[]> = {
+      left: [],
+      right: [],
+      up: [],
+    };
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const eul = new THREE.Euler();
+    const dirs = ["left", "right", "up"] as const;
+    let k = 0;
+    for (let i = 0; i < GRID_N; i += 2) {
+      for (let j = 0; j < GRID_N; j += 2) {
+        const cx = -WORLD_HALF + i * CELL;
+        const cz = -WORLD_HALF + j * CELL;
+        const px = cx + ROAD_W / 2 + 1.2;
+        const pz = cz + ROAD_W / 2 + 1.2;
+        // guide sign for the x-road, mounted on the light pole below the heads
+        const d1 = dirs[k % 3];
+        k++;
+        eul.set(0, Math.PI / 2, 0);
+        q.setFromEuler(eul);
+        m.compose(new THREE.Vector3(px, 4.6, pz - 0.3), q, new THREE.Vector3(1, 1, 1));
+        per[d1].push(m.clone());
+        // guide sign for the z-road
+        const d2 = dirs[k % 3];
+        k++;
+        eul.set(0, 0, 0);
+        q.setFromEuler(eul);
+        m.compose(new THREE.Vector3(px - 0.3, 5.5, pz), q, new THREE.Vector3(1, 1, 1));
+        per[d2].push(m.clone());
+        // chevron boards on the three plain corners
+        for (const [sx, sz] of [
+          [-1, 1],
+          [1, -1],
+          [-1, -1],
+        ] as const) {
+          const x = cx + sx * (ROAD_W / 2 + 1.4);
+          const z = cz + sz * (ROAD_W / 2 + 1.4);
+          eul.set(0, Math.atan2(sx, sz), 0);
+          q.setFromEuler(eul);
+          m.compose(new THREE.Vector3(x, 1.15, z), q, new THREE.Vector3(1, 1, 1));
+          this.chevronMats.push(m.clone());
+        }
+      }
+    }
+    for (const d of dirs) {
+      const list = per[d];
+      if (!list.length) continue;
+      const mat = new THREE.MeshBasicMaterial({
+        map: kinds[d],
+        side: THREE.DoubleSide,
+      });
+      const inst = new THREE.InstancedMesh(guideGeo, mat, list.length);
+      list.forEach((mm, i) => inst.setMatrixAt(i, mm));
+      g.add(inst);
+    }
+    // chevron instanced mesh
+    const chevTex = this.makeChevronTexture();
+    const chevGeo = new THREE.PlaneGeometry(1.15, 0.6);
+    const chevMat = new THREE.MeshBasicMaterial({
+      map: chevTex,
+      side: THREE.DoubleSide,
+    });
+    const chev = new THREE.InstancedMesh(chevGeo, chevMat, this.chevronMats.length);
+    this.chevronMats.forEach((mm, i) => chev.setMatrixAt(i, mm));
+    g.add(chev);
+    return g;
+  }
+
+  /** yellow curve-warning chevron board */
+  private makeChevronTexture(): THREE.CanvasTexture {
+    const cv = document.createElement("canvas");
+    cv.width = 128;
+    cv.height = 64;
+    const g = cv.getContext("2d")!;
+    g.fillStyle = "#ffd24a";
+    g.fillRect(0, 0, 128, 64);
+    g.strokeStyle = "#16181d";
+    g.lineWidth = 10;
+    g.lineCap = "round";
+    for (let x = 18; x < 128; x += 30) {
+      g.beginPath();
+      g.moveTo(x - 10, 10);
+      g.lineTo(x + 10, 32);
+      g.lineTo(x - 10, 54);
+      g.stroke();
+    }
+    g.strokeStyle = "#16181d";
+    g.lineWidth = 4;
+    g.strokeRect(2, 2, 124, 60);
     const tex = new THREE.CanvasTexture(cv);
     tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
