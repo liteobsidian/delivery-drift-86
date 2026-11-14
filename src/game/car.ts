@@ -24,6 +24,7 @@ export interface CarParts {
   glassMats: THREE.MeshStandardMaterial[];
   bumpers: THREE.Mesh[];
   allWheelMeshes: THREE.Object3D[];
+  spoiler: THREE.Group;
 }
 
 export class Car {
@@ -34,11 +35,16 @@ export class Car {
   spec: CarSpec;
   cargo = 100; // 0..100
   hp = 100; // car body condition 0..100 (persistent until repaired)
-  wheelLost = false;
   gripPenalty = false;
   airY = 0;
   airV = 0;
+  wrecked = false; // hp reached 0: no control, coasting wreck
+  wheelLost = false;
+  spoilerLost = false;
+  bumperLost = false;
   onWheelLost: ((x: number, z: number) => void) | null = null;
+  onPartLost: ((x: number, z: number, kind: "spoiler" | "bumper") => void) | null =
+    null;
   private airTime = 0;
   private parts: CarParts | null = null;
   private flipT = -1; // >=0 while rolling over
@@ -81,6 +87,9 @@ export class Car {
   repair(): number {
     this.hp = 100;
     this.wheelLost = false;
+    this.spoilerLost = false;
+    this.bumperLost = false;
+    this.wrecked = false;
     this.gripPenalty = false;
     this.rebuildMesh();
     return 0;
@@ -109,6 +118,33 @@ export class Car {
         m.color.setHex(0xc4d2dc);
         m.opacity = 0.85;
       }
+    }
+    // parts tear off as damage grows
+    if (stage > 0.45) this.loseSpoiler();
+    if (stage > 0.7) this.loseFrontBumper();
+  }
+
+  /** Spoiler rips off the trunk. */
+  loseSpoiler(): void {
+    if (this.spoilerLost || !this.parts) return;
+    this.spoilerLost = true;
+    const s = this.parts.spoiler;
+    s.removeFromParent();
+    const wp = new THREE.Vector3();
+    s.getWorldPosition(wp);
+    this.onPartLost?.(wp.x, wp.z, "spoiler");
+  }
+
+  /** Front bumper tears off. */
+  loseFrontBumper(): void {
+    if (this.bumperLost || !this.parts) return;
+    this.bumperLost = true;
+    const b = this.parts.bumpers[0];
+    if (b) {
+      b.removeFromParent();
+      const wp = new THREE.Vector3();
+      b.getWorldPosition(wp);
+      this.onPartLost?.(wp.x, wp.z, "bumper");
     }
   }
 
@@ -177,6 +213,11 @@ export class Car {
       return res;
     }
 
+    if (this.wrecked) {
+      // coasting wreck: no throttle, no steering, heavy scrub
+      input = { steer: 0, throttle: 0, brake: 0, handbrake: false };
+    }
+
     const fwd = this.forward(tmpF);
     let speed = this.vel.dot(fwd);
 
@@ -203,12 +244,23 @@ export class Car {
     // --- drag ---
     const drag = 0.28 + Math.abs(speed) * 0.006;
     this.vel.multiplyScalar(Math.max(0, 1 - drag * dt));
+    if (this.wrecked) {
+      this.vel.multiplyScalar(Math.max(0, 1 - 1.3 * dt));
+    }
 
-    // --- ramps: launch when crossing one fast enough ---
+    // --- ramps: launch only when driving UP the slope ---
+    let rampImpact = 0;
     if (this.airY === 0 && this.airV === 0) {
       const ramp = world.rampAt(this.pos.x, this.pos.z);
-      if (ramp && Math.abs(speed) > 13) {
-        this.airV = Math.abs(speed) * 0.42 + 4;
+      if (ramp) {
+        const along = this.vel.x * ramp.dx + this.vel.z * ramp.dz;
+        if (along > 13) {
+          this.airV = along * 0.42 + 4;
+        } else if (along < -8) {
+          // slamming into the tall back wall of the wedge — that hurts
+          rampImpact = -along;
+          this.vel.multiplyScalar(0.1);
+        }
       }
     }
 
@@ -256,7 +308,7 @@ export class Car {
     res.latG = latAccel;
 
     // --- collisions ---
-    res.impact = world.collideBuildings(this.pos, 1.5, this.vel);
+    res.impact = Math.max(rampImpact, world.collideBuildings(this.pos, 1.5, this.vel));
 
     // --- rollover: only from a hard impact, and only at speed ---
     if (
@@ -494,18 +546,20 @@ function buildCarMesh(
     bumpers.push(br);
   }
 
-  // spoiler
+  // spoiler (one group so the whole wing tears off)
+  const spoiler = new THREE.Group();
   const wing = new THREE.Mesh(
     new THREE.BoxGeometry(W - 0.25, 0.07, isSupra ? 0.5 : 0.34),
     darkMat
   );
   wing.position.set(0, isSupra ? 0.95 : 0.92, L / 2 - 0.25);
-  root.add(wing);
+  spoiler.add(wing);
   for (const sx of [-1, 1]) {
     const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.32, 0.08), darkMat);
     strut.position.set(sx * (W / 2 - 0.32), isSupra ? 0.76 : 0.74, L / 2 - 0.25);
-    root.add(strut);
+    spoiler.add(strut);
   }
+  root.add(spoiler);
 
   // underglow
   const glow = new THREE.Mesh(
@@ -561,6 +615,6 @@ function buildCarMesh(
     if (front) pivots.push(pivot);
   }
 
-  onParts?.({ bodyMesh, glassMats, bumpers, allWheelMeshes });
+  onParts?.({ bodyMesh, glassMats, bumpers, allWheelMeshes, spoiler });
   return root;
 }
