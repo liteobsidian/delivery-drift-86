@@ -46,6 +46,9 @@ export interface Ramp {
   w: number;
   h: number;
   angle: number;
+  /** world-space direction of travel that goes UP the slope (launch direction) */
+  dx: number;
+  dz: number;
 }
 
 export interface LightVisual {
@@ -54,8 +57,9 @@ export interface LightVisual {
   state: number; // 0: x-axis green, 1: x-axis red
   timer: number;
   phaseId: number;
-  matX: THREE.MeshStandardMaterial;
-  matZ: THREE.MeshStandardMaterial;
+  /** per-head lamp materials, index 0 = red, 1 = yellow, 2 = green */
+  lampsX: THREE.MeshStandardMaterial[];
+  lampsZ: THREE.MeshStandardMaterial[];
 }
 
 const GS = WORLD_HALF * 2 + ROAD_W * 2 + 60; // ground plane size
@@ -70,6 +74,8 @@ export class World {
   readonly lightGrid = new Map<string, LightVisual>(); // "i,j" -> light (enforced only)
 
   private puddleMeshes: THREE.Mesh[] = [];
+  private heroSpots: { x: number; z: number; w: number; h: number; d: number }[] =
+    [];
   private marker = new THREE.Group();
   private markerRing!: THREE.Mesh;
   private time = 0;
@@ -215,17 +221,20 @@ export class World {
       const xGreen = t < LIGHT_CYCLE;
       const xYellow = t >= LIGHT_CYCLE && t < LIGHT_CYCLE + LIGHT_YELLOW;
       const zPhase = t >= LIGHT_CYCLE + LIGHT_YELLOW;
-      // materials: 0 green, 1 yellow, 2 red
-      const xColor = xGreen ? 0x22ff66 : xYellow ? 0xffcc22 : 0xff2233;
-      const zColor = zPhase
+      // lamp index: 0 red, 1 yellow, 2 green — exactly one lamp lit per head
+      const xLamp = xGreen ? 2 : xYellow ? 1 : 0;
+      const zLamp = zPhase
         ? t < LIGHT_CYCLE * 2 + LIGHT_YELLOW
-          ? 0x22ff66
-          : 0xffcc22
-        : 0xff2233;
-      l.matX.emissive.setHex(xColor);
-      l.matX.emissiveIntensity = 2.2;
-      l.matZ.emissive.setHex(zColor);
-      l.matZ.emissiveIntensity = 2.2;
+          ? 2
+          : 1
+        : 0;
+      for (let k = 0; k < 3; k++) {
+        const mx = l.lampsX[k];
+        const mz = l.lampsZ[k];
+        // lit lens blazes, unlit ones stay as dim colored glass
+        mx.emissiveIntensity = k === xLamp ? 3.4 : 0.22;
+        mz.emissiveIntensity = k === zLamp ? 3.4 : 0.22;
+      }
     }
     // puddle shimmer
     for (let i = 0; i < this.puddleMeshes.length; i++) {
@@ -502,6 +511,17 @@ export class World {
     const col = new THREE.Color();
     placements.forEach((p, i) => {
       q.identity();
+      if (i % 5 === 2) {
+        // reserve this spot for a real mid-rise model (dropped in when assets load)
+        this.heroSpots.push(p);
+        m.compose(
+          new THREE.Vector3(p.x, -60, p.z),
+          q,
+          new THREE.Vector3(0.001, 0.001, 0.001)
+        );
+        inst.setMatrixAt(i, m);
+        return;
+      }
       m.compose(
         new THREE.Vector3(p.x, 0, p.z),
         q,
@@ -516,6 +536,27 @@ export class World {
     inst.receiveShadow = false;
     g.add(inst);
     return g;
+  }
+
+  /** drop loaded mid-rise models onto the reserved spots (call once, after assets load) */
+  setHeroBuildings(model: THREE.Group, modelSize: THREE.Vector3): void {
+    const rng = mulberry32(4242);
+    for (const s of this.heroSpots) {
+      const clone = model.clone(true);
+      const fit = Math.min(
+        (s.h * 1.05) / modelSize.y,
+        (s.w * 0.94) / modelSize.x,
+        (s.d * 0.94) / modelSize.z
+      );
+      clone.scale.setScalar(fit);
+      clone.position.set(s.x, 0, s.z);
+      clone.rotation.y = Math.floor(rng() * 4) * (Math.PI / 2);
+      this.group.add(clone);
+    }
+  }
+
+  heroCount(): number {
+    return this.heroSpots.length;
   }
 
   private makeBuildingTexture(): THREE.CanvasTexture {
@@ -736,11 +777,72 @@ export class World {
       mesh.position.set(x, 0.02, z);
       // ramp rises opposite to the travel direction so cars launch off the top
       const angle = vertical ? Math.PI / 2 : 0;
-      mesh.rotation.y = rng() < 0.5 ? angle : angle + Math.PI;
+      const rotY = rng() < 0.5 ? angle : angle + Math.PI;
+      mesh.rotation.y = rotY;
       g.add(mesh);
-      this.ramps.push({ x, z, w: vertical ? 7 : 13, h: vertical ? 13 : 7, angle });
+      // launch dir = local -z rotated into world space (up the slope)
+      const dx = -Math.sin(rotY);
+      const dz = -Math.cos(rotY);
+      this.ramps.push({
+        x,
+        z,
+        w: vertical ? 7 : 13,
+        h: vertical ? 13 : 7,
+        angle,
+        dx,
+        dz,
+      });
     }
     return g;
+  }
+
+  /** one traffic-light head: housing + red/yellow/green lenses (lit one glows) */
+  private makeLightHead(axis: "x" | "z"): {
+    group: THREE.Group;
+    mats: THREE.MeshStandardMaterial[];
+  } {
+    const group = new THREE.Group();
+    const housing = new THREE.Mesh(
+      new THREE.BoxGeometry(axis === "x" ? 0.5 : 0.34, 1.7, axis === "x" ? 0.34 : 0.5),
+      new THREE.MeshStandardMaterial({ color: 0x2a3242, roughness: 0.7 })
+    );
+    group.add(housing);
+    const lampGeo = new THREE.SphereGeometry(0.22, 12, 10);
+    const off = 0.5; // vertical spacing between lamps
+    const mats: THREE.MeshStandardMaterial[] = [];
+    const colors = [0xff2233, 0xffcc22, 0x22ff66];
+    // lenses bulge out of both faces so the head reads from either direction
+    const nudge = axis === "x" ? 0.16 : 0; // along the facing axis
+    const nudgeZ = axis === "z" ? 0.16 : 0;
+    for (let k = 0; k < 3; k++) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: colors[k],
+        emissive: colors[k],
+        emissiveIntensity: 0.22, // dim lens when off
+        roughness: 0.35,
+      });
+      mats.push(mat);
+      for (const s of [-1, 1]) {
+        const lamp = new THREE.Mesh(lampGeo, mat);
+        lamp.position.set(s * nudge, (1 - k) * off, s * nudgeZ);
+        group.add(lamp);
+      }
+    }
+    // hoods above each lamp like a real signal head
+    const hoodMat = new THREE.MeshStandardMaterial({ color: 0x232a38 });
+    for (let k = 0; k < 3; k++) {
+      const hood = new THREE.Mesh(
+        new THREE.BoxGeometry(
+          axis === "x" ? 0.56 : 0.3,
+          0.1,
+          axis === "x" ? 0.3 : 0.56
+        ),
+        hoodMat
+      );
+      hood.position.set(0, (1 - k) * off + 0.24, 0);
+      group.add(hood);
+    }
+    return { group, mats };
   }
 
   private buildLights(): THREE.Group {
@@ -750,45 +852,35 @@ export class World {
       for (let j = 0; j < GRID_N; j += 2) {
         const cx = -WORLD_HALF + i * CELL;
         const cz = -WORLD_HALF + j * CELL;
-        const matX = new THREE.MeshStandardMaterial({
-          color: 0x111111,
-          emissive: 0x22ff66,
-          emissiveIntensity: 2,
-        });
-        const matZ = new THREE.MeshStandardMaterial({
-          color: 0x111111,
-          emissive: 0xff2233,
-          emissiveIntensity: 2,
-        });
-        // one pole at corner, two heads facing each axis
+        // one pole at corner, two 3-lamp heads facing each axis road
         const pole = new THREE.Mesh(
           new THREE.CylinderGeometry(0.14, 0.18, 6.4, 6),
           poleMat
         );
         pole.position.set(cx + ROAD_W / 2 + 1.2, 3.2, cz + ROAD_W / 2 + 1.2);
         g.add(pole);
-        const headX = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.3, 0.4), matX);
-        headX.position.set(
+        const headX = this.makeLightHead("x");
+        headX.group.position.set(
           cx + ROAD_W / 2 + 1.2,
-          6.6,
+          6.7,
           cz + ROAD_W / 2 + 0.4
         );
-        g.add(headX);
-        const headZ = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.3, 0.5), matZ);
-        headZ.position.set(
+        g.add(headX.group);
+        const headZ = this.makeLightHead("z");
+        headZ.group.position.set(
           cx + ROAD_W / 2 + 0.4,
-          6.6,
+          6.7,
           cz + ROAD_W / 2 + 1.2
         );
-        g.add(headZ);
+        g.add(headZ.group);
         const light: LightVisual = {
           cx,
           cz,
           state: 0,
           timer: ((i + j) * 1.7) % ((LIGHT_CYCLE + LIGHT_YELLOW) * 2),
           phaseId: 0,
-          matX,
-          matZ,
+          lampsX: headX.mats,
+          lampsZ: headZ.mats,
         };
         this.lights.push(light);
         this.lightGrid.set(`${i},${j}`, light);

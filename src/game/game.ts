@@ -25,7 +25,9 @@ import { World } from "./world";
 import { Car } from "./car";
 import { Traffic } from "./traffic";
 import { Police } from "./police";
+import { loadGameAssets } from "./assets";
 import { Effects } from "./effects";
+import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 
 const SD = ROAD_W / 2 + 1.6; // stop-line distance from intersection center
 
@@ -76,6 +78,8 @@ export class Game {
   private driftBonusTimer = 0;
   private debris: THREE.Mesh[] = [];
   private shake = 0;
+  private wreckTimer = -1; // >=0 while the burning wreck is counting down to order fail
+  assetsReady = false; // downloaded models swapped in
   private camPos = new THREE.Vector3(0, 5, 55);
   private toastTimer = 0;
   private hudTimer = 0;
@@ -138,6 +142,16 @@ export class Game {
     this.scene.add(this.traffic.group);
     this.scene.add(this.police.group);
     this.scene.add(this.effects.group);
+    // free downloaded models replace placeholders when they finish loading
+    this.assetsReady = false;
+    loadGameAssets()
+      .then((assets) => {
+        this.traffic.setCarModels(assets.traffic.map((m) => m.root));
+        this.police.setModel(assets.police.root, assets.police.size.y + 0.05);
+        this.world.setHeroBuildings(assets.midrise.root, assets.midrise.size);
+        this.assetsReady = true;
+      })
+      .catch((err) => console.warn("asset load failed, placeholders stay:", err));
     this.car.onWheelLost = (x, z) => {
       const geo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 12);
       geo.rotateZ(Math.PI / 2);
@@ -150,6 +164,19 @@ export class Game {
       this.debris.push(m);
       this.toast("Отвалилась колесо! Машина ведёт в сторону", true);
       this.audio.thud(0.7);
+    };
+    this.car.onPartLost = (x, z, kind) => {
+      const dark = new THREE.MeshStandardMaterial({ color: 0x17191f });
+      const part =
+        kind === "spoiler"
+          ? new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.07, 0.4), dark)
+          : new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.2, 0.34), dark);
+      part.position.set(x, kind === "spoiler" ? 0.5 : 0.36, z);
+      part.rotation.y = Math.random() * Math.PI;
+      this.scene.add(part);
+      this.debris.push(part);
+      this.toast(kind === "spoiler" ? "Отвалился спойлер!" : "Отвалился бампер!", true);
+      this.audio.thud(0.5);
     };
 
     // blob shadow under car
@@ -183,15 +210,17 @@ export class Game {
       else if (this.screen === "result") this.gotoOrders();
     };
     this.audio.muted = this.profile.muted;
+    this.audio.volume = this.profile.volume;
 
     this.showScreen("title");
     (window as unknown as { __gameProbe: () => { x: number; y: number; z: number } }).__gameProbe =
       () => ({ x: this.car.pos.x, y: this.car.pos.y, z: this.car.pos.z });
     // verification hook (not user-facing)
     (window as unknown as { __gameDebug: unknown }).__gameDebug = {
-      teleport: (x: number, z: number) => {
+      teleport: (x: number, z: number, heading?: number) => {
         this.car.pos.set(x, 0, z);
         this.car.vel.set(0, 0, 0);
+        if (heading !== undefined) this.car.heading = heading;
       },
       cargo: () => this.car.cargo,
       screen: () => this.screen,
@@ -208,6 +237,34 @@ export class Game {
       hp: () => this.car.hp,
       policeActive: () => this.police.active,
       bonus: () => this.bonusMoney,
+      trafficHits: () => this.trafficHits,
+      wrecked: () => this.car.wrecked,
+      wreckTimer: () => this.wreckTimer,
+      partsLost: () => ({
+        spoiler: this.car.spoilerLost,
+        bumper: this.car.bumperLost,
+        wheel: this.car.wheelLost,
+      }),
+      assetsReady: () => this.assetsReady,
+      heroCount: () => this.world.heroCount(),
+      trafficPos: () => this.traffic.debugPositions(),
+      lightState: () =>
+        this.world.lights.map((l) => ({
+          t: Math.round(l.timer * 100) / 100,
+          xLit: l.lampsX.findIndex((m) => m.emissiveIntensity > 2),
+          zLit: l.lampsZ.findIndex((m) => m.emissiveIntensity > 2),
+        })),
+      speed: () => Math.hypot(this.car.vel.x, this.car.vel.z),
+      tris: () => {
+        let n = 0;
+        this.scene.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.isMesh || !mesh.geometry) return;
+          const geo = mesh.geometry;
+          n += (geo.index ? geo.index.count : geo.attributes.position?.count ?? 0) / 3;
+        });
+        return Math.round(n);
+      },
     };
   }
 
@@ -227,6 +284,8 @@ export class Game {
     else if (s === "orders") this.renderOrders();
     else if (s === "paused") this.renderPaused();
     else if (s === "result") this.renderResult();
+    else if (s === "settings") this.renderSettings();
+    else if (s === "achievements") this.renderAchievements();
     else this.clearScreen();
   }
 
@@ -243,6 +302,8 @@ export class Game {
         <div class="title-buttons">
           <button class="btn primary" data-a="quick">БЫСТРАЯ ДОСТАВКА <kbd>ПРОБЕЛ</kbd></button>
           <button class="btn" data-a="garage">ГАРАЖ</button>
+          <button class="btn" data-a="achievements">АЧИВКИ ${p.unlockedAch.length > 0 ? `<span class="gold">(${p.unlockedAch.length}/${ACHIEVEMENTS.length})</span>` : ""}</button>
+          <button class="btn" data-a="settings">⚙ НАСТРОЙКИ</button>
         </div>
         <div class="stats-row">
           <span>₽ ${p.money}</span>
@@ -250,14 +311,19 @@ export class Game {
           <span>машина: ${this.currentCarSpec().name.replace("Toyota ", "")}</span>
           ${locked ? `<span class="dim">Supra: ещё ${SUPRA_UNLOCK_DELIVERIES - p.deliveries} доставок</span>` : `<span class="gold">Supra доступна!</span>`}
         </div>
-        <div class="hint-row">
+        ${this.input.isTouch ? "" : `<div class="hint-row">
           <span>W/↑ газ</span><span>S/↓ тормоз</span><span>A D руль</span><span>ПРОБЕЛ дрифт</span><span>ESC пауза</span><span>M звук</span>
-        </div>
+        </div>`}
         <p class="fine-print">прогресс хранится в этом браузере (localStorage)</p>
       </div>`;
     this.bindScreen({
       quick: () => this.quickStart(),
       garage: () => this.showScreen("garage"),
+      achievements: () => this.showScreen("achievements"),
+      settings: () => {
+        this.settingsFrom = "title";
+        this.showScreen("settings");
+      },
     });
     void supra;
   }
@@ -371,6 +437,7 @@ export class Game {
         <h2>ПАУЗА</h2>
         <button class="btn primary" data-a="resume">ПРОДОЛЖИТЬ</button>
         <button class="btn" data-a="retry">ЗАНОВО ЗАКАЗ</button>
+        <button class="btn" data-a="settings">⚙ НАСТРОЙКИ</button>
         <button class="btn" data-a="sound">${this.profile.muted ? "🔇 ВКЛ ЗВУК" : "🔊 ВЫКЛ ЗВУК"}</button>
         <button class="btn" data-a="quit">В МЕНЮ</button>
       </div>`;
@@ -378,6 +445,10 @@ export class Game {
       resume: () => this.togglePause(),
       retry: () => {
         if (this.order) this.startOrder(this.order);
+      },
+      settings: () => {
+        this.settingsFrom = "paused";
+        this.showScreen("settings");
       },
       sound: () => {
         this.toggleMute();
@@ -388,6 +459,68 @@ export class Game {
         this.showScreen("title");
       },
     });
+  }
+
+  private settingsFrom: GameScreen = "title";
+
+  private renderSettings(): void {
+    const p = this.profile;
+    this.screenEl.style.display = "flex";
+    this.screenEl.innerHTML = `
+      <div class="panel settings">
+        <h2>НАСТРОЙКИ</h2>
+        <div class="set-row">
+          <div class="set-info"><b>Громкость звука</b><span id="vol-label">${Math.round(p.volume * 100)}%</span></div>
+          <input type="range" id="vol-slider" min="0" max="100" value="${Math.round(p.volume * 100)}">
+        </div>
+        <div class="set-row">
+          <div class="set-info"><b>Звук</b><span>${p.muted ? "выключен" : "включён"}</span></div>
+          <button class="btn small" data-a="sound">${p.muted ? "🔇 ВКЛ" : "🔊 ВЫКЛ"}</button>
+        </div>
+        <button class="btn" data-a="back">← НАЗАД</button>
+      </div>`;
+    this.bindScreen({
+      back: () => this.showScreen(this.settingsFrom === "paused" ? "paused" : "title"),
+      sound: () => {
+        this.toggleMute();
+        this.renderSettings();
+      },
+    });
+    const slider = this.screenEl.querySelector<HTMLInputElement>("#vol-slider");
+    slider?.addEventListener("input", () => {
+      const v = Number(slider.value) / 100;
+      this.profile.volume = v;
+      this.audio.setVolume(v);
+      const label = this.screenEl.querySelector("#vol-label");
+      if (label) label.textContent = `${slider.value}%`;
+      if (this.profile.muted && v > 0) {
+        this.profile.muted = false;
+        this.audio.setMuted(false);
+      }
+      saveProfile(this.profile);
+    });
+  }
+
+  private renderAchievements(): void {
+    const p = this.profile;
+    const rows = ACHIEVEMENTS.map((a) => {
+      const got = p.unlockedAch.includes(a.id);
+      const prog = a.progress(p);
+      return `<div class="ach-row ${got ? "got" : ""}">
+        <div class="ach-ico">${got ? a.icon : "🔒"}</div>
+        <div class="ach-info"><b>${a.name}</b><span>${a.desc}</span></div>
+        <div class="ach-prog">${prog ?? ""}</div>
+      </div>`;
+    }).join("");
+    this.screenEl.style.display = "flex";
+    this.screenEl.innerHTML = `
+      <div class="panel achievements">
+        <h2>АЧИВКИ</h2>
+        <div class="money-line">Открыто: <b class="gold">${p.unlockedAch.length}/${ACHIEVEMENTS.length}</b></div>
+        <div class="ach-list">${rows}</div>
+        <button class="btn" data-a="back">← НАЗАД</button>
+      </div>`;
+    this.bindScreen({ back: () => this.showScreen("title") });
   }
 
   private lastResult: { ok: boolean; lines: string[] } = { ok: false, lines: [] };
@@ -467,6 +600,7 @@ export class Game {
     this.applyCarSpec();
     saveProfile(this.profile);
     this.audio.cash();
+    this.grantAchievements();
     this.renderGarage();
   }
 
@@ -489,6 +623,7 @@ export class Game {
     this.applyCarSpec();
     saveProfile(this.profile);
     this.audio.cash();
+    this.grantAchievements();
     this.renderGarage();
   }
 
@@ -571,6 +706,7 @@ export class Game {
     }
     this.debris = [];
     this.wasInPuddle = false;
+    this.wreckTimer = -1;
     this.redFinedX.clear();
     this.world.setDestination(o.dest.x, o.dest.z);
     this.audio.ensure();
@@ -642,8 +778,8 @@ export class Game {
     this.tutorialEl.innerHTML = `
       <div class="tutorial-box">
         <h3>КАК ИГРАТЬ</h3>
-        <div class="tut-row"><span class="tut-ico wheel">↺</span><span><b>Руль</b> — води пальцем по кругу слева</span></div>
-        <div class="tut-row"><span class="tut-ico gas">▶</span><span><b>ГАЗ / ТОРМОЗ</b> — держи круглые педали справа</span></div>
+        <div class="tut-row"><span class="tut-ico wheel">🕹</span><span><b>Джойстик слева</b> — вперёд: газ, назад: задний ход, в стороны: руль</span></div>
+        <div class="tut-row"><span class="tut-ico gas">■</span><span><b>ТОРМОЗ</b> — педаль справа внизу</span></div>
         <div class="tut-row"><span class="tut-ico hb">★</span><span><b>ДРИФТ</b> — занос на поворотах, даёт бонусы</span></div>
         <div class="tut-row"><span class="tut-ico">⚠</span><span>Брусчатка, лужи и удары бьют по <b>грузу</b>. На красный — штраф!</span></div>
         <div class="tut-row"><span class="tut-ico">🚀</span><span>Трамплины, впритирку, зелёный на скорости — всё это <b>₽ бонусы</b></span></div>
@@ -772,6 +908,21 @@ export class Game {
       return;
     }
     const inp = this.input.update();
+    // fully wrecked car explodes and ends the order
+    if (this.car.hp <= 0 && !this.car.wrecked && this.wreckTimer < 0) {
+      this.startWreck();
+    }
+    if (this.wreckTimer > 0) {
+      this.wreckTimer -= dt;
+      this.effects.spawnSmoke(this.car.pos.x, this.car.pos.z, true);
+      if (this.wreckTimer <= 0) {
+        this.completeOrder(false, "Машина уничтожена");
+        this.car.hp = 20; // эвакуатор оттащил обломки, машина на ходу
+        this.car.wrecked = false;
+        this.wreckTimer = -1;
+        return; // order is null now — nothing else to do this frame
+      }
+    }
     const prevX = this.car.pos.x;
     const prevZ = this.car.pos.z;
     const res = this.car.step(dt, inp, this.world);
@@ -779,12 +930,19 @@ export class Game {
     const frag = this.order.fragility;
     const protect = spec.cargoProtect;
 
+    // lifetime stat: top speed
+    const kmhNow = Math.abs(res.speed) * 3.2;
+    if (kmhNow > this.profile.stats.maxSpeedKmh)
+      this.profile.stats.maxSpeedKmh = Math.round(kmhNow);
+
     // traffic
     const tHit = this.traffic.update(
       dt,
       this.car.pos.x,
       this.car.pos.z,
-      Math.abs(res.speed)
+      Math.abs(res.speed),
+      this.car.vel.x,
+      this.car.vel.z
     );
     if (tHit > 4 && !this.car.isFlipping) {
       const dmg = 14 * (1 - protect * 0.5);
@@ -819,6 +977,8 @@ export class Game {
         this.chaseEscape += dt;
         if (this.chaseEscape > 3) {
           this.addBonus(300, "Оторвался от погони!");
+          this.profile.stats.escapes += 1;
+          this.grantAchievements();
           this.audio.success();
           this.police.stop();
         }
@@ -827,6 +987,8 @@ export class Game {
       }
       if (this.police.active && this.chaseTimedOut > 45) {
         this.addBonus(300, "Оторвался от погони!");
+        this.profile.stats.escapes += 1;
+        this.grantAchievements();
         this.police.stop();
       }
     } else if (!this.chaseTriggered && (this.redLightRuns >= 2 || this.trafficHits >= 2)) {
@@ -873,6 +1035,7 @@ export class Game {
         if (res.impact < 9 && this.scrapeCooldown <= 0) {
           this.scrapeCooldown = 3;
           this.addBonus(15, "Задел!");
+          this.profile.stats.scraps += 1;
         }
         if (this.car.hp < 30 && res.impact > 8 && !this.car.wheelLost) {
           this.car.loseWheel();
@@ -883,6 +1046,8 @@ export class Game {
       if (res.landing > 6) {
         const bonus = Math.min(150, Math.round(res.landing * 9));
         this.addBonus(bonus, "Прыжок!");
+        this.profile.stats.jumps += 1;
+        this.grantAchievements();
         this.audio.uiClick();
         if (res.landing > 11) {
           const ldmg = (res.landing - 11) * 1.2 * frag * (1 - protect);
@@ -898,6 +1063,8 @@ export class Game {
         this.audio.thud(1);
         this.audio.crack();
         this.toast("ПЕРЕВОРОТ! Груз сильно повреждён", true);
+        this.profile.stats.rolls += 1;
+        this.grantAchievements();
       }
     }
 
@@ -960,6 +1127,8 @@ export class Game {
         if (isRed) {
           this.redFinedX.set(l, l.phaseId);
           this.redLightRuns += 1;
+          this.profile.stats.redLights += 1;
+          this.grantAchievements();
           this.applyFine("Проезд на красный!");
         } else if (
           spd > 12 &&
@@ -992,6 +1161,35 @@ export class Game {
     this.effects.spawnFlash(this.car.pos.x, this.car.pos.z, 0xff3344);
     this.toast(`${msg} Штраф −₽${RED_LIGHT_FINE}`, true);
     this.shake = Math.min(1, this.shake + 0.25);
+  }
+
+  private startWreck(): void {
+    this.car.wrecked = true;
+    this.wreckTimer = 1.6;
+    this.shake = 1;
+    const { x, z } = this.car.pos;
+    this.effects.spawnFlash(x, z, 0xff8822);
+    this.effects.spawnFlash(x, z, 0xffcc44);
+    this.effects.spawnFlash(x, z, 0xff3300);
+    for (let i = 0; i < 8; i++) {
+      this.effects.spawnSmoke(
+        x + (Math.random() - 0.5) * 2,
+        z + (Math.random() - 0.5) * 2,
+        true
+      );
+    }
+    this.audio.thud(1);
+    this.audio.crack();
+    this.toast("Машина взорвалась!", true);
+  }
+
+  /** Unlock newly completed achievements, announce them and persist. */
+  private grantAchievements(): void {
+    const fresh = checkAchievements(this.profile);
+    if (fresh.length === 0) return;
+    saveProfile(this.profile);
+    for (const a of fresh) this.toast(`🏆 Ачивка: ${a.icon} ${a.name}`);
+    this.audio.cash();
   }
 
   private completeOrder(ok: boolean, reason: string): void {
@@ -1028,6 +1226,7 @@ export class Game {
       p.totalEarn += total;
       p.bestEarn = Math.max(p.bestEarn, total);
       p.driftBest = Math.max(p.driftBest, Math.round(this.driftScore));
+      if (this.car.cargo >= 99.5) p.stats.perfectDeliveries += 1;
       this.audio.success();
     } else {
       const consolation = 40;
@@ -1040,6 +1239,7 @@ export class Game {
       }
       this.audio.fail();
     }
+    this.grantAchievements();
     saveProfile(p);
     this.lastResult = { ok, lines };
     this.order = null;
