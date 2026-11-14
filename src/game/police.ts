@@ -89,6 +89,17 @@ export class Police {
     this.group.visible = false;
   }
 
+  /** swap placeholder cruiser for a loaded police model (nose -z); light bar is rebuilt on the roof */
+  setModel(model: THREE.Group, roofY: number): void {
+    for (const child of [...this.group.children]) this.group.remove(child);
+    this.group.add(model.clone(true));
+    const barR = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.14, 0.42), this.redMat);
+    barR.position.set(-0.33, roofY, 0.15);
+    const barB = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.14, 0.42), this.blueMat);
+    barB.position.set(0.33, roofY, 0.15);
+    this.group.add(barR, barB);
+  }
+
   start(px: number, pz: number): void {
     this.pos.set(px + 10, 0, pz + 18);
     this.heading = Math.atan2(px - this.pos.x, pz - this.pos.z);

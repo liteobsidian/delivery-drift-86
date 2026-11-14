@@ -11,6 +11,7 @@ interface TrafficCar {
   speed: number;
   active: boolean;
   nearCooldown: number;
+  hitCooldown: number;
 }
 
 const MAX_CARS = 12;
@@ -38,6 +39,7 @@ export class Traffic {
         speed: 0,
         active: false,
         nearCooldown: 0,
+        hitCooldown: 0,
       });
     }
     // pre-seed a few cars
@@ -73,8 +75,25 @@ export class Traffic {
 
   onNearMiss: (() => void) | null = null;
 
-  /** advance traffic; returns impact speed if any car hit the player this step */
-  update(dt: number, px: number, pz: number, playerSpeed: number): number {
+  /** swap placeholder boxes for loaded 3D car models (nose must face -z) */
+  setCarModels(models: THREE.Group[]): void {
+    if (models.length === 0) return;
+    this.cars.forEach((c, i) => {
+      const clone = models[i % models.length].clone(true);
+      c.mesh.clear();
+      c.mesh.add(clone);
+    });
+  }
+
+  /** advance traffic; returns closing speed if any car hit the player this step */
+  update(
+    dt: number,
+    px: number,
+    pz: number,
+    playerSpeed: number,
+    pvx: number,
+    pvz: number
+  ): number {
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
       this.spawnTimer = 2.2;
@@ -84,6 +103,7 @@ export class Traffic {
     for (const c of this.cars) {
       if (!c.active) continue;
       c.nearCooldown = Math.max(0, c.nearCooldown - dt);
+      c.hitCooldown = Math.max(0, c.hitCooldown - dt);
 
       // red light ahead?
       let wantSpeed = c.speed;
@@ -100,11 +120,12 @@ export class Traffic {
         if (dToStop > -1 && dToStop < 12) wantSpeed = 0;
         void dist;
       }
-      // player proximity: brake + near-miss detection
+      // player proximity: light braking only — darting in front of a car
+      // at speed means a genuine collision (closing speed is what hurts)
       const dx = px - c.x;
       const dz = pz - c.z;
       const d2 = dx * dx + dz * dz;
-      if (d2 < 100) wantSpeed = Math.min(wantSpeed, Math.sqrt(d2) * 0.6);
+      if (d2 < 64) wantSpeed = Math.min(wantSpeed, Math.sqrt(d2) * 1.1);
       if (
         c.nearCooldown === 0 &&
         playerSpeed > 12 &&
@@ -127,13 +148,24 @@ export class Traffic {
         continue;
       }
 
-      // collide with player (circle-circle)
+      // collide with player (circle-circle); impact = closing speed
       const cdx = c.x - px;
       const cdz = c.z - pz;
       const cd = Math.hypot(cdx, cdz);
-      if (cd < 2.5) {
-        hit = Math.max(hit, wantSpeed);
-        // shove player
+      if (cd < 2.6 && c.hitCooldown === 0) {
+        const cvx = c.axis === 0 ? c.dir * wantSpeed : 0;
+        const cvz = c.axis === 1 ? c.dir * wantSpeed : 0;
+        const closing = Math.hypot(pvx - cvx, pvz - cvz);
+        if (closing > 3) {
+          c.hitCooldown = 0.9;
+          hit = Math.max(hit, closing);
+          // push the traffic car out so it doesn't grind inside the player
+          if (cd > 0.001) {
+            const push = 2.6 - cd + 0.05;
+            c.x += (cdx / cd) * push;
+            c.z += (cdz / cd) * push;
+          }
+        }
       }
 
       // place mesh
@@ -167,6 +199,13 @@ export class Traffic {
       if (redForAxis) return l;
     }
     return null;
+  }
+
+  /** verification helper: active car positions */
+  debugPositions(): { x: number; z: number; axis: 0 | 1; dir: 1 | -1 }[] {
+    return this.cars
+      .filter((c) => c.active)
+      .map((c) => ({ x: c.x, z: c.z, axis: c.axis, dir: c.dir }));
   }
 
   dispose(): void {
