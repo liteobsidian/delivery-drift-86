@@ -209,6 +209,23 @@ html, body, #root {
   margin-bottom: 14px;
 }
 
+.panel.cars {
+  width: min(880px, 94vw);
+}
+@media (min-width: 720px) {
+  .panel.cars .car-cards { grid-template-columns: repeat(3, 1fr); }
+}
+
+.garage-car-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: #aab4d8;
+  font-size: 13px;
+}
+
 .car-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -434,7 +451,7 @@ html, body, #root {
   text-shadow: 0 0 10px rgba(255, 51, 68, 0.8);
 }
 
-.hud-help {
+.hud-pause {
   position: absolute;
   top: max(10px, env(safe-area-inset-top));
   right: max(12px, env(safe-area-inset-right));

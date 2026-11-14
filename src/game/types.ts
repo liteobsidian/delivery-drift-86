@@ -9,6 +9,7 @@ export interface Vec3Like {
 export type GameScreen =
   | "title"
   | "garage"
+  | "cars"
   | "orders"
   | "playing"
   | "paused"
@@ -69,6 +70,8 @@ export interface CarSpec {
   /** silhouette style for the procedural body */
   body?: "hatch" | "coupe" | "low" | "sedan";
   spoiler?: "wing" | "big" | "duck" | "none";
+  /** detailed library model replacing the procedural body (if loaded) */
+  glb?: "v1coupe" | "v1hatch" | "v1sedan";
 }
 
 export interface Order {

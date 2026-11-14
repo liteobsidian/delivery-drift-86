@@ -24,6 +24,7 @@ import { Car } from "./car";
 import { Traffic } from "./traffic";
 import { Police } from "./police";
 import { loadGameAssets } from "./assets";
+import type { HeroModelKey, LoadedModel } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { carThumb, createShowroom } from "./showroom";
@@ -42,6 +43,11 @@ export class Game {
   private canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
   private showroom = createShowroom();
+  private heroModels: Partial<Record<HeroModelKey, LoadedModel>> = {};
+
+  private heroFor(car: { glb?: string }): LoadedModel | undefined {
+    return car.glb ? this.heroModels[car.glb as HeroModelKey] : undefined;
+  }
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
@@ -151,6 +157,8 @@ export class Game {
         this.traffic.setCarModels(assets.traffic.map((m) => m.root));
         this.police.setModel(assets.police.root, assets.police.size.y + 0.05);
         this.world.setHeroBuildings(assets.midrise.root, assets.midrise.size);
+        this.heroModels = assets.hero;
+        this.applyCarSpec(); // swap current car to its detailed body if available
         this.assetsReady = true;
       })
       .catch((err) => console.warn("asset load failed, placeholders stay:", err));
@@ -193,6 +201,7 @@ export class Game {
     );
     blob.rotation.x = -Math.PI / 2;
     blob.position.y = 0.02;
+    blob.name = "blob-shadow";
     this.car.group.add(blob);
 
     // --- UI ---
@@ -287,6 +296,7 @@ export class Game {
     this.input.setTouchVisible(s === "playing");
     if (s === "title") this.renderTitle();
     else if (s === "garage") this.renderGarage();
+    else if (s === "cars") this.renderCars();
     else if (s === "orders") this.renderOrders();
     else if (s === "paused") this.renderPaused();
     else if (s === "result") this.renderResult();
@@ -308,6 +318,7 @@ export class Game {
         <p class="tagline">Доставляй быстро. Дрифти жёстко. Не разбей груз.</p>
         <div class="title-buttons">
           <button class="btn primary" data-a="quick">БЫСТРАЯ ДОСТАВКА <kbd>ПРОБЕЛ</kbd></button>
+          <button class="btn" data-a="cars">МАШИНЫ</button>
           <button class="btn" data-a="garage">ГАРАЖ</button>
           <button class="btn" data-a="achievements">АЧИВКИ ${p.unlockedAch.length > 0 ? `<span class="gold">(${p.unlockedAch.length}/${ACHIEVEMENTS.length})</span>` : ""}</button>
           <button class="btn" data-a="settings">⚙ НАСТРОЙКИ</button>
@@ -326,6 +337,7 @@ export class Game {
       </div>`;
     this.bindScreen({
       quick: () => this.quickStart(),
+      cars: () => this.showScreen("cars"),
       garage: () => this.showScreen("garage"),
       achievements: () => this.showScreen("achievements"),
       settings: () => {
@@ -335,30 +347,43 @@ export class Game {
     });
   }
 
-  private renderGarage(): void {
+  private renderCars(): void {
     const p = this.profile;
-    const cur = this.currentCarSpec();
-    const up = this.currentUpgrades();
     const carCards = CARS.map((c) => {
       const owned = p.ownedCars.includes(c.id);
       const isCur = p.carId === c.id;
       const need = c.unlockDeliveries ?? 0;
       const locked = p.deliveries < need;
       let btn;
-      if (isCur) btn = `<button class="btn small" disabled>В ГАРАЖЕ</button>`;
+      if (isCur) btn = `<button class="btn small" disabled>ТЕКУЩАЯ</button>`;
       else if (owned) btn = `<button class="btn small" data-a="select:${c.id}">ВЫБРАТЬ</button>`;
       else if (locked)
         btn = `<button class="btn small" disabled>🔒 ${p.deliveries}/${need} доставок</button>`;
       else
         btn = `<button class="btn small ${p.money >= c.price ? "primary" : ""}" data-a="buy:${c.id}">КУПИТЬ ₽${c.price}</button>`;
       return `<div class="car-card ${isCur ? "current" : ""}">
-        <img class="car-img" src="${carThumb(c)}" alt="${c.name}">
+        <img class="car-img" src="${carThumb(c, undefined, this.heroFor(c))}" alt="${c.name}">
         <div class="car-name">${c.name}</div>
         <div class="car-stats">скорость ${c.topSpeed * 3} · разгон ${c.accel} · сцепление ${c.grip}</div>
         ${btn}
       </div>`;
     }).join("");
 
+    this.screenEl.style.display = "flex";
+    this.screenEl.innerHTML = `
+      <div class="panel cars">
+        <h2>МАШИНЫ</h2>
+        <div class="money-line">Баланс: <b>₽${p.money}</b> · доставок: ${p.deliveries}</div>
+        <div class="car-cards">${carCards}</div>
+        <button class="btn" data-a="back">← НАЗАД</button>
+      </div>`;
+    this.bindScreen({ back: () => this.showScreen("title") });
+  }
+
+  private renderGarage(): void {
+    const p = this.profile;
+    const cur = this.currentCarSpec();
+    const up = this.currentUpgrades();
     const upRows = UPGRADE_DEFS.map((d) => {
       const lvl = up[d.key];
       const maxed = lvl >= UPGRADE_MAX;
@@ -380,7 +405,9 @@ export class Game {
       <div class="panel garage">
         <h2>ГАРАЖ</h2>
         <div class="money-line">Баланс: <b>₽${p.money}</b> · доставок: ${p.deliveries}</div>
-        <div class="car-cards">${carCards}</div>
+        <div class="garage-car-line">Сейчас: <b>${cur.name}</b>
+          <button class="btn small" data-a="cars">СМЕНИТЬ МАШИНУ</button>
+        </div>
         <h3>Прокачка: ${cur.name.replace("Toyota ", "")}</h3>
         <div class="up-list">${upRows}</div>
         <h3>Состояние кузова</h3>
@@ -396,6 +423,7 @@ export class Game {
       </div>`;
     this.bindScreen({
       back: () => this.showScreen("title"),
+      cars: () => this.showScreen("cars"),
       repair: () => this.repairCar(),
     });
   }
@@ -445,6 +473,7 @@ export class Game {
         <h2>ПАУЗА</h2>
         <button class="btn primary" data-a="resume">ПРОДОЛЖИТЬ</button>
         <button class="btn" data-a="retry">ЗАНОВО ЗАКАЗ</button>
+        <button class="btn" data-a="help">❓ КАК ИГРАТЬ</button>
         <button class="btn" data-a="settings">⚙ НАСТРОЙКИ</button>
         <button class="btn" data-a="sound">${this.profile.muted ? "🔇 ВКЛ ЗВУК" : "🔊 ВЫКЛ ЗВУК"}</button>
         <button class="btn" data-a="quit">В МЕНЮ</button>
@@ -454,6 +483,7 @@ export class Game {
       retry: () => {
         if (this.order) this.startOrder(this.order);
       },
+      help: () => this.showTutorial(true),
       settings: () => {
         this.settingsFrom = "paused";
         this.showScreen("settings");
@@ -609,7 +639,7 @@ export class Game {
     saveProfile(this.profile);
     this.audio.cash();
     this.grantAchievements();
-    this.renderGarage();
+    this.showScreen(this.screen);
   }
 
   private selectCar(id: string): void {
@@ -617,7 +647,7 @@ export class Game {
     this.profile.carId = id;
     this.applyCarSpec();
     saveProfile(this.profile);
-    this.renderGarage();
+    this.showScreen(this.screen);
   }
 
   private buyUpgrade(key: keyof Profile["upgrades"]["ae86"]): void {
@@ -636,9 +666,11 @@ export class Game {
   }
 
   private applyCarSpec(): void {
+    const hero = this.heroFor(this.currentCarSpec());
     this.car.setSpec(tunedSpec(this.currentCarSpec(), this.currentUpgrades()));
+    this.car.setHeroModel(hero ?? null);
     // title/garage background shows the current car
-    this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades());
+    this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades(), hero);
   }
 
   // ================= orders =================
@@ -780,9 +812,11 @@ export class Game {
     this.popups = el("div", "bonus-popups");
     this.hudEl.appendChild(this.popups);
 
-    const help = el("button", "hud-help", "?");
-    help.addEventListener("click", () => this.showTutorial(true));
-    this.hudEl.appendChild(help);
+    const pauseBtn = el("button", "hud-pause", "❚❚");
+    pauseBtn.setAttribute("aria-label", "Пауза");
+    pauseBtn.title = "Пауза";
+    pauseBtn.addEventListener("click", () => this.togglePause());
+    this.hudEl.appendChild(pauseBtn);
 
     this.tutorialEl = el("div", "tutorial");
     this.tutorialEl.innerHTML = `
@@ -802,7 +836,8 @@ export class Game {
       saveProfile(this.profile);
       this.tutorialEl.style.display = "none";
     });
-    this.hudEl.appendChild(this.tutorialEl);
+    // appended to the overlay root (not hud) so it stays visible over menus
+    this.overlay.appendChild(this.tutorialEl);
 
     if (this.input?.isTouch) {
       const rh = el("div", "rotate-hint", "Поверните телефон горизонтально 🔄");

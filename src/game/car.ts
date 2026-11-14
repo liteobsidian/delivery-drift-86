@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { CarSpec } from "./types";
 import type { InputState } from "./input";
 import type { World } from "./world";
+import type { LoadedModel } from "./assets";
 
 export interface CarStepResult {
   speed: number;
@@ -52,6 +53,7 @@ export class Car {
   private body: THREE.Group;
   private wheels: THREE.Mesh[] = [];
   private wheelPivots: THREE.Group[] = [];
+  private heroModel: LoadedModel | null = null;
   private wheelSpin = 0;
   private smokeTimer = 0;
   private animT = 0;
@@ -72,15 +74,26 @@ export class Car {
     this.rebuildMesh();
   }
 
+  /** Attach/detach a detailed library body (used when assets finish loading). */
+  setHeroModel(model: LoadedModel | null): void {
+    this.heroModel = model;
+    this.rebuildMesh();
+  }
+
   /** Full visual reset — used after repairs too. */
   private rebuildMesh(): void {
     this.group.remove(this.body);
-    disposeDeep(this.body);
+    // hero (GLB) clones share geometry with the cached template — never dispose it
+    disposeDeep(this.body, !!this.heroModel);
     this.wheels = [];
     this.wheelPivots = [];
-    this.body = buildCarMesh(this.spec, this.wheels, this.wheelPivots, (p) => {
-      this.parts = p;
-    });
+    this.body = this.heroModel
+      ? buildHeroMesh(this.spec, this.heroModel, this.wheels, this.wheelPivots, (p) => {
+          this.parts = p;
+        })
+      : buildCarMesh(this.spec, this.wheels, this.wheelPivots, (p) => {
+          this.parts = p;
+        });
     this.group.add(this.body);
   }
 
@@ -391,14 +404,14 @@ export class Car {
   }
 
   dispose(): void {
-    disposeDeep(this.group);
+    disposeDeep(this.group, !!this.heroModel);
   }
 }
 
-function disposeDeep(obj: THREE.Object3D): void {
+function disposeDeep(obj: THREE.Object3D, keepGeometry = false): void {
   obj.traverse((o) => {
     const mesh = o as THREE.Mesh;
-    if (mesh.geometry) mesh.geometry.dispose();
+    if (!keepGeometry && mesh.geometry) mesh.geometry.dispose();
     const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
     if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
     else mat?.dispose();
@@ -672,4 +685,144 @@ export function buildCarMesh(
 
   onParts?.({ bodyMesh, glassMats, bumpers, allWheelMeshes, spoiler });
   return root;
+}
+
+/**
+ * Hero body from the design-asset library (detailed GLB-style model).
+ * The cached template is cloned with per-instance materials; body paint is
+ * recolored to the spec color. Wheel parents are detected by name pattern,
+ * wrapped in steering pivots (front pair), and registered for spin/loss.
+ * Geometry stays shared with the template — do NOT run disposeDeep on it
+ * without keepGeometry.
+ */
+export function buildHeroMesh(
+  spec: CarSpec,
+  model: LoadedModel,
+  wheels: THREE.Mesh[] = [],
+  pivots: THREE.Group[] = [],
+  onParts?: (p: CarParts) => void
+): THREE.Group {
+  const root = new THREE.Group();
+  const inner = model.root.clone(true);
+  root.add(inner);
+
+  // per-instance materials + body recolor
+  const glassMats: THREE.MeshStandardMaterial[] = [];
+  let bodyMesh: THREE.Mesh | null = null;
+  inner.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.material) return;
+    const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map(
+      (m) => {
+        const c = m.clone();
+        const sm = c as THREE.MeshStandardMaterial;
+        if (/body|paint/i.test(c.name) && sm.color) {
+          sm.color.set(spec.color);
+          if ("metalness" in sm) sm.metalness = 0.35;
+          if ("roughness" in sm) sm.roughness = 0.35;
+          if (!bodyMesh && /body/i.test(c.name)) bodyMesh = mesh;
+        }
+        if (/glass/i.test(c.name) && sm.color) glassMats.push(sm);
+        return c;
+      }
+    );
+    mesh.material = Array.isArray(mesh.material) ? mats : mats[0];
+  });
+  if (!bodyMesh) bodyMesh = (inner.getObjectByProperty("type", "Mesh") as THREE.Mesh) ?? new THREE.Mesh();
+
+  // wheel parents — name patterns differ per asset pack; first hit wins
+  const WHEEL_PATTERNS = [/^wheel hub/i, /^dark wheel inset/i, /^hub_center/i];
+  let hubNodes: THREE.Object3D[] = [];
+  for (const re of WHEEL_PATTERNS) {
+    const found: THREE.Object3D[] = [];
+    inner.traverse((o) => {
+      if (re.test(o.name)) found.push(o);
+    });
+    if (found.length === 4) {
+      hubNodes = found;
+      break;
+    }
+  }
+  inner.updateWorldMatrix(true, true);
+  // nose is local -z: front = smaller z. order [FL, FR, RL, RR] (x<0 = left)
+  const pos = hubNodes.map((h) => h.getWorldPosition(new THREE.Vector3()));
+  const idx = hubNodes.map((_, i) => i).sort((a, b) => pos[a].z - pos[b].z);
+  const front = idx.slice(0, 2).sort((a, b) => pos[a].x - pos[b].x);
+  const rear = idx.slice(2, 4).sort((a, b) => pos[a].x - pos[b].x);
+  const order = [...front, ...rear];
+
+  const allWheelMeshes: THREE.Object3D[] = [];
+  order.forEach((i, k) => {
+    const hub = hubNodes[i];
+    allWheelMeshes.push(hub);
+    wheels.push(hub as unknown as THREE.Mesh);
+    if (k < 2 && hub.parent) {
+      // wrap front hubs in a steering pivot at the hub position
+      const pivot = new THREE.Group();
+      pivot.position.copy(hub.position);
+      hub.parent.add(pivot);
+      pivot.attach(hub);
+      pivots.push(pivot);
+    }
+  });
+
+  // spoiler: collect wing nodes (may be empty for sedans/hatchbacks)
+  const spoiler = new THREE.Group();
+  const wingNodes: THREE.Object3D[] = [];
+  inner.traverse((o) => {
+    if (/rear wing|wing pedestal|spoiler/i.test(o.name)) wingNodes.push(o);
+  });
+  if (wingNodes.length) {
+    // reparent only the outermost wing nodes into the removable spoiler group
+    const roots = wingNodes.filter(
+      (w) => !wingNodes.some((o) => o !== w && isDescendant(w, o))
+    );
+    inner.add(spoiler);
+    for (const r of roots) spoiler.attach(r);
+  }
+
+  // soft radial underglow in the car's own color (hard-edged plane reads as a slab)
+  const s = model.size;
+  const gc = document.createElement("canvas");
+  gc.width = gc.height = 128;
+  const gg = gc.getContext("2d")!;
+  const grad = gg.createRadialGradient(64, 64, 6, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,255,255,0.85)");
+  grad.addColorStop(0.55, "rgba(255,255,255,0.25)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  gg.fillStyle = grad;
+  gg.fillRect(0, 0, 128, 128);
+  const glow = new THREE.Mesh(
+    new THREE.PlaneGeometry(s.x + 1.0, s.z + 1.2),
+    new THREE.MeshBasicMaterial({
+      color: spec.color,
+      map: new THREE.CanvasTexture(gc),
+      transparent: true,
+      opacity: 0.5,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = 0.06;
+  glow.name = "hero-underglow";
+  root.add(glow);
+
+  onParts?.({
+    bodyMesh: bodyMesh as THREE.Mesh,
+    glassMats,
+    bumpers: [],
+    allWheelMeshes,
+    spoiler,
+  });
+  return root;
+}
+
+function isDescendant(node: THREE.Object3D, ancestor: THREE.Object3D): boolean {
+  let p: THREE.Object3D | null = node.parent;
+  while (p) {
+    if (p === ancestor) return true;
+    p = p.parent;
+  }
+  return false;
 }

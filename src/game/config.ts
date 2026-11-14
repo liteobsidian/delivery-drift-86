@@ -54,6 +54,7 @@ export const CARS: CarSpec[] = [
     color: 0xf2f2ee,
     accent: 0x14161c,
     body: "hatch",
+    glb: "v1hatch",
   },
   {
     id: "supra",
@@ -124,6 +125,7 @@ export const CARS: CarSpec[] = [
     color: 0x4a3f8f,
     accent: 0x0c0f16,
     body: "sedan",
+    glb: "v1coupe",
     spoiler: "big",
   },
   {
@@ -160,6 +162,7 @@ export const CARS: CarSpec[] = [
     color: 0xd7a21a,
     accent: 0x10131a,
     body: "sedan",
+    glb: "v1sedan",
     spoiler: "wing",
   },
 ];

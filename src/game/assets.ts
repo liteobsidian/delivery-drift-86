@@ -25,6 +25,18 @@ import midriseAssetSrc from "../assets/props/midrise/asset.js?raw";
 import midriseOrientSrc from "../assets/props/midrise/orientation.js?raw";
 import midriseDataUrl from "../assets/props/midrise/data.json.gz.b64?url";
 import midrisePackUrl from "../assets/props/midrise/pack-1.bin.gz.b64?url";
+import v1coupeAssetSrc from "../assets/vehicles/v1coupe/asset.js?raw";
+import v1coupeOrientSrc from "../assets/vehicles/v1coupe/orientation.js?raw";
+import v1coupeDataUrl from "../assets/vehicles/v1coupe/data.json.gz.b64?url";
+import v1coupePackUrl from "../assets/vehicles/v1coupe/pack-1.bin.gz.b64?url";
+import v1hatchAssetSrc from "../assets/vehicles/v1hatch/asset.js?raw";
+import v1hatchOrientSrc from "../assets/vehicles/v1hatch/orientation.js?raw";
+import v1hatchDataUrl from "../assets/vehicles/v1hatch/data.json.gz.b64?url";
+import v1hatchPackUrl from "../assets/vehicles/v1hatch/pack-1.bin.gz.b64?url";
+import v1sedanAssetSrc from "../assets/vehicles/v1sedan/asset.js?raw";
+import v1sedanOrientSrc from "../assets/vehicles/v1sedan/orientation.js?raw";
+import v1sedanDataUrl from "../assets/vehicles/v1sedan/data.json.gz.b64?url";
+import v1sedanPackUrl from "../assets/vehicles/v1sedan/pack-1.bin.gz.b64?url";
 
 export interface LoadedModel {
   /** wrapper group: metre scale, sits on y=0, nose faces local -z */
@@ -38,7 +50,11 @@ export interface GameAssets {
   traffic: LoadedModel[];
   police: LoadedModel;
   midrise: LoadedModel;
+  /** detailed hero-car bodies (design-asset library models) */
+  hero: Partial<Record<HeroModelKey, LoadedModel>>;
 }
+
+export type HeroModelKey = "v1coupe" | "v1hatch" | "v1sedan";
 
 type CreateAsset = (
   three: unknown,
@@ -77,6 +93,9 @@ const assets = {
   coupe: ${assetBlock(coupeOrientSrc, loaderSrc, coupeAssetSrc)},
   police: ${assetBlock(policeOrientSrc, loaderSrc, policeAssetSrc)},
   midrise: ${assetBlock(midriseOrientSrc, loaderSrc, midriseAssetSrc)},
+  v1coupe: ${assetBlock(v1coupeOrientSrc, loaderSrc, v1coupeAssetSrc)},
+  v1hatch: ${assetBlock(v1hatchOrientSrc, loaderSrc, v1hatchAssetSrc)},
+  v1sedan: ${assetBlock(v1sedanOrientSrc, loaderSrc, v1sedanAssetSrc)},
 };
 export { assets };
 `;
@@ -88,6 +107,9 @@ const B64_URLS: Record<string, { "data.json.gz": string; "pack-1.bin.gz": string
   coupe: { "data.json.gz": coupeDataUrl, "pack-1.bin.gz": coupePackUrl },
   police: { "data.json.gz": policeDataUrl, "pack-1.bin.gz": policePackUrl },
   midrise: { "data.json.gz": midriseDataUrl, "pack-1.bin.gz": midrisePackUrl },
+  v1coupe: { "data.json.gz": v1coupeDataUrl, "pack-1.bin.gz": v1coupePackUrl },
+  v1hatch: { "data.json.gz": v1hatchDataUrl, "pack-1.bin.gz": v1hatchPackUrl },
+  v1sedan: { "data.json.gz": v1sedanDataUrl, "pack-1.bin.gz": v1sedanPackUrl },
 };
 
 /**
@@ -196,6 +218,9 @@ const ASSET_STATES: Record<string, string> = {
   coupe: "default",
   police: "parked",
   midrise: "assembled",
+  v1coupe: "default",
+  v1hatch: "parked",
+  v1sedan: "closed",
 };
 
 export async function loadGameAssets(): Promise<GameAssets> {
@@ -207,5 +232,10 @@ export async function loadGameAssets(): Promise<GameAssets> {
   const coupe = await load("coupe", Math.PI, (s) => 4.45 / Math.max(s.x, s.z));
   const police = await load("police", Math.PI, (s) => 4.75 / Math.max(s.x, s.z));
   const midrise = await load("midrise", 0, (s) => 26 / s.y);
-  return { traffic: [hatchback, sedan, coupe], police, midrise };
+  // hero bodies: nose axes verified from renders — v1coupe nose +z,
+  // v1hatch nose -x, v1sedan nose +x (game convention: nose -> local -z)
+  const v1coupe = await load("v1coupe", Math.PI, (s) => 4.5 / Math.max(s.x, s.z));
+  const v1hatch = await load("v1hatch", -Math.PI / 2, (s) => 4.2 / Math.max(s.x, s.z));
+  const v1sedan = await load("v1sedan", Math.PI / 2, (s) => 4.6 / Math.max(s.x, s.z));
+  return { traffic: [hatchback, sedan, coupe], police, midrise, hero: { v1coupe, v1hatch, v1sedan } };
 }

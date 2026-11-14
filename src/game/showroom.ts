@@ -4,9 +4,20 @@
  */
 import * as THREE from "three";
 import type { CarSpec } from "./types";
-import { buildCarMesh } from "./car";
+import { buildCarMesh, buildHeroMesh } from "./car";
 import { tunedSpec } from "./config";
 import type { UpgradeLevels } from "./types";
+import type { LoadedModel } from "./assets";
+
+/** dispose per-instance materials; GLB hero clones share template geometry */
+function disposeCarVisual(obj: THREE.Object3D, keepGeometry: boolean): void {
+  obj.traverse((o) => {
+    const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+    else mat?.dispose();
+    if (!keepGeometry) (o as THREE.Mesh).geometry?.dispose?.();
+  });
+}
 
 let thumbRenderer: THREE.WebGLRenderer | null = null;
 let thumbScene: THREE.Scene | null = null;
@@ -35,22 +46,18 @@ function ensureThumbRig(): void {
 }
 
 /** Render (and cache) a garage thumbnail for a car spec. */
-export function carThumb(spec: CarSpec, up?: UpgradeLevels): string {
+export function carThumb(spec: CarSpec, up?: UpgradeLevels, hero?: LoadedModel): string {
   const tuned = up ? tunedSpec(spec, up) : spec;
-  const key = `${tuned.id}/${up ? `${up.engine}${up.tires}${up.suspension}${up.turbo}` : "0"}`;
+  const key = `${tuned.id}/${up ? `${up.engine}${up.tires}${up.suspension}${up.turbo}` : "0"}${hero ? "+glb" : ""}`;
   const hit = thumbCache.get(key);
   if (hit) return hit;
   ensureThumbRig();
-  const mesh = buildCarMesh(tuned);
+  const mesh = hero ? buildHeroMesh(tuned, hero) : buildCarMesh(tuned);
   thumbScene!.add(mesh);
   thumbRenderer!.render(thumbScene!, thumbCamera!);
   const url = thumbRenderer!.domElement.toDataURL("image/png");
   thumbScene!.remove(mesh);
-  mesh.traverse((o) => {
-    const m = (o as THREE.Mesh).material as THREE.Material | undefined;
-    if (m) m.dispose();
-    (o as THREE.Mesh).geometry?.dispose?.();
-  });
+  disposeCarVisual(mesh, !!hero);
   thumbCache.set(key, url);
   return url;
 }
@@ -59,7 +66,7 @@ export interface Showroom {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   carGroup: THREE.Group;
-  setCar: (spec: CarSpec, up: UpgradeLevels) => void;
+  setCar: (spec: CarSpec, up: UpgradeLevels, hero?: LoadedModel) => void;
   update: (dt: number) => void;
 }
 
@@ -110,21 +117,28 @@ export function createShowroom(): Showroom {
   camera.lookAt(0, 0.5, 0);
 
   let car: THREE.Group | null = null;
+  let carWasHero = false;
   return {
     scene,
     camera,
     carGroup,
-    setCar(spec, up) {
+    setCar(spec, up, hero) {
       if (car) {
         carGroup.remove(car);
-        car.traverse((o) => {
-          const m = (o as THREE.Mesh).material as THREE.Material | undefined;
-          if (m) m.dispose();
-          (o as THREE.Mesh).geometry?.dispose?.();
-        });
+        disposeCarVisual(car, carWasHero);
       }
-      car = buildCarMesh(tunedSpec(spec, up));
+      carWasHero = !!hero;
+      car = hero
+        ? buildHeroMesh(tunedSpec(spec, up), hero)
+        : buildCarMesh(tunedSpec(spec, up));
       carGroup.add(car);
+      // detailed library bodies are bulkier — frame them a bit wider
+      camera.position.set(
+        hero ? 6.2 : 4.6,
+        hero ? 2.5 : 2.0,
+        hero ? 7.0 : 5.2
+      );
+      camera.lookAt(0, 0.5, 0);
     },
     update(dt: number) {
       carGroup.rotation.y += dt * 0.45;
