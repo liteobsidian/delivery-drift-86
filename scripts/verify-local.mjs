@@ -86,6 +86,14 @@ const ok = (msg) => console.log("ok:", msg);
   if (screen1 !== "playing") fail(`Space did not start gameplay (screen=${screen1})`);
   else ok("desktop: Space starts gameplay");
 
+  // packed assets must decode and load (base64 shim → gzip payloads)
+  try {
+    await page.waitForFunction(() => window.__gameDebug.assetsReady() === true, null, { timeout: 30000 });
+    ok("desktop: GLB assets loaded");
+  } catch {
+    fail("desktop: assets failed to load");
+  }
+
   // direction assertions
   const pos = () => page.evaluate(() => window.__gameProbe());
   const before = await pos();
@@ -96,9 +104,11 @@ const ok = (msg) => console.log("ok:", msg);
   if (!(afterW.z - before.z < -0.5)) fail(`W not forward (dz=${(afterW.z - before.z).toFixed(3)})`);
   else ok(`desktop: W drives forward (dz=${(afterW.z - before.z).toFixed(2)})`);
   const beforeD = await pos();
+  await page.keyboard.down("KeyW"); // keep rolling so steering has effect
   await page.keyboard.down("KeyD");
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(1500);
   await page.keyboard.up("KeyD");
+  await page.keyboard.up("KeyW");
   const afterD = await pos();
   if (!(afterD.x - beforeD.x > 0.2)) fail(`D not right (dx=${(afterD.x - beforeD.x).toFixed(3)})`);
   else ok(`desktop: D steers right (dx=${(afterD.x - beforeD.x).toFixed(2)})`);
@@ -141,10 +151,12 @@ const ok = (msg) => console.log("ok:", msg);
   ok("desktop: police chase screenshot");
   // escape the chase (sim time runs slower than real time under software GL)
   await page.evaluate(() => window.__gameDebug.teleport(160, 160));
-  await page.waitForTimeout(10000);
-  const policeOff = await page.evaluate(() => window.__gameDebug.policeActive());
-  if (policeOff) fail("police did not disengage after escape");
-  else ok("desktop: police escape works");
+  try {
+    await page.waitForFunction(() => window.__gameDebug.policeActive() === false, null, { timeout: 30000 });
+    ok("desktop: police escape works");
+  } catch {
+    fail("police did not disengage after escape");
+  }
 
   await ctx.close();
 }
@@ -165,6 +177,31 @@ const ok = (msg) => console.log("ok:", msg);
   ok("mobile: game ready");
   await page.waitForTimeout(2500);
   await page.screenshot({ path: join(SHOTS, "04-mobile-title.png") });
+
+  // settings reachable from title, volume slider present
+  await page.tap('[data-a="settings"]');
+  await page.waitForTimeout(300);
+  const hasSlider = await page.evaluate(() => !!document.getElementById("vol-slider"));
+  if (!hasSlider) fail("mobile: settings screen has no volume slider");
+  else ok("mobile: settings screen with volume slider");
+  await page.screenshot({ path: join(SHOTS, "04b-mobile-settings.png") });
+  await page.tap(".panel.settings [data-a='back']");
+  await page.waitForTimeout(300);
+
+  // achievements screen
+  await page.tap('[data-a="achievements"]');
+  await page.waitForTimeout(300);
+  const achRows = await page.evaluate(() => document.querySelectorAll(".ach-row").length);
+  if (achRows < 5) fail(`mobile: achievements list too short (${achRows})`);
+  else ok(`mobile: achievements screen (${achRows} rows)`);
+  await page.screenshot({ path: join(SHOTS, "04c-mobile-achievements.png") });
+  await page.tap(".panel.achievements [data-a='back']");
+  await page.waitForTimeout(300);
+
+  // keyboard hints must be hidden on touch devices
+  const hintHidden = await page.evaluate(() => !document.querySelector(".hint-row"));
+  if (!hintHidden) fail("mobile: keyboard hints still shown on touch device");
+  else ok("mobile: keyboard hints hidden on touch");
 
   const touchVisible = await page.evaluate(() => {
     const el = document.getElementById("touch-controls");
@@ -198,23 +235,27 @@ const ok = (msg) => console.log("ok:", msg);
   await page.tap(".tutorial-box .btn.primary");
   await page.waitForTimeout(300);
 
-  // drive with touch: hold gas via synthetic pointer events (tap = too short)
+  // drive with touch: joystick forward = throttle (synthetic pointer events)
   await page.evaluate(() => {
-    const el = document.getElementById("tc-gas");
-    const opts = { pointerId: 7, bubbles: true, clientX: 0, clientY: 0 };
+    const el = document.getElementById("tc-wheel");
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const opts = { pointerId: 7, bubbles: true, clientX: cx, clientY: cy };
     el.dispatchEvent(new PointerEvent("pointerdown", opts));
+    el.dispatchEvent(new PointerEvent("pointermove", { ...opts, clientY: cy - 60 }));
   });
   await page.waitForTimeout(300);
   const p1 = await page.evaluate(() => window.__gameProbe());
   await page.waitForTimeout(2500);
   const p2 = await page.evaluate(() => window.__gameProbe());
   await page.evaluate(() => {
-    const el = document.getElementById("tc-gas");
+    const el = document.getElementById("tc-wheel");
     el.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, bubbles: true }));
   });
   const moved = Math.hypot(p2.x - p1.x, p2.z - p1.z);
-  if (moved < 2) fail(`mobile: gas hold did not move car (${moved.toFixed(2)}u)`);
-  else ok(`mobile: gas pedal moves car (${moved.toFixed(1)}u)`);
+  if (moved < 2) fail(`mobile: joystick forward did not move car (${moved.toFixed(2)}u)`);
+  else ok(`mobile: joystick forward moves car (${moved.toFixed(1)}u)`);
 
   await page.screenshot({ path: join(SHOTS, "05-mobile-gameplay.png") });
 
