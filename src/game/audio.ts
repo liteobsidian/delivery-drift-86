@@ -15,6 +15,7 @@ export class AudioSystem {
   private musicTimer: number | null = null;
   private musicStep = 0;
   muted = false;
+  volume = 1; // 0..1 master multiplier
 
   ensure(): void {
     if (this.ctx) {
@@ -28,7 +29,7 @@ export class AudioSystem {
           .webkitAudioContext;
       this.ctx = new AC();
       this.master = this.ctx.createGain();
-      this.master.gain.value = this.muted ? 0 : 0.5;
+      this.master.gain.value = this.muted ? 0 : 0.5 * this.volume;
       this.master.connect(this.ctx.destination);
       this.buildEngine();
       this.buildSkid();
@@ -37,14 +38,23 @@ export class AudioSystem {
     }
   }
 
-  setMuted(m: boolean): void {
-    this.muted = m;
+  private applyGain(): void {
     if (this.master && this.ctx) {
       this.master.gain.linearRampToValueAtTime(
-        m ? 0 : 0.5,
+        this.muted ? 0 : 0.5 * this.volume,
         this.ctx.currentTime + 0.1
       );
     }
+  }
+
+  setMuted(m: boolean): void {
+    this.muted = m;
+    this.applyGain();
+  }
+
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v));
+    this.applyGain();
   }
 
   private buildEngine(): void {

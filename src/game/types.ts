@@ -12,13 +12,26 @@ export type GameScreen =
   | "orders"
   | "playing"
   | "paused"
-  | "result";
+  | "result"
+  | "settings"
+  | "achievements";
 
 export interface UpgradeLevels {
   engine: number; // 0..3
   tires: number; // 0..3
   suspension: number; // 0..3
   turbo: number; // 0..3
+}
+
+/** Lifetime stats used by achievements. */
+export interface Stats {
+  scraps: number; // "Задел!" grazes
+  jumps: number; // ramp jumps
+  escapes: number; // police chases escaped
+  rolls: number; // rollovers
+  redLights: number; // red lights run (lifetime)
+  maxSpeedKmh: number;
+  perfectDeliveries: number; // delivered with 100% cargo
 }
 
 export interface Profile {
@@ -31,6 +44,9 @@ export interface Profile {
   totalEarn: number;
   driftBest: number;
   muted: boolean;
+  volume: number; // 0..1 master volume
+  stats: Stats;
+  unlockedAch: string[];
   seenTutorial?: boolean;
 }
 

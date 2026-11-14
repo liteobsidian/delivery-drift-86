@@ -16,6 +16,17 @@ export function defaultProfile(): Profile {
     totalEarn: 0,
     driftBest: 0,
     muted: false,
+    volume: 0.8,
+    stats: {
+      scraps: 0,
+      jumps: 0,
+      escapes: 0,
+      rolls: 0,
+      redLights: 0,
+      maxSpeedKmh: 0,
+      perfectDeliveries: 0,
+    },
+    unlockedAch: [],
   };
 }
 
