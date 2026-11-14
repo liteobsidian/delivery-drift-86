@@ -62,8 +62,13 @@ export interface CarSpec {
   cargoProtect: number; // 0..1 base suspension protection
   stability: number; // rollover resistance
   price: number;
+  /** deliveries required before the car can be bought (0 = always) */
+  unlockDeliveries?: number;
   color: number;
   accent: number;
+  /** silhouette style for the procedural body */
+  body?: "hatch" | "coupe" | "low" | "sedan";
+  spoiler?: "wing" | "big" | "duck" | "none";
 }
 
 export interface Order {

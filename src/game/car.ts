@@ -406,10 +406,10 @@ function disposeDeep(obj: THREE.Object3D): void {
 }
 
 /** Parametric low-poly car; extruded side profile + details. */
-function buildCarMesh(
+export function buildCarMesh(
   spec: CarSpec,
-  wheels: THREE.Mesh[],
-  pivots: THREE.Group[],
+  wheels: THREE.Mesh[] = [],
+  pivots: THREE.Group[] = [],
   onParts?: (p: CarParts) => void
 ): THREE.Group {
   const root = new THREE.Group();
@@ -433,12 +433,18 @@ function buildCarMesh(
   });
   glassMats.push(glassMat);
 
-  const isSupra = spec.id === "supra";
+  const body = spec.body ?? "hatch";
+  const DIMS: Record<string, { L: number; W: number }> = {
+    hatch: { L: 4.15, W: 1.72 },
+    coupe: { L: 4.5, W: 1.85 },
+    low: { L: 4.4, W: 1.88 },
+    sedan: { L: 4.7, W: 1.86 },
+  };
+  const { L, W } = DIMS[body] ?? DIMS.hatch;
 
   // side profile (x = forward length, y = height), extruded across width
-  const L = isSupra ? 4.5 : 4.15; // length
   const s = new THREE.Shape();
-  if (isSupra) {
+  if (body === "coupe") {
     s.moveTo(-L / 2, 0.28);
     s.lineTo(-L / 2 + 0.5, 0.42); // nose
     s.lineTo(-L / 2 + 1.6, 0.62); // hood slope
@@ -447,6 +453,29 @@ function buildCarMesh(
     s.lineTo(1.5, 0.6); // rear glass
     s.lineTo(L / 2 - 0.4, 0.52);
     s.lineTo(L / 2, 0.4);
+    s.lineTo(L / 2, 0.28);
+  } else if (body === "low") {
+    // sleek low fastback (RX-7 / NSX flavor)
+    s.moveTo(-L / 2, 0.26);
+    s.lineTo(-L / 2 + 0.55, 0.36); // low nose
+    s.lineTo(-L / 2 + 1.5, 0.5); // long hood
+    s.lineTo(-0.1, 0.68); // raked windshield
+    s.lineTo(0.9, 0.7); // low roof
+    s.lineTo(1.9, 0.52); // fastback slope
+    s.lineTo(L / 2 - 0.3, 0.46);
+    s.lineTo(L / 2, 0.36);
+    s.lineTo(L / 2, 0.26);
+  } else if (body === "sedan") {
+    // notchback with a real trunk (GT-R / Evo flavor)
+    s.moveTo(-L / 2, 0.28);
+    s.lineTo(-L / 2 + 0.45, 0.5);
+    s.lineTo(-L / 2 + 1.3, 0.6); // hood
+    s.lineTo(-L / 2 + 1.5, 0.92); // windshield
+    s.lineTo(0.7, 0.95); // roof
+    s.lineTo(1.25, 0.62); // rear glass
+    s.lineTo(1.7, 0.6); // short deck
+    s.lineTo(L / 2 - 0.25, 0.52); // trunk lid
+    s.lineTo(L / 2, 0.42);
     s.lineTo(L / 2, 0.28);
   } else {
     // boxy AE86 hatchback
@@ -460,8 +489,6 @@ function buildCarMesh(
     s.lineTo(L / 2, 0.28);
   }
   s.lineTo(-L / 2, 0.28);
-
-  const W = isSupra ? 1.85 : 1.72;
   const geo = new THREE.ExtrudeGeometry(s, {
     depth: W - 0.3,
     bevelEnabled: true,
@@ -482,11 +509,18 @@ function buildCarMesh(
   root.add(bodyMesh);
 
   // glass cabin (slightly inset box over profile cabin area)
+  const CABIN: Record<string, [number, number, number]> = {
+    hatch: [0.82, 1.55, 0.15],
+    coupe: [0.72, 1.7, 0.25],
+    low: [0.66, 1.6, 0.28],
+    sedan: [0.8, 1.75, 0.2],
+  };
+  const cab = CABIN[body] ?? CABIN.hatch;
   const cabin = new THREE.Mesh(
-    new THREE.BoxGeometry(W - 0.45, 0.42, isSupra ? 1.7 : 1.55),
+    new THREE.BoxGeometry(W - 0.45, 0.42, cab[1]),
     glassMat
     );
-  cabin.position.set(0, isSupra ? 0.72 : 0.82, isSupra ? 0.25 : 0.15);
+  cabin.position.set(0, cab[0], cab[2]);
   root.add(cabin);
 
   // bumpers / skirt
@@ -503,18 +537,17 @@ function buildCarMesh(
     emissive: 0xffedb0,
     emissiveIntensity: 2.6,
   });
-  if (isSupra) {
-    const hl = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.14, 0.1), hlMat);
-    hl.position.set(0, 0.48, -L / 2 - 0.02);
-    root.add(hl);
-  }
-  // AE86 pop-up headlights
-  if (!isSupra) {
+  if (body === "hatch") {
+    // AE86 pop-up headlights
     for (const sx of [-1, 1]) {
       const pop = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.15, 0.3), hlMat);
       pop.position.set(sx * 0.56, 0.62, -L / 2 + 0.28);
       root.add(pop);
     }
+  } else {
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.14, 0.1), hlMat);
+    hl.position.set(0, body === "low" ? 0.42 : 0.48, -L / 2 - 0.02);
+    root.add(hl);
   }
   // taillights — thin strip
   const tlMat = new THREE.MeshStandardMaterial({
@@ -525,8 +558,8 @@ function buildCarMesh(
   const tl = new THREE.Mesh(new THREE.BoxGeometry(W - 0.7, 0.09, 0.07), tlMat);
   tl.position.set(0, 0.54, L / 2 + 0.02);
   root.add(tl);
-  // panda-style black bumpers (AE86 signature look)
-  if (!isSupra) {
+  // panda-style black bumpers (AE86 signature look); smoother on other bodies
+  if (body === "hatch") {
     const bf = new THREE.Mesh(new THREE.BoxGeometry(W + 0.04, 0.2, 0.34), darkMat);
     bf.position.set(0, 0.36, -L / 2 + 0.06);
     root.add(bf);
@@ -548,24 +581,46 @@ function buildCarMesh(
 
   // spoiler (one group so the whole wing tears off)
   const spoiler = new THREE.Group();
-  const wing = new THREE.Mesh(
-    new THREE.BoxGeometry(W - 0.25, 0.07, isSupra ? 0.5 : 0.34),
-    darkMat
-  );
-  wing.position.set(0, isSupra ? 0.95 : 0.92, L / 2 - 0.25);
-  spoiler.add(wing);
-  for (const sx of [-1, 1]) {
-    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.32, 0.08), darkMat);
-    strut.position.set(sx * (W / 2 - 0.32), isSupra ? 0.76 : 0.74, L / 2 - 0.25);
-    spoiler.add(strut);
+  const spoilerKind = spec.spoiler ?? "wing";
+  if (spoilerKind !== "none") {
+    if (spoilerKind === "duck") {
+      // low ducktail lip flush with the trunk
+      const lip = new THREE.Mesh(new THREE.BoxGeometry(W - 0.3, 0.09, 0.3), darkMat);
+      lip.position.set(0, 0.58, L / 2 - 0.12);
+      spoiler.add(lip);
+    } else {
+      const big = spoilerKind === "big";
+      const wing = new THREE.Mesh(
+        new THREE.BoxGeometry(W - (big ? 0.1 : 0.25), big ? 0.09 : 0.07, big ? 0.6 : 0.34),
+        darkMat
+      );
+      wing.position.set(0, big ? 1.02 : 0.95, L / 2 - (big ? 0.2 : 0.25));
+      spoiler.add(wing);
+      for (const sx of [-1, 1]) {
+        const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, big ? 0.42 : 0.32, 0.08), darkMat);
+        strut.position.set(sx * (W / 2 - 0.32), big ? 0.8 : 0.76, L / 2 - (big ? 0.2 : 0.25));
+        spoiler.add(strut);
+        if (big) {
+          // endplates
+          const plate = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.26, 0.55), darkMat);
+          plate.position.set(sx * (W / 2 - 0.06), 1.0, L / 2 - 0.2);
+          spoiler.add(plate);
+        }
+      }
+    }
+  } else {
+    // bare lip so "spoiler lost" still has something to tear off
+    const lip = new THREE.Mesh(new THREE.BoxGeometry(W - 0.4, 0.06, 0.16), darkMat);
+    lip.position.set(0, 0.55, L / 2 - 0.06);
+    spoiler.add(lip);
   }
   root.add(spoiler);
 
-  // underglow
+  // underglow in the car's own color
   const glow = new THREE.Mesh(
     new THREE.PlaneGeometry(W + 0.7, L + 0.5),
     new THREE.MeshBasicMaterial({
-      color: isSupra ? 0xff8c2a : 0x37e0ff,
+      color: spec.color,
       transparent: true,
       opacity: 0.22,
       blending: THREE.AdditiveBlending,
@@ -588,7 +643,7 @@ function buildCarMesh(
     roughness: 0.3,
     metalness: 0.8,
   });
-  const wz = isSupra ? 1.42 : 1.32;
+  const wz = body === "hatch" ? 1.32 : body === "sedan" ? 1.48 : 1.42;
   const wx = W / 2 + 0.08;
   const positions: [number, number, boolean][] = [
     [-wx, -wz, true],

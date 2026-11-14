@@ -5,8 +5,6 @@ import {
   UPGRADE_COST,
   UPGRADE_DEFS,
   UPGRADE_MAX,
-  SUPRA_PRICE,
-  SUPRA_UNLOCK_DELIVERIES,
   RED_LIGHT_FINE,
   ROAD_W,
   LIGHT_CYCLE,
@@ -28,6 +26,8 @@ import { Police } from "./police";
 import { loadGameAssets } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
+import { carThumb, createShowroom } from "./showroom";
+import { LEVELS, courierLevel } from "./config";
 
 const SD = ROAD_W / 2 + 1.6; // stop-line distance from intersection center
 
@@ -41,12 +41,14 @@ function el(tag: string, cls: string, html = ""): HTMLElement {
 export class Game {
   private canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
+  private showroom = createShowroom();
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
   private raf = 0;
   private acc = 0;
   private running = false;
+  private tickCount = 0;
 
   profile: Profile = loadProfile();
   audio = new AudioSystem();
@@ -236,6 +238,9 @@ export class Game {
         this.police.start(this.car.pos.x + 8, this.car.pos.z + 14);
       },
       hp: () => this.car.hp,
+      ticks: () => this.tickCount,
+      keys: () => [...this.input.keys],
+      order: () => (this.order ? { x: this.order.dest.x, z: this.order.dest.z } : null),
       policeActive: () => this.police.active,
       bonus: () => this.bonusMoney,
       trafficHits: () => this.trafficHits,
@@ -292,8 +297,9 @@ export class Game {
 
   private renderTitle(): void {
     const p = this.profile;
-    const supra = CARS[1];
-    const locked = p.deliveries < SUPRA_UNLOCK_DELIVERIES;
+    this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades());
+    const lvl = courierLevel(p.deliveries);
+    const next = LEVELS[lvl + 1];
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
       <div class="title-box">
@@ -310,7 +316,8 @@ export class Game {
           <span>₽ ${p.money}</span>
           <span>доставок: ${p.deliveries}</span>
           <span>машина: ${this.currentCarSpec().name.replace("Toyota ", "")}</span>
-          ${locked ? `<span class="dim">Supra: ещё ${SUPRA_UNLOCK_DELIVERIES - p.deliveries} доставок</span>` : `<span class="gold">Supra доступна!</span>`}
+          <span class="gold">уровень ${lvl + 1} · ${LEVELS[lvl].name}</span>
+          ${next ? `<span class="dim">до «${next.name}»: ${next.deliveries - p.deliveries} доставок</span>` : `<span class="gold">максимальный уровень</span>`}
         </div>
         ${this.input.isTouch ? "" : `<div class="hint-row">
           <span>W/↑ газ</span><span>S/↓ тормоз</span><span>A D руль</span><span>ПРОБЕЛ дрифт</span><span>ESC пауза</span><span>M звук</span>
@@ -326,7 +333,6 @@ export class Game {
         this.showScreen("settings");
       },
     });
-    void supra;
   }
 
   private renderGarage(): void {
@@ -336,16 +342,17 @@ export class Game {
     const carCards = CARS.map((c) => {
       const owned = p.ownedCars.includes(c.id);
       const isCur = p.carId === c.id;
-      const locked = c.id === "supra" && p.deliveries < SUPRA_UNLOCK_DELIVERIES;
+      const need = c.unlockDeliveries ?? 0;
+      const locked = p.deliveries < need;
       let btn;
       if (isCur) btn = `<button class="btn small" disabled>В ГАРАЖЕ</button>`;
       else if (owned) btn = `<button class="btn small" data-a="select:${c.id}">ВЫБРАТЬ</button>`;
       else if (locked)
-        btn = `<button class="btn small" disabled>🔒 ${p.deliveries}/${SUPRA_UNLOCK_DELIVERIES} доставок</button>`;
+        btn = `<button class="btn small" disabled>🔒 ${p.deliveries}/${need} доставок</button>`;
       else
         btn = `<button class="btn small ${p.money >= c.price ? "primary" : ""}" data-a="buy:${c.id}">КУПИТЬ ₽${c.price}</button>`;
       return `<div class="car-card ${isCur ? "current" : ""}">
-        <div class="car-swatch" style="background:#${c.color.toString(16).padStart(6, "0")}"></div>
+        <img class="car-img" src="${carThumb(c)}" alt="${c.name}">
         <div class="car-name">${c.name}</div>
         <div class="car-stats">скорость ${c.topSpeed * 3} · разгон ${c.accel} · сцепление ${c.grip}</div>
         ${btn}
@@ -593,7 +600,7 @@ export class Game {
   private buyCar(id: string): void {
     const car = CARS.find((c) => c.id === id);
     if (!car || this.profile.ownedCars.includes(id)) return;
-    if (id === "supra" && this.profile.deliveries < SUPRA_UNLOCK_DELIVERIES) return;
+    if (this.profile.deliveries < (car.unlockDeliveries ?? 0)) return;
     if (this.profile.money < car.price) return;
     this.profile.money -= car.price;
     this.profile.ownedCars.push(id);
@@ -630,6 +637,8 @@ export class Game {
 
   private applyCarSpec(): void {
     this.car.setSpec(tunedSpec(this.currentCarSpec(), this.currentUpgrades()));
+    // title/garage background shows the current car
+    this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades());
   }
 
   // ================= orders =================
@@ -881,6 +890,7 @@ export class Game {
     const loop = () => {
       if (!this.running) return;
       this.raf = requestAnimationFrame(loop);
+      this.tickCount++;
       const dt = Math.min(this.clock.getDelta(), 0.1);
       this.acc += dt;
       const step = 1 / 60;
@@ -1275,6 +1285,22 @@ export class Game {
   // ================= render =================
 
   private renderFrame(dt: number): void {
+    if (!this.readyFlagged) {
+      this.readyFlagged = true;
+      (window as unknown as { __GAME_READY__: boolean }).__GAME_READY__ = true;
+    }
+    // menu screens show the showroom turntable instead of the city
+    if (
+      this.screen === "title" ||
+      this.screen === "garage" ||
+      this.screen === "orders" ||
+      this.screen === "settings" ||
+      this.screen === "achievements"
+    ) {
+      this.showroom.update(dt);
+      this.renderer.render(this.showroom.scene, this.showroom.camera);
+      return;
+    }
     // camera follow
     const fwd = this.car.forwardVec;
     const portrait = window.innerHeight > window.innerWidth;
@@ -1306,11 +1332,6 @@ export class Game {
 
     this.effects.update(dt, this.camera.quaternion);
     this.renderer.render(this.scene, this.camera);
-
-    if (!this.readyFlagged) {
-      this.readyFlagged = true;
-      (window as unknown as { __GAME_READY__: boolean }).__GAME_READY__ = true;
-    }
   }
 
   private resize = (): void => {
@@ -1321,6 +1342,8 @@ export class Game {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.showroom.camera.aspect = w / h;
+    this.showroom.camera.updateProjectionMatrix();
   };
 
   dispose(): void {

@@ -94,24 +94,35 @@ const ok = (msg) => console.log("ok:", msg);
     fail("desktop: assets failed to load");
   }
 
-  // direction assertions
+  // direction assertions — poll-based: under software GL the main thread can
+  // stall for seconds on shader compilation, so wall-time holds are racy. Hold
+  // the key and poll until the displacement threshold is reached; fail only
+  // on timeout. Also require the loop to make progress (tick liveness).
   const pos = () => page.evaluate(() => window.__gameProbe());
-  const before = await pos();
-  await page.keyboard.down("KeyW");
-  await page.waitForTimeout(1500);
-  await page.keyboard.up("KeyW");
-  const afterW = await pos();
-  if (!(afterW.z - before.z < -0.5)) fail(`W not forward (dz=${(afterW.z - before.z).toFixed(3)})`);
-  else ok(`desktop: W drives forward (dz=${(afterW.z - before.z).toFixed(2)})`);
-  const beforeD = await pos();
-  await page.keyboard.down("KeyW"); // keep rolling so steering has effect
-  await page.keyboard.down("KeyD");
-  await page.waitForTimeout(1500);
-  await page.keyboard.up("KeyD");
-  await page.keyboard.up("KeyW");
-  const afterD = await pos();
-  if (!(afterD.x - beforeD.x > 0.2)) fail(`D not right (dx=${(afterD.x - beforeD.x).toFixed(3)})`);
-  else ok(`desktop: D steers right (dx=${(afterD.x - beforeD.x).toFixed(2)})`);
+  const ticks = () => page.evaluate(() => window.__gameDebug.ticks());
+  const driveUntil = async (key, check, timeoutMs) => {
+    const t0 = Date.now();
+    const p0 = await pos();
+    const k0 = await ticks();
+    await page.keyboard.down(key);
+    try {
+      while (Date.now() - t0 < timeoutMs) {
+        await page.waitForTimeout(250);
+        const p = await pos();
+        if (check(p, p0)) return { moved: true, p, p0, k0 };
+      }
+      return { moved: false, p: await pos(), p0, k0 };
+    } finally {
+      await page.keyboard.up(key);
+    }
+  };
+  const w = await driveUntil("KeyW", (p, p0) => p.z - p0.z < -0.5, 30000);
+  if (!w.moved) fail(`W not forward (dz=${(w.p.z - w.p0.z).toFixed(3)})`);
+  else ok(`desktop: W drives forward (dz=${(w.p.z - w.p0.z).toFixed(2)})`);
+  await driveUntil("KeyW", (p, p0) => Math.hypot(p.x - p0.x, p.z - p0.z) > 0.2, 15000); // roll forward for steering
+  const d = await driveUntil("KeyD", (p, p0) => p.x - p0.x > 0.2, 30000);
+  if (!d.moved) fail(`D not right (dx=${(d.p.x - d.p0.x).toFixed(3)})`);
+  else ok(`desktop: D steers right (dx=${(d.p.x - d.p0.x).toFixed(2)})`);
 
   await page.keyboard.down("KeyW");
   await page.keyboard.down("Space"); // drift smoke

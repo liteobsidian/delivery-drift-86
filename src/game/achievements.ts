@@ -103,6 +103,30 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     progress: (p) => `${Math.min(p.stats.perfectDeliveries, 3)}/3`,
     done: (p) => p.stats.perfectDeliveries >= 3,
   },
+  {
+    id: "rank-courier",
+    icon: "🎖️",
+    name: "Знающий курьер",
+    desc: "Достигни 3 уровня (8 доставок)",
+    progress: (p) => `${Math.min(p.deliveries, 8)}/8`,
+    done: (p) => p.deliveries >= 8,
+  },
+  {
+    id: "rank-drift",
+    icon: "🌃",
+    name: "Дрифт-курьер",
+    desc: "Достигни 5 уровня (25 доставок)",
+    progress: (p) => `${Math.min(p.deliveries, 25)}/25`,
+    done: (p) => p.deliveries >= 25,
+  },
+  {
+    id: "rank-legend",
+    icon: "👑",
+    name: "Легенда Токио",
+    desc: "Достигни 7 уровня (60 доставок)",
+    progress: (p) => `${Math.min(p.deliveries, 60)}/60`,
+    done: (p) => p.deliveries >= 60,
+  },
 ];
 
 /** Unlock any newly completed achievements; returns the newly unlocked defs. */

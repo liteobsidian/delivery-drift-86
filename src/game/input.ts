@@ -17,7 +17,7 @@ const JOY_RADIUS = 52; // px of finger travel for full deflection
 const JOY_DEAD = 8; // px deadzone around center
 
 export class Input {
-  private keys = new Set<string>();
+  keys = new Set<string>();
   state: InputState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
 
   onPause: (() => void) | null = null;

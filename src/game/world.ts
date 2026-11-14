@@ -100,6 +100,7 @@ export class World {
     this.group.add(this.buildBuildings());
     this.group.add(this.buildStreetProps());
     this.group.add(this.buildBladeSigns());
+    this.group.add(this.buildNeonColumns());
     this.group.add(this.buildBillboards());
     this.group.add(this.buildNeonStrips());
     this.group.add(this.buildRoadSigns());
@@ -437,6 +438,52 @@ export class World {
         g.lineTo(u(WORLD_HALF + ROAD_W / 2), u(e));
         g.stroke();
       }
+    }
+
+    // asphalt wear: speckle + tar patches + manholes keep the road from
+    // reading as flat vector fill
+    const arng = mulberry32(777);
+    const ROADS: [number, boolean][] = [];
+    for (let i = 0; i < GRID_N; i++) ROADS.push([-WORLD_HALF + i * CELL, i % 2 === 0]);
+    for (let n = 0; n < 3400; n++) {
+      const [c, vertical] = ROADS[Math.floor(arng() * ROADS.length)];
+      const t = (arng() * 2 - 1) * (WORLD_HALF + ROAD_W / 2 - 2);
+      const o = (arng() * 2 - 1) * (ROAD_W / 2 - 0.8);
+      const px = vertical ? c + o : t;
+      const pz = vertical ? t : c + o;
+      const shade = arng();
+      g.fillStyle = shade < 0.5 ? "rgba(16,19,26,0.5)" : "rgba(96,104,124,0.35)";
+      const r = 0.5 + arng() * 1.6;
+      g.fillRect(u(px - r / 2), u(pz - r / 2), w(r), w(r));
+    }
+    // tar patch seams
+    g.strokeStyle = "rgba(14,17,23,0.65)";
+    g.lineWidth = w(0.22);
+    for (let n = 0; n < 26; n++) {
+      const [c, vertical] = ROADS[Math.floor(arng() * ROADS.length)];
+      const t = (arng() * 2 - 1) * (WORLD_HALF - 8);
+      const half = 2.2 + arng() * 3.4;
+      g.strokeRect(
+        u((vertical ? c : t) - (vertical ? half * 0.5 : half)),
+        u((vertical ? t : c) - (vertical ? half : half * 0.5)),
+        w(vertical ? half * 0.5 * 2 : half * 2),
+        w(vertical ? half * 2 : half * 0.5 * 2)
+      );
+    }
+    // manhole covers near block centers
+    g.fillStyle = "#262c3a";
+    for (let n = 0; n < 40; n++) {
+      const [c, vertical] = ROADS[Math.floor(arng() * ROADS.length)];
+      const t = -WORLD_HALF + (Math.floor(arng() * (GRID_N - 1)) + 0.5) * CELL;
+      const o = (arng() * 2 - 1) * 3.4;
+      const px = vertical ? c + o : t;
+      const pz = vertical ? t : c + o;
+      g.beginPath();
+      g.arc(u(px), u(pz), w(0.55), 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = "#3a4152";
+      g.lineWidth = w(0.12);
+      g.stroke();
     }
 
     // center dashes
@@ -993,6 +1040,95 @@ export class World {
     return g;
   }
 
+  /** vertical kanji-style neon columns (white glyph art, tinted per instance) */
+  private makeColumnTexture(): THREE.CanvasTexture {
+    const cv = document.createElement("canvas");
+    cv.width = 96;
+    cv.height = 384;
+    const g = cv.getContext("2d")!;
+    const rng = mulberry32(5150);
+    g.strokeStyle = "#ffffff";
+    g.lineCap = "round";
+    // stacked signboard cells with a glyph each
+    for (let k = 0; k < 4; k++) {
+      const y = 8 + k * 94;
+      g.lineWidth = 5;
+      g.strokeRect(8, y, 80, 82);
+      this.drawGlyphStrokes(g, rng, 18, y + 8, 60, 66);
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  /** tall vertical neon glyph columns on facades + a few flickering */
+  private buildNeonColumns(): THREE.Group {
+    const g = new THREE.Group();
+    const rng = mulberry32(31337);
+    const tex = this.makeColumnTexture();
+    const geo = new THREE.PlaneGeometry(1.35, 5.4);
+    const mats: THREE.Matrix4[] = [];
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const eul = new THREE.Euler();
+    const col = new THREE.Color();
+    const picked: { x: number; z: number; ry: number; y: number }[] = [];
+    for (const b of this.buildings) {
+      if (this.isHeroSpot(b) || rng() < 0.5) continue;
+      const cx = (b.minX + b.maxX) / 2;
+      const cz = (b.minZ + b.maxZ) / 2;
+      const cands = [
+        { d: this.distToLine(b.minX), x: b.minX - 0.45, z: cz, ry: -Math.PI / 2 },
+        { d: this.distToLine(b.maxX), x: b.maxX + 0.45, z: cz, ry: Math.PI / 2 },
+        { d: this.distToLine(b.minZ), x: cx, z: b.minZ - 0.45, ry: Math.PI },
+        { d: this.distToLine(b.maxZ), x: cx, z: b.maxZ + 0.45, ry: 0 },
+      ];
+      cands.sort((a, bb) => a.d - bb.d);
+      const c = cands[0];
+      if (c.d > 11) continue;
+      const y = 4.6 + rng() * 6.5;
+      eul.set(0, c.ry, 0);
+      q.setFromEuler(eul);
+      m.compose(new THREE.Vector3(c.x, y, c.z), q, new THREE.Vector3(1, 1, 1));
+      mats.push(m.clone());
+      picked.push({ x: c.x, z: c.z, ry: c.ry, y });
+    }
+    if (mats.length) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const inst = new THREE.InstancedMesh(geo, mat, mats.length);
+      mats.forEach((mm, i) => {
+        inst.setMatrixAt(i, mm);
+        col.setHex(World.NEON[Math.floor(rng() * World.NEON.length)]);
+        inst.setColorAt(i, col);
+      });
+      g.add(inst);
+    }
+    // flickering columns
+    for (let i = 0; i < 4 && i < picked.length; i++) {
+      const p = picked[Math.floor(rng() * picked.length)];
+      const base = new THREE.Color(World.NEON[Math.floor(rng() * World.NEON.length)]);
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        color: base.clone(),
+      });
+      mat.userData.base = base;
+      const sign = new THREE.Mesh(geo, mat);
+      sign.position.set(p.x, p.y + 1.2, p.z);
+      sign.rotation.y = p.ry;
+      g.add(sign);
+      this.flickerMats.push(mat);
+    }
+    return g;
+  }
+
   /** scrolling text texture for rooftop billboards */
   private makeBillboardTexture(seed: number): THREE.CanvasTexture {
     const cv = document.createElement("canvas");
@@ -1342,6 +1478,9 @@ export class World {
     });
     const placed = new Set<string>();
     let guard = 0;
+    // traffic keeps right: dir=+1 rides at -LANE, dir=-1 at +LANE; the ramp
+    // sits IN a lane and its slope follows that lane's travel direction
+    const LANE = ROAD_W / 4;
     while (this.ramps.length < 6 && guard++ < 60) {
       const i = Math.floor(rng() * GRID_N);
       const j = Math.floor(rng() * (GRID_N - 1));
@@ -1352,18 +1491,21 @@ export class World {
       const key = `${i},${j},${vertical}`;
       if (placed.has(key)) continue;
       placed.add(key);
-      const x = vertical ? c : along;
-      const z = vertical ? along : c;
+      const side = rng() < 0.5 ? -1 : 1; // which lane (which travel direction)
+      // x-road: lane z = c + side*LANE, travel dir = side===-1 ? +x : -x
+      const x = vertical ? c + side * LANE : along;
+      const z = vertical ? along : c + side * LANE;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, 0.02, z);
-      // geometry runs 7m along local z, 6.4m wide along local x — the slope
-      // must lie ALONG the travel direction, not across the road
-      // vertical road: travel along z -> rotY 0/PI; horizontal: rotY ±PI/2
-      const angle = vertical ? 0 : Math.PI / 2;
-      const rotY = rng() < 0.5 ? angle : angle + Math.PI;
+      // geometry runs 7m along local z, 6.4m wide along local x; launch dir
+      // must equal the lane's travel direction: (-sin rotY, -cos rotY)
+      // x-road: dir (t,0) -> rotY = atan2(-t, 0); z-road: dir (0,t) -> rotY = atan2(0,-t)
+      const travel = side === -1 ? 1 : -1;
+      const rotY = vertical
+        ? (travel === 1 ? Math.PI : 0)
+        : (travel === 1 ? -Math.PI / 2 : Math.PI / 2);
       mesh.rotation.y = rotY;
       g.add(mesh);
-      // launch dir = local -z rotated into world space (up the slope)
       const dx = -Math.sin(rotY);
       const dz = -Math.cos(rotY);
       this.ramps.push({
