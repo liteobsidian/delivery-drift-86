@@ -825,15 +825,21 @@ export function buildHeroMesh(
       roughness: 0.4,
       metalness: 0.6,
     });
+    const shellBounds = new THREE.Box3().setFromObject(bodyMesh as THREE.Object3D);
+    const shellSize = shellBounds.getSize(new THREE.Vector3());
+    const rearZ = shellBounds.max.z - shellSize.z * 0.08;
+    const deckY = shellBounds.max.y;
+    const bladeY = deckY + Math.max(0.12, shellSize.y * 0.12);
+    const wingWidth = Math.min(s.x * 0.94, shellSize.x * 0.92);
     const blade = new THREE.Mesh(
-      new THREE.BoxGeometry(Math.max(1.3, s.x * 0.9), 0.07, 0.42),
+      new THREE.BoxGeometry(Math.max(1.3, wingWidth), 0.07, 0.34),
       wingMat
     );
-    blade.position.set(0, s.y * 0.98, s.z / 2 - 0.18);
+    blade.position.set(0, bladeY, rearZ);
     spoiler.add(blade);
     for (const sx of [-1, 1]) {
-      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.09, s.y * 0.3, 0.09), wingMat);
-      strut.position.set(sx * (s.x * 0.32), s.y * 0.82, s.z / 2 - 0.18);
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, bladeY - deckY, 0.08), wingMat);
+      strut.position.set(sx * wingWidth * 0.32, (bladeY + deckY) / 2, rearZ);
       spoiler.add(strut);
     }
     spoiler.visible = false;
@@ -868,10 +874,7 @@ export function buildHeroMesh(
   // racing livery stripes over the roof/hood — revealed by engine upgrades.
   // roofline comes from the body shell itself: the model bbox is inflated by
   // wings/antennas and would leave the stripes floating in the air
-  const bodyBox = new THREE.Box3().setFromObject(bodyMesh as THREE.Object3D);
-  const roofY = Number.isFinite(bodyBox.max.y) ? bodyBox.max.y : s.y;
-  const bodyLen = bodyBox.max.z - bodyBox.min.z;
-  root.add(makeLivery(s.x, roofY, bodyLen * 0.94));
+  root.add(makeBodyLivery(bodyMesh as THREE.Mesh));
 
   onParts?.({
     bodyMesh: bodyMesh as THREE.Mesh,
@@ -892,27 +895,62 @@ function isDescendant(node: THREE.Object3D, ancestor: THREE.Object3D): boolean {
   return false;
 }
 
-/** two racing stripes; hidden until livery upgrades unlock them */
-function makeLivery(w: number, h: number, l: number): THREE.Group {
+/** Build racing stripes by sampling the actual body surface, so they follow hood and roof contours. */
+function makeBodyLivery(body: THREE.Mesh): THREE.Group {
   const livery = new THREE.Group();
   livery.name = "hero-livery";
-  const mat = new THREE.MeshStandardMaterial({
+  const material = new THREE.MeshStandardMaterial({
     color: 0xeef2f8,
     roughness: 0.45,
     metalness: 0.25,
     emissive: 0xbfc8dd,
     emissiveIntensity: 0.12,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
   });
-  for (const sx of [-0.26, 0.26]) {
-    const stripe = new THREE.Mesh(
-      new THREE.BoxGeometry(0.24, 0.022, Math.max(1.5, l * 0.86)),
-      mat
-    );
-    stripe.position.set(sx, h + 0.012, -l * 0.04);
-    livery.add(stripe);
+  body.updateWorldMatrix(true, false);
+  const bounds = new THREE.Box3().setFromObject(body);
+  const size = bounds.getSize(new THREE.Vector3());
+  const raycaster = new THREE.Raycaster();
+  const vertices: number[] = [];
+  const indices: number[] = [];
+  const segments = 40;
+  for (const x of [-size.x * 0.16, size.x * 0.16]) {
+    const base = vertices.length / 3;
+    for (let i = 0; i <= segments; i++) {
+      const z = bounds.max.z - (size.z * 0.08) - (size.z * 0.84 * i / segments);
+      raycaster.set(new THREE.Vector3(x, bounds.max.y + size.y + 0.5, z), new THREE.Vector3(0, -1, 0));
+      raycaster.far = size.y * 2 + 1;
+      const hit = raycaster.intersectObject(body, false)[0];
+      const y = hit ? hit.point.y + 0.012 : bounds.max.y + 0.012;
+      vertices.push(x - 0.1, y, z, x + 0.1, y, z);
+      if (i < segments) {
+        const a = base + i * 2;
+        indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  livery.add(new THREE.Mesh(geometry, material));
+  return livery;
+}
+
+function makeLivery(w: number, h: number, l: number): THREE.Group {
+  const group = new THREE.Group();
+  group.name = "hero-livery";
+  const material = new THREE.MeshStandardMaterial({ color: 0xeef2f8, roughness: 0.45, metalness: 0.25 });
+  for (const x of [-0.26, 0.26]) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.022, Math.max(1.5, l * 0.86)), material);
+    stripe.position.set(x, h, -l * 0.04);
+    group.add(stripe);
   }
   void w;
-  return livery;
+  return group;
 }
 
 export interface UpgradeLevels {
