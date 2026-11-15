@@ -810,7 +810,10 @@ export function buildHeroMesh(
   inner.traverse((o) => {
     if (/rear wing|wing pedestal|spoiler/i.test(o.name)) wingNodes.push(o);
   });
-  inner.add(spoiler);
+  // bodyBox and generated wing dimensions are measured in the outer car's
+  // normalized frame; keep the spoiler in that same frame, outside the GLB's
+  // yaw/scale wrapper, to avoid transforming its position twice.
+  root.add(spoiler);
   if (wingNodes.length) {
     // reparent only the outermost wing nodes into the removable spoiler group
     const roots = wingNodes.filter(
