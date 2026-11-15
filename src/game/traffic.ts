@@ -233,7 +233,9 @@ export class Traffic {
       // red for this axis?
       const t = l.timer;
       const redForAxis =
-        c.axis === 0 ? t >= LIGHT_CYCLE : t < LIGHT_CYCLE + LIGHT_YELLOW;
+        c.axis === 0
+          ? t >= LIGHT_CYCLE + LIGHT_YELLOW // x-road is red only after its yellow
+          : t < LIGHT_CYCLE + LIGHT_YELLOW;
       if (redForAxis) return l;
     }
     return null;

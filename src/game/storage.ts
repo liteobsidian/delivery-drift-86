@@ -11,6 +11,11 @@ export function defaultProfile(): Profile {
     upgrades: {
       ae86: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
       supra: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
+      silvia: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
+      rx7: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
+      r34: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
+      nsx: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
+      evo: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
     },
     bestEarn: 0,
     totalEarn: 0,

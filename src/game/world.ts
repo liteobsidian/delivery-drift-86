@@ -8,6 +8,24 @@ import {
   LIGHT_YELLOW,
 } from "./config";
 
+/** Central drift ring (radius) at map center. */
+export const RING_R = 44;
+/** Cloverleaf-style arcs: quarter circles tangent to the ring, one per
+ *  central block, merging the grid roads into the ring with long sweepers. */
+export const ARC_R = 38;
+export interface DriftArc {
+  cx: number;
+  cz: number;
+  a0: number;
+  a1: number;
+}
+export const DRIFT_ARCS: DriftArc[] = [
+  { cx: CELL, cz: CELL, a0: Math.PI, a1: Math.PI * 1.5 }, // NE (58,58)
+  { cx: -CELL, cz: CELL, a0: -Math.PI / 2, a1: 0 }, // NW (-58,58)
+  { cx: CELL, cz: -CELL, a0: Math.PI / 2, a1: Math.PI }, // SE (58,-58)
+  { cx: -CELL, cz: -CELL, a0: 0, a1: Math.PI / 2 }, // SW (-58,-58)
+];
+
 /** Deterministic PRNG so the city is identical every session. */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -125,7 +143,49 @@ export class World {
   nearestRoadDist(x: number, z: number): number {
     const dx = this.distToLine(x);
     const dz = this.distToLine(z);
-    return Math.min(dx, dz);
+    return Math.min(dx, dz, this.driftRoadDist(x, z));
+  }
+
+  /** distance to the drift ring + cloverleaf arcs (the central plaza). */
+  private driftRoadDist(x: number, z: number): number {
+    let d = Math.abs(Math.hypot(x, z) - RING_R);
+    for (const a of DRIFT_ARCS) {
+      const dd = this.arcDist(x, z, a);
+      if (dd < d) d = dd;
+    }
+    return d;
+  }
+
+  /** distance to one arc segment; points outside the angle window measure
+   *  to the nearest endpoint, so spurs don't read as road. */
+  private arcDist(x: number, z: number, a: DriftArc): number {
+    const dx = x - a.cx;
+    const dz = z - a.cz;
+    const ang = Math.atan2(dz, dx);
+    if (ang >= a.a0 && ang <= a.a1) {
+      return Math.abs(Math.hypot(dx, dz) - ARC_R);
+    }
+    const x0 = a.cx + ARC_R * Math.cos(a.a0);
+    const z0 = a.cz + ARC_R * Math.sin(a.a0);
+    const x1 = a.cx + ARC_R * Math.cos(a.a1);
+    const z1 = a.cz + ARC_R * Math.sin(a.a1);
+    return Math.min(
+      Math.hypot(x - x0, z - z0),
+      Math.hypot(x - x1, z - z1)
+    );
+  }
+
+  /** would a w×d rect centered at (x,z) overlap the drift road corridor? */
+  private rectHitsDriftRoad(x: number, z: number, w: number, d: number): boolean {
+    const hw = w / 2;
+    const hd = d / 2;
+    const half = ROAD_W / 2 + 0.8;
+    const samples: [number, number][] = [
+      [x, z],
+      [x - hw, z - hd], [x + hw, z - hd], [x - hw, z + hd], [x + hw, z + hd],
+      [x, z - hd], [x, z + hd], [x - hw, z], [x + hw, z],
+    ];
+    return samples.some(([sx, sz]) => this.driftRoadDist(sx, sz) <= half);
   }
 
   private distToLine(v: number): number {
@@ -440,6 +500,56 @@ export class World {
       }
     }
 
+    // --- central drift ring + cloverleaf arcs (painted like grid roads) ---
+    g.strokeStyle = "#3a4050";
+    g.lineWidth = w(ROAD_W);
+    g.beginPath();
+    g.arc(u(0), u(0), w(RING_R), 0, Math.PI * 2);
+    g.stroke();
+    for (const a of DRIFT_ARCS) {
+      g.beginPath();
+      g.arc(u(a.cx), u(a.cz), w(ARC_R), a.a0, a.a1);
+      g.stroke();
+    }
+    // edge lines
+    g.strokeStyle = "#4a5162";
+    g.lineWidth = w(0.35);
+    for (const e of [-1, 1]) {
+      g.beginPath();
+      g.arc(u(0), u(0), w(RING_R + (e * ROAD_W) / 2), 0, Math.PI * 2);
+      g.stroke();
+    }
+    for (const a of DRIFT_ARCS) {
+      for (const e of [-1, 1]) {
+        g.beginPath();
+        g.arc(u(a.cx), u(a.cz), w(ARC_R + (e * ROAD_W) / 2), a.a0, a.a1);
+        g.stroke();
+      }
+    }
+    // wear speckle on the new asphalt
+    const drng = mulberry32(31337);
+    for (let n = 0; n < 700; n++) {
+      const arng2 = drng;
+      const onRing = arng2() < 0.55;
+      let px: number, pz: number;
+      if (onRing) {
+        const t = arng2() * Math.PI * 2;
+        const r = RING_R + (arng2() * 2 - 1) * (ROAD_W / 2 - 0.8);
+        px = Math.cos(t) * r;
+        pz = Math.sin(t) * r;
+      } else {
+        const a = DRIFT_ARCS[Math.floor(arng2() * DRIFT_ARCS.length)];
+        const t = a.a0 + arng2() * (a.a1 - a.a0);
+        const r = ARC_R + (arng2() * 2 - 1) * (ROAD_W / 2 - 0.8);
+        px = a.cx + Math.cos(t) * r;
+        pz = a.cz + Math.sin(t) * r;
+      }
+      const shade = arng2();
+      g.fillStyle = shade < 0.5 ? "rgba(16,19,26,0.5)" : "rgba(96,104,124,0.35)";
+      const r2 = 0.5 + arng2() * 1.6;
+      g.fillRect(u(px - r2 / 2), u(pz - r2 / 2), w(r2), w(r2));
+    }
+
     // asphalt wear: speckle + tar patches + manholes keep the road from
     // reading as flat vector fill
     const arng = mulberry32(777);
@@ -499,6 +609,15 @@ export class World {
       g.beginPath();
       g.moveTo(u(-WORLD_HALF - ROAD_W / 2), u(c));
       g.lineTo(u(WORLD_HALF + ROAD_W / 2), u(c));
+      g.stroke();
+    }
+    // drift ring + arcs get dashed centers too
+    g.beginPath();
+    g.arc(u(0), u(0), w(RING_R), 0, Math.PI * 2);
+    g.stroke();
+    for (const a of DRIFT_ARCS) {
+      g.beginPath();
+      g.arc(u(a.cx), u(a.cz), w(ARC_R), a.a0, a.a1);
       g.stroke();
     }
     g.setLineDash([]);
@@ -648,6 +767,8 @@ export class World {
               ? bx + inner / 2 + (rng() - 0.5) * 4
               : bx + inner * (0.26 + 0.5 * b) + (rng() - 0.5) * 3;
           const z = bz + inner / 2 + (rng() - 0.5) * 4;
+          // the central plaza (ring + cloverleaf arcs) stays building-free
+          if (this.rectHitsDriftRoad(x, z, w, d)) continue;
           placements.push({ x, z, w, d, h });
           this.buildings.push({
             minX: x - w / 2,
@@ -1446,11 +1567,12 @@ export class World {
       depth: 6.4,
       bevelEnabled: false,
     });
-    geo.rotateY(-Math.PI / 2); // slope rises toward local -z (car enters from +z side going -z)
+    geo.rotateY(Math.PI / 2); // slope rises toward local -z (car enters from +z going -z)
     geo.computeBoundingBox();
     if (geo.boundingBox) {
+      const cx = (geo.boundingBox.min.x + geo.boundingBox.max.x) / 2;
       const cz = (geo.boundingBox.min.z + geo.boundingBox.max.z) / 2;
-      geo.translate(0, 0, -cz);
+      geo.translate(-cx, 0, -cz);
     }
     // hazard stripes
     const cv = document.createElement("canvas");
@@ -1481,6 +1603,20 @@ export class World {
     // traffic keeps right: dir=+1 rides at -LANE, dir=-1 at +LANE; the ramp
     // sits IN a lane and its slope follows that lane's travel direction
     const LANE = ROAD_W / 4;
+    // two ramps on the drift ring itself — launch off the sweepers
+    for (const deg of [100, 280]) {
+      const t = (deg * Math.PI) / 180;
+      const x = Math.cos(t) * RING_R;
+      const z = Math.sin(t) * RING_R;
+      const dx = -Math.sin(t); // counter-clockwise tangent
+      const dz = Math.cos(t);
+      const rotY = Math.atan2(-dx, -dz);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, 0.02, z);
+      mesh.rotation.y = rotY;
+      g.add(mesh);
+      this.ramps.push({ x, z, w: 7.2, h: 7.2, angle: rotY, dx, dz });
+    }
     while (this.ramps.length < 6 && guard++ < 60) {
       const i = Math.floor(rng() * GRID_N);
       const j = Math.floor(rng() * (GRID_N - 1));

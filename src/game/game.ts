@@ -19,7 +19,7 @@ import type { GameScreen, Order, Profile } from "./types";
 import { loadProfile, saveProfile } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
-import { World } from "./world";
+import { World, RING_R, ARC_R, DRIFT_ARCS } from "./world";
 import { Car } from "./car";
 import { Traffic } from "./traffic";
 import { Police } from "./police";
@@ -50,6 +50,8 @@ export class Game {
   }
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
+  /** verification-only free camera override [px,py,pz, tx,ty,tz] */
+  private freeCam: number[] | null = null;
   private clock = new THREE.Clock();
   private raf = 0;
   private acc = 0;
@@ -263,6 +265,11 @@ export class Game {
       assetsReady: () => this.assetsReady,
       heroCount: () => this.world.heroCount(),
       trafficPos: () => this.traffic.debugPositions(),
+      ramps: () => this.world.ramps.map((r) => ({ x: r.x, z: r.z, dx: r.dx, dz: r.dz })),
+      air: () => ({ airY: this.car.airY, airV: this.car.airV }),
+      freeCam: (a: number[] | null) => {
+        this.freeCam = a;
+      },
       lightState: () =>
         this.world.lights.map((l) => ({
           t: Math.round(l.timer * 100) / 100,
@@ -617,14 +624,18 @@ export class Game {
   }
 
   private currentUpgrades() {
-    return (
-      this.profile.upgrades[this.profile.carId] ?? {
+    // create + persist the per-car entry: returning a throwaway object
+    // here means buyUpgrade writes into the void (money gone, level lost)
+    const id = this.profile.carId;
+    if (!this.profile.upgrades[id]) {
+      this.profile.upgrades[id] = {
         engine: 0,
         tires: 0,
         suspension: 0,
         turbo: 0,
-      }
-    );
+      };
+    }
+    return this.profile.upgrades[id];
   }
 
   private buyCar(id: string): void {
@@ -666,11 +677,13 @@ export class Game {
   }
 
   private applyCarSpec(): void {
+    const up = this.currentUpgrades();
     const hero = this.heroFor(this.currentCarSpec());
-    this.car.setSpec(tunedSpec(this.currentCarSpec(), this.currentUpgrades()));
+    this.car.setSpec(tunedSpec(this.currentCarSpec(), up));
     this.car.setHeroModel(hero ?? null);
+    this.car.setUpgrades(up);
     // title/garage background shows the current car
-    this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades(), hero);
+    this.showroom.setCar(this.currentCarSpec(), up, hero);
   }
 
   // ================= orders =================
@@ -873,6 +886,17 @@ export class Game {
       const c = u(-WORLD_HALF + i * CELL);
       g.fillRect(c - (ROAD_W / 2) * scale, u(-WORLD_HALF - ROAD_W / 2), ROAD_W * scale, (WORLD_HALF * 2 + ROAD_W) * scale);
       g.fillRect(u(-WORLD_HALF - ROAD_W / 2), c - (ROAD_W / 2) * scale, (WORLD_HALF * 2 + ROAD_W) * scale, ROAD_W * scale);
+    }
+    // drift ring + cloverleaf arcs
+    g.strokeStyle = "#3a4152";
+    g.lineWidth = ROAD_W * scale;
+    g.beginPath();
+    g.arc(u(0), u(0), RING_R * scale, 0, Math.PI * 2);
+    g.stroke();
+    for (const a of DRIFT_ARCS) {
+      g.beginPath();
+      g.arc(u(a.cx), u(a.cz), ARC_R * scale, a.a0, a.a1);
+      g.stroke();
     }
     // cobble patches
     g.fillStyle = "rgba(120,90,70,0.9)";
@@ -1360,6 +1384,10 @@ export class Game {
       this.car.pos.z + fwd.z * 6
     );
     this.camera.lookAt(look);
+    if (this.freeCam) {
+      this.camera.position.set(this.freeCam[0], this.freeCam[1], this.freeCam[2]);
+      this.camera.lookAt(this.freeCam[3], this.freeCam[4], this.freeCam[5]);
+    }
     const speedRatio = Math.min(1, Math.abs(this.car.speed) / this.car.spec.topSpeed);
     const targetFov = 60 + speedRatio * 16 + (portrait ? 6 : 0);
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 5);

@@ -4,7 +4,7 @@
  */
 import * as THREE from "three";
 import type { CarSpec } from "./types";
-import { buildCarMesh, buildHeroMesh } from "./car";
+import { buildCarMesh, buildHeroMesh, applyUpgradeLooks } from "./car";
 import { tunedSpec } from "./config";
 import type { UpgradeLevels } from "./types";
 import type { LoadedModel } from "./assets";
@@ -53,6 +53,7 @@ export function carThumb(spec: CarSpec, up?: UpgradeLevels, hero?: LoadedModel):
   if (hit) return hit;
   ensureThumbRig();
   const mesh = hero ? buildHeroMesh(tuned, hero) : buildCarMesh(tuned);
+  applyUpgradeLooks(mesh, up ?? { engine: 0, tires: 0, suspension: 0, turbo: 0 });
   thumbScene!.add(mesh);
   thumbRenderer!.render(thumbScene!, thumbCamera!);
   const url = thumbRenderer!.domElement.toDataURL("image/png");
@@ -131,6 +132,7 @@ export function createShowroom(): Showroom {
       car = hero
         ? buildHeroMesh(tunedSpec(spec, up), hero)
         : buildCarMesh(tunedSpec(spec, up));
+      applyUpgradeLooks(car, up);
       carGroup.add(car);
       // detailed library bodies are bulkier — frame them a bit wider
       camera.position.set(

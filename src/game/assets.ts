@@ -207,9 +207,9 @@ async function loadModel(
 }
 
 /**
- * Free downloaded vehicle/prop models. Nose axes were verified from renders:
- * hatchback + sedan nose = +x, coupe + police nose = +z.
- * Game convention: model nose must face local -z.
+ * Free downloaded vehicle/prop models. Nose axes verified from lamp-node
+ * positions: sedan nose = +x, coupe + police nose = +z, hatchback nose = -x
+ * (flipped below). Game convention: model nose must face local -z.
  */
 /** Each asset pack's single saved state (from its availableStates). */
 const ASSET_STATES: Record<string, string> = {
@@ -227,7 +227,8 @@ export async function loadGameAssets(): Promise<GameAssets> {
   const mod = await loadAssetModule();
   const load = (key: string, rotY: number, norm: (s: THREE.Vector3) => number) =>
     loadModel(mod.assets, key, rotY, norm);
-  const hatchback = await load("hatchback", Math.PI / 2, (s) => 4.15 / Math.max(s.x, s.z));
+  // hatchback verified backwards (headlamps at local +z) — flipped 180°
+  const hatchback = await load("hatchback", -Math.PI / 2, (s) => 4.15 / Math.max(s.x, s.z));
   const sedan = await load("sedan", Math.PI / 2, (s) => 4.6 / Math.max(s.x, s.z));
   const coupe = await load("coupe", Math.PI, (s) => 4.45 / Math.max(s.x, s.z));
   const police = await load("police", Math.PI, (s) => 4.75 / Math.max(s.x, s.z));

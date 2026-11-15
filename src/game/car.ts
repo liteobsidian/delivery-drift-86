@@ -94,7 +94,16 @@ export class Car {
       : buildCarMesh(this.spec, this.wheels, this.wheelPivots, (p) => {
           this.parts = p;
         });
+    applyUpgradeLooks(this.body, this.upgrades);
     this.group.add(this.body);
+  }
+
+  /** current visual upgrade levels (livery/spoiler/underglow/wheels) */
+  private upgrades: UpgradeLevels = { engine: 0, tires: 0, suspension: 0, turbo: 0 };
+
+  setUpgrades(up: UpgradeLevels): void {
+    this.upgrades = up;
+    applyUpgradeLooks(this.body, up);
   }
 
   repair(): number {
@@ -249,9 +258,18 @@ export class Car {
     if (input.brake > 0) {
       if (speed > 0.8) {
         this.vel.addScaledVector(fwd, -this.spec.brake * input.brake * dt);
+      } else if (speed < -0.8) {
+        // rolling backwards: S stops the reverse roll before engaging gear
+        this.vel.addScaledVector(fwd, this.spec.brake * input.brake * dt);
       } else if (speed > -this.spec.topSpeed * 0.32) {
         this.vel.addScaledVector(fwd, -this.spec.accel * 0.55 * input.brake * dt);
       }
+    }
+
+    if (input.handbrake && speed > 0.5) {
+      // a handbrake is a brake: scrub forward speed, not only lateral grip
+      const scrub = Math.min(this.spec.brake * 0.55, speed / Math.max(dt, 1e-4));
+      this.vel.addScaledVector(fwd, -scrub * dt);
     }
 
     // --- drag ---
@@ -267,7 +285,9 @@ export class Car {
       const ramp = world.rampAt(this.pos.x, this.pos.z);
       if (ramp) {
         const along = this.vel.x * ramp.dx + this.vel.z * ramp.dz;
-        if (along > 13) {
+        if (along > 1) {
+          // any up-slope speed launches — otherwise the car just sinks
+          // into the wedge while "climbing" it
           this.airV = along * 0.42 + 4;
         } else if (along < -8) {
           // slamming into the tall back wall of the wedge — that hurts
@@ -626,7 +646,19 @@ export function buildCarMesh(
     const lip = new THREE.Mesh(new THREE.BoxGeometry(W - 0.4, 0.06, 0.16), darkMat);
     lip.position.set(0, 0.55, L / 2 - 0.06);
     spoiler.add(lip);
+    // upgrade-grown GT wing (revealed by applyUpgradeLooks)
+    spoiler.userData.procedural = true;
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(W - 0.2, 0.07, 0.4), darkMat);
+    wing.position.set(0, 1.06, L / 2 - 0.2);
+    spoiler.add(wing);
+    for (const sx of [-1, 1]) {
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.34, 0.08), darkMat);
+      strut.position.set(sx * (W / 2 - 0.3), 0.88, L / 2 - 0.2);
+      spoiler.add(strut);
+    }
+    spoiler.visible = false;
   }
+  spoiler.name = "hero-spoiler";
   root.add(spoiler);
 
   // underglow in the car's own color
@@ -642,7 +674,11 @@ export function buildCarMesh(
   );
   glow.rotation.x = -Math.PI / 2;
   glow.position.y = 0.06;
+  glow.name = "hero-underglow";
   root.add(glow);
+
+  // racing livery over the cabin (revealed by engine upgrades)
+  root.add(makeLivery(W, cab[0] + 0.235, 3.2));
 
   // wheels: pivots for steering (front), spin meshes inside
   const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 14);
@@ -705,6 +741,7 @@ export function buildHeroMesh(
   const root = new THREE.Group();
   const inner = model.root.clone(true);
   root.add(inner);
+  const s = model.size;
 
   // per-instance materials + body recolor
   const glassMats: THREE.MeshStandardMaterial[] = [];
@@ -768,21 +805,41 @@ export function buildHeroMesh(
 
   // spoiler: collect wing nodes (may be empty for sedans/hatchbacks)
   const spoiler = new THREE.Group();
+  spoiler.name = "hero-spoiler";
   const wingNodes: THREE.Object3D[] = [];
   inner.traverse((o) => {
     if (/rear wing|wing pedestal|spoiler/i.test(o.name)) wingNodes.push(o);
   });
+  inner.add(spoiler);
   if (wingNodes.length) {
     // reparent only the outermost wing nodes into the removable spoiler group
     const roots = wingNodes.filter(
       (w) => !wingNodes.some((o) => o !== w && isDescendant(w, o))
     );
-    inner.add(spoiler);
     for (const r of roots) spoiler.attach(r);
+  } else {
+    // no factory wing — grow a procedural GT wing via upgrades instead
+    spoiler.userData.procedural = true;
+    const wingMat = new THREE.MeshStandardMaterial({
+      color: 0x14161c,
+      roughness: 0.4,
+      metalness: 0.6,
+    });
+    const blade = new THREE.Mesh(
+      new THREE.BoxGeometry(Math.max(1.3, s.x * 0.9), 0.07, 0.42),
+      wingMat
+    );
+    blade.position.set(0, s.y * 0.98, s.z / 2 - 0.18);
+    spoiler.add(blade);
+    for (const sx of [-1, 1]) {
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.09, s.y * 0.3, 0.09), wingMat);
+      strut.position.set(sx * (s.x * 0.32), s.y * 0.82, s.z / 2 - 0.18);
+      spoiler.add(strut);
+    }
+    spoiler.visible = false;
   }
 
   // soft radial underglow in the car's own color (hard-edged plane reads as a slab)
-  const s = model.size;
   const gc = document.createElement("canvas");
   gc.width = gc.height = 128;
   const gg = gc.getContext("2d")!;
@@ -808,6 +865,14 @@ export function buildHeroMesh(
   glow.name = "hero-underglow";
   root.add(glow);
 
+  // racing livery stripes over the roof/hood — revealed by engine upgrades.
+  // roofline comes from the body shell itself: the model bbox is inflated by
+  // wings/antennas and would leave the stripes floating in the air
+  const bodyBox = new THREE.Box3().setFromObject(bodyMesh as THREE.Object3D);
+  const roofY = Number.isFinite(bodyBox.max.y) ? bodyBox.max.y : s.y;
+  const bodyLen = bodyBox.max.z - bodyBox.min.z;
+  root.add(makeLivery(s.x, roofY, bodyLen * 0.94));
+
   onParts?.({
     bodyMesh: bodyMesh as THREE.Mesh,
     glassMats,
@@ -825,4 +890,67 @@ function isDescendant(node: THREE.Object3D, ancestor: THREE.Object3D): boolean {
     p = p.parent;
   }
   return false;
+}
+
+/** two racing stripes; hidden until livery upgrades unlock them */
+function makeLivery(w: number, h: number, l: number): THREE.Group {
+  const livery = new THREE.Group();
+  livery.name = "hero-livery";
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xeef2f8,
+    roughness: 0.45,
+    metalness: 0.25,
+    emissive: 0xbfc8dd,
+    emissiveIntensity: 0.12,
+  });
+  for (const sx of [-0.26, 0.26]) {
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(0.24, 0.022, Math.max(1.5, l * 0.86)),
+      mat
+    );
+    stripe.position.set(sx, h + 0.012, -l * 0.04);
+    livery.add(stripe);
+  }
+  void w;
+  return livery;
+}
+
+export interface UpgradeLevels {
+  engine: number;
+  tires: number;
+  suspension: number;
+  turbo: number;
+}
+
+/** Reveal/visualize upgrade levels on a car body built by either builder.
+ *  Nodes: "hero-spoiler" (procedural wings only), "hero-livery" stripes,
+ *  "hero-underglow" (color tier by turbo), wheel tint by tires. */
+export function applyUpgradeLooks(root: THREE.Object3D, up: UpgradeLevels): void {
+  const total = up.engine + up.tires + up.suspension + up.turbo;
+  const spoiler = root.getObjectByName("hero-spoiler");
+  if (spoiler?.userData.procedural) {
+    spoiler.visible = up.suspension + up.turbo >= 2;
+  }
+  const livery = root.getObjectByName("hero-livery");
+  if (livery) livery.visible = up.engine >= 2 || total >= 7;
+  const glow = root.getObjectByName("hero-underglow") as THREE.Mesh | undefined;
+  if (glow) {
+    const mat = glow.material as THREE.MeshBasicMaterial;
+    const tiers = [0x35405c, 0x22d3ee, 0xa855f7, 0xff7a1a];
+    const t = Math.max(0, Math.min(up.turbo, 3));
+    mat.color.setHex(tiers[t]);
+    mat.opacity = 0.45 + t * 0.15;
+  }
+  const tireTint = [0, 0x3a4150, 0x232833, 0x101218][Math.max(0, Math.min(up.tires, 3))];
+  if (tireTint) {
+    root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || !/hub|wheel/i.test(mesh.name)) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of mats) {
+        const sm = m as THREE.MeshStandardMaterial;
+        if (sm.color) sm.color.setHex(tireTint);
+      }
+    });
+  }
 }
