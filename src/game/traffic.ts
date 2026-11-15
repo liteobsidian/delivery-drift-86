@@ -93,6 +93,9 @@ export class Traffic {
       for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
         if (lifted.has(m)) continue;
         lifted.add(m);
+        m.transparent = false;
+        m.opacity = 1;
+        m.depthWrite = true;
         const std = m as THREE.MeshStandardMaterial;
         if (std.emissive && std.color) {
           std.emissive.copy(std.color).multiplyScalar(0.28);
@@ -121,11 +124,9 @@ export class Traffic {
   /** advance traffic; returns closing speed if any car hit the player this step */
   update(
     dt: number,
-    px: number,
-    pz: number,
+    playerPos: THREE.Vector3,
+    playerVel: THREE.Vector3,
     playerSpeed: number,
-    pvx: number,
-    pvz: number
   ): number {
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
@@ -155,8 +156,8 @@ export class Traffic {
       }
       // player in the same lane ahead -> brake for a red-style stop; but if
       // the player is beside/behind, keep going: ramming must actually collide
-      const dx = px - c.x;
-      const dz = pz - c.z;
+      const dx = playerPos.x - c.x;
+      const dz = playerPos.z - c.z;
       const d2 = dx * dx + dz * dz;
       if (d2 < 64) {
         const ahead = c.axis === 0 ? dx * c.dir : dz * c.dir;
@@ -187,21 +188,31 @@ export class Traffic {
       }
 
       // collide with player (circle-circle); impact = closing speed
-      const cdx = c.x - px;
-      const cdz = c.z - pz;
+      const cdx = playerPos.x - c.x;
+      const cdz = playerPos.z - c.z;
       const cd = Math.hypot(cdx, cdz);
-      if (cd < 3.1 && c.hitCooldown === 0) {
+      const contactRadius = 3.4;
+      if (cd < contactRadius && c.hitCooldown === 0) {
         const cvx = c.axis === 0 ? c.dir * wantSpeed : 0;
         const cvz = c.axis === 1 ? c.dir * wantSpeed : 0;
-        const closing = Math.hypot(pvx - cvx, pvz - cvz);
+        const closing = Math.hypot(playerVel.x - cvx, playerVel.z - cvz);
         if (closing > 3) {
           c.hitCooldown = 0.9;
           hit = Math.max(hit, closing);
-          // push the traffic car out so it doesn't grind inside the player
-          if (cd > 0.001) {
-            const push = 3.1 - cd + 0.05;
-            c.x += (cdx / cd) * push;
-            c.z += (cdz / cd) * push;
+          // Separate both cars and cancel speed into the collision normal.
+          // Before this, only the NPC moved, so the player seemed to pass
+          // through it instead of hitting an obstacle.
+          const nx = cd > 0.001 ? cdx / cd : 1;
+          const nz = cd > 0.001 ? cdz / cd : 0;
+          const push = contactRadius - cd + 0.04;
+          playerPos.x += nx * push * 0.55;
+          playerPos.z += nz * push * 0.55;
+          c.x -= nx * push * 0.45;
+          c.z -= nz * push * 0.45;
+          const relativeNormal = (playerVel.x - cvx) * nx + (playerVel.z - cvz) * nz;
+          if (relativeNormal < 0) {
+            playerVel.x -= relativeNormal * nx * 1.15;
+            playerVel.z -= relativeNormal * nz * 1.15;
           }
         }
       }
