@@ -78,14 +78,10 @@ export class Traffic {
   /** swap placeholder boxes for loaded 3D car models (nose must face -z) */
   setCarModels(models: THREE.Group[]): void {
     if (models.length === 0) return;
-    // unlit glow quads: cars must read at night from any distance
-    const headMat = new THREE.MeshBasicMaterial({ color: 0xfff3c0 });
-    const tailMat = new THREE.MeshBasicMaterial({ color: 0xff2d22 });
-    const headGeo = new THREE.PlaneGeometry(0.4, 0.26);
-    const tailGeo = new THREE.PlaneGeometry(0.34, 0.2);
-    // shared model materials: give the body a faint self-glow so cars are
-    // visible from the side too, not only head-on (materials are shared
-    // between clones, so each is lifted exactly once)
+    const paint = [0xd84b3f, 0x3f78c5, 0x5b9d65, 0xd5b348, 0x7a64b5, 0xadb8c4];
+    // The imported traffic GLBs use metallicFactor=1 and JPEG body maps.
+    // In the dark city that makes their shells read like translucent holes;
+    // use car-paint values and a restrained self-glow instead.
     const lifted = new Set<THREE.Material>();
     const lift = (o: THREE.Object3D) => {
       const mesh = o as THREE.Mesh;
@@ -98,24 +94,38 @@ export class Traffic {
         m.depthWrite = true;
         const std = m as THREE.MeshStandardMaterial;
         if (std.emissive && std.color) {
-          std.emissive.copy(std.color).multiplyScalar(0.28);
+          std.emissive.copy(std.color).multiplyScalar(0.04);
           std.emissiveIntensity = 1;
         }
+        if ("metalness" in std) std.metalness = 0.12;
+        if ("roughness" in std) std.roughness = 0.62;
       }
     };
     models.forEach((m) => m.traverse(lift));
     this.cars.forEach((c, i) => {
       const clone = models[i % models.length].clone(true);
-      // headlights (nose at local -z) and taillights (+z)
-      for (const s of [-1, 1]) {
-        const h = new THREE.Mesh(headGeo, headMat);
-        h.position.set(s * 0.62, 0.75, -2.02);
-        h.rotation.y = Math.PI;
-        clone.add(h);
-        const t = new THREE.Mesh(tailGeo, tailMat);
-        t.position.set(s * 0.62, 0.75, 2.0);
-        clone.add(t);
-      }
+      // The generated paint maps are mostly white/gray. Tint each instance so
+      // traffic reads as a fleet of distinct cars, not washed-out glass shells.
+      clone.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+        const tint = (m: THREE.Material) => {
+          const copy = m.clone();
+          const std = copy as THREE.MeshStandardMaterial;
+          if (std.color) {
+            std.color.multiply(new THREE.Color(paint[i % paint.length]));
+            std.emissive.copy(std.color).multiplyScalar(0.04);
+            std.metalness = 0.12;
+            std.roughness = 0.62;
+          }
+          copy.transparent = false;
+          copy.opacity = 1;
+          copy.depthWrite = true;
+          copy.blending = THREE.NormalBlending;
+          return copy;
+        };
+        mesh.material = Array.isArray(mesh.material) ? mesh.material.map(tint) : tint(mesh.material);
+      });
       c.mesh.clear();
       c.mesh.add(clone);
     });
