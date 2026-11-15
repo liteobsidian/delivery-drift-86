@@ -71,7 +71,7 @@ export interface CarSpec {
   body?: "hatch" | "coupe" | "low" | "sedan";
   spoiler?: "wing" | "big" | "duck" | "none";
   /** detailed library model replacing the procedural body (if loaded) */
-  glb?: "v1coupe" | "v1hatch" | "v1sedan";
+  glb?: "ae86" | "supra" | "silvia" | "rx7" | "r34" | "nsx" | "evo";
 }
 
 export interface Order {

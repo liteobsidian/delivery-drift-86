@@ -54,7 +54,7 @@ export const CARS: CarSpec[] = [
     color: 0xf2f2ee,
     accent: 0x14161c,
     body: "hatch",
-    glb: "v1hatch",
+    glb: "ae86",
   },
   {
     id: "supra",
@@ -67,6 +67,7 @@ export const CARS: CarSpec[] = [
     massFeel: 1.15,
     cargoProtect: 0.12,
     stability: 1.25,
+    glb: "supra",
     price: SUPRA_PRICE,
     unlockDeliveries: SUPRA_UNLOCK_DELIVERIES,
     color: 0xff7a1a,
@@ -89,6 +90,7 @@ export const CARS: CarSpec[] = [
     color: 0x2a52ff,
     accent: 0x0c0f16,
     body: "coupe",
+    glb: "silvia",
     spoiler: "big",
   },
   {
@@ -107,6 +109,7 @@ export const CARS: CarSpec[] = [
     color: 0xd21f2c,
     accent: 0x14161c,
     body: "low",
+    glb: "rx7",
     spoiler: "duck",
   },
   {
@@ -125,7 +128,7 @@ export const CARS: CarSpec[] = [
     color: 0x4a3f8f,
     accent: 0x0c0f16,
     body: "sedan",
-    glb: "v1coupe",
+    glb: "r34",
     spoiler: "big",
   },
   {
@@ -144,6 +147,7 @@ export const CARS: CarSpec[] = [
     color: 0xe9eaf2,
     accent: 0x14161c,
     body: "low",
+    glb: "nsx",
     spoiler: "none",
   },
   {
@@ -162,7 +166,7 @@ export const CARS: CarSpec[] = [
     color: 0xd7a21a,
     accent: 0x10131a,
     body: "sedan",
-    glb: "v1sedan",
+    glb: "evo",
     spoiler: "wing",
   },
 ];
