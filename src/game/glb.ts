@@ -87,12 +87,18 @@ function splitWheels(root: THREE.Group, bodyPaint: boolean): void {
     const uv = uvAttr ? (uvAttr.array as Float32Array).slice() : null;
     // bake the node's world transform so all parts share one space
     const m = mesh.matrixWorld;
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(m);
     const v = new THREE.Vector3();
+    const n = new THREE.Vector3();
     for (let i = 0; i < pos.length; i += 3) {
       v.set(pos[i], pos[i + 1], pos[i + 2]).applyMatrix4(m);
       pos[i] = v.x;
       pos[i + 1] = v.y;
       pos[i + 2] = v.z;
+      n.set(normal[i], normal[i + 1], normal[i + 2]).applyMatrix3(normalMatrix).normalize();
+      normal[i] = n.x;
+      normal[i + 1] = n.y;
+      normal[i + 2] = n.z;
     }
     const index = geo.index
       ? new Uint32Array(geo.index.array)
@@ -370,12 +376,10 @@ function splitWheels(root: THREE.Group, bodyPaint: boolean): void {
   };
 
   // replace the original mesh with body + 4 wheels
-  const parent = srcMesh.parent ?? root;
-  const worldPos = new THREE.Vector3();
-  const worldQuat = new THREE.Quaternion();
-  srcMesh.getWorldPosition(worldPos);
-  srcMesh.getWorldQuaternion(worldQuat);
-  srcMesh.removeFromParent();
+  // Geometry positions above are already baked into root-local space. Keep
+  // replacement nodes under root so transformed source parents are not applied
+  // a second time (which made detached wheel fragments orbit while steering).
+  for (const source of meshes) source.removeFromParent();
 
   const bodyFaces: number[] = [];
   for (let f = 0; f < nf; f++) if (!wheelSet.has(f)) bodyFaces.push(f);
@@ -385,10 +389,8 @@ function splitWheels(root: THREE.Group, bodyPaint: boolean): void {
     bodyMesh.name = "body shell";
   }
   const holder = new THREE.Group();
-  holder.position.copy(worldPos);
-  holder.quaternion.copy(worldQuat);
   holder.add(bodyMesh);
-  parent.add(holder);
+  root.add(holder);
 
   for (let k = 0; k < 4; k++) {
     const faces = wheelFaces[k];
@@ -412,6 +414,6 @@ function splitWheels(root: THREE.Group, bodyPaint: boolean): void {
     const node = new THREE.Group();
     node.position.set(center[0], center[1], center[2]);
     node.add(mesh);
-    parent.add(node);
+    root.add(node);
   }
 }
