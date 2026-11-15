@@ -154,7 +154,10 @@ export class Game {
     this.scene.add(this.effects.group);
     // free downloaded models replace placeholders when they finish loading
     this.assetsReady = false;
-    loadGameAssets()
+    loadGameAssets(this.currentCarSpec().glb as HeroModelKey | undefined, (key, model) => {
+      this.heroModels[key] = model;
+      if (this.currentCarSpec().glb === key) this.applyCarSpec();
+    })
       .then((assets) => {
         this.traffic.setCarModels(assets.traffic.map((m) => m.root));
         this.police.setModel(assets.police.root, assets.police.size.y + 0.05);

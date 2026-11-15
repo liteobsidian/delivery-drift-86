@@ -210,34 +210,52 @@ const ASSET_STATES: Record<string, string> = {
 
 const asLoaded = (m: GlbModel): LoadedModel => ({ root: m.root, size: m.size });
 
-export async function loadGameAssets(): Promise<GameAssets> {
+export async function loadGameAssets(
+  preferredHero: HeroModelKey | undefined,
+  onHeroLoaded?: (key: HeroModelKey, model: LoadedModel) => void
+): Promise<GameAssets> {
   const mod = await loadAssetModule();
   const load = (key: string, rotY: number, norm: (s: THREE.Vector3) => number) =>
     loadModel(mod.assets, key, rotY, norm);
-  const midrise = await load("midrise", 0, (s) => 26 / s.y);
-
-  const heroEntries = await Promise.all(
-    (Object.entries(HERO_GLBS) as [HeroModelKey, (typeof HERO_GLBS)[HeroModelKey]][]).map(
-      async ([key, cfg]) =>
-        [key, asLoaded(await loadGlbModel(cfg.url, {
-          noseRotY: cfg.noseRotY,
-          targetLength: cfg.len,
-          splitWheels: true,
-          bodyPaint: true,
-        }))] as const
-    )
+  // Start the selected hero alongside other assets instead of waiting for the
+  // large building payload. Report each finished car immediately so gameplay
+  // can replace the placeholder without waiting for every unused vehicle.
+  const midrisePromise = load("midrise", 0, (s) => 26 / s.y);
+  const heroEntries = Object.entries(HERO_GLBS) as [HeroModelKey, (typeof HERO_GLBS)[HeroModelKey]][];
+  const loadHero = async ([key, cfg]: [HeroModelKey, (typeof HERO_GLBS)[HeroModelKey]]) => {
+    const model = asLoaded(await loadGlbModel(cfg.url, {
+      noseRotY: cfg.noseRotY,
+      targetLength: cfg.len,
+      // These AI assets are single merged meshes. Heuristic wheel carving
+      // split the tire surface into orbiting fragments; keep the authored
+      // complete wheel geometry intact.
+      bodyPaint: true,
+    }));
+    onHeroLoaded?.(key, model);
+    return [key, model] as const;
+  };
+  const preferredEntry = heroEntries.find(([key]) => key === preferredHero);
+  const preferredPromise = preferredEntry ? loadHero(preferredEntry) : Promise.resolve(null);
+  // Start other cars after the selected one finishes, so their downloads and
+  // geometry parsing cannot delay the vehicle currently on screen.
+  const remainingHeroesPromise = preferredPromise.then(() =>
+    Promise.all(heroEntries.filter(([key]) => key !== preferredHero).map(loadHero))
   );
-  const hero = Object.fromEntries(heroEntries) as Partial<Record<HeroModelKey, LoadedModel>>;
+  const trafficPromise = Promise.all(
+    TRAFFIC_GLBS.map((cfg) => loadGlbModel(cfg.url, { noseRotY: cfg.noseRotY, targetLength: cfg.len }))
+  ).then((models) => models.map(asLoaded));
+  const policePromise = loadGlbModel(policeGlbUrl, { noseRotY: 0, targetLength: 4.9 }).then(asLoaded);
 
-  const traffic = (
-    await Promise.all(
-      TRAFFIC_GLBS.map((cfg) =>
-        loadGlbModel(cfg.url, { noseRotY: cfg.noseRotY, targetLength: cfg.len })
-      )
-    )
-  ).map(asLoaded);
-  const police = asLoaded(
-    await loadGlbModel(policeGlbUrl, { noseRotY: 0, targetLength: 4.9 })
-  );
+  const [midrise, preferred, remainingHeroes, traffic, police] = await Promise.all([
+    midrisePromise,
+    preferredPromise,
+    remainingHeroesPromise,
+    trafficPromise,
+    policePromise,
+  ]);
+  const hero = Object.fromEntries([
+    ...(preferred ? [preferred] : []),
+    ...remainingHeroes,
+  ]) as Partial<Record<HeroModelKey, LoadedModel>>;
   return { traffic, police, midrise, hero };
 }
