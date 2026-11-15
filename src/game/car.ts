@@ -258,11 +258,10 @@ export class Car {
     if (input.brake > 0) {
       if (speed > 0.8) {
         this.vel.addScaledVector(fwd, -this.spec.brake * input.brake * dt);
-      } else if (speed < -0.8) {
-        // rolling backwards: S stops the reverse roll before engaging gear
-        this.vel.addScaledVector(fwd, this.spec.brake * input.brake * dt);
-      } else if (speed > -this.spec.topSpeed * 0.32) {
-        this.vel.addScaledVector(fwd, -this.spec.accel * 0.55 * input.brake * dt);
+      } else if (speed > -topSpeed * 0.5) {
+        // Once stopped, holding S engages reverse and keeps accelerating up
+        // to the reverse speed limit instead of braking the reverse roll.
+        this.vel.addScaledVector(fwd, -this.spec.accel * 0.78 * input.brake * dt);
       }
     }
 
@@ -342,15 +341,6 @@ export class Car {
 
     // --- collisions ---
     res.impact = Math.max(rampImpact, world.collideBuildings(this.pos, 1.5, this.vel));
-
-    // --- rollover: only from a hard impact, and only at speed ---
-    if (
-      this.flipT < 0 &&
-      res.impact > 20 &&
-      Math.abs(speed) > 12
-    ) {
-      this.startRoll(steerInput !== 0 ? Math.sign(steerInput) : Math.random() < 0.5 ? 1 : -1);
-    }
 
     // --- integrate ---
     this.pos.addScaledVector(this.vel, dt);

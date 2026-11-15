@@ -1011,11 +1011,9 @@ export class Game {
     // traffic
     const tHit = this.traffic.update(
       dt,
-      this.car.pos.x,
-      this.car.pos.z,
+      this.car.pos,
+      this.car.vel,
       Math.abs(res.speed),
-      this.car.vel.x,
-      this.car.vel.z
     );
     if (tHit > 4 && !this.car.isFlipping) {
       const dmg = 14 * (1 - protect * 0.5);
@@ -1027,7 +1025,7 @@ export class Game {
       this.audio.thud(0.8);
       this.effects.spawnFlash(this.car.pos.x, this.car.pos.z, 0xffaa44);
       this.toast("Авария с машиной! Груз пострадал", true);
-      if (tHit > 12 && Math.abs(res.speed) > 12) {
+      if (tHit > 20 && Math.abs(res.speed) > 12) {
         this.car.startRoll(Math.random() < 0.5 ? 1 : -1);
       }
     }
