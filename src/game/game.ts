@@ -122,7 +122,7 @@ export class Game {
       powerPreference: "high-performance",
     });
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.3;
+    this.renderer.toneMappingExposure = 1.48;
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1600);
     this.resize();
     window.addEventListener("resize", this.resize);
@@ -130,12 +130,12 @@ export class Game {
     // --- scene lighting: night city ---
     this.scene.background = new THREE.Color(0x0b1026);
     this.scene.fog = new THREE.FogExp2(0x0b1026, 0.0028);
-    const hemi = new THREE.HemisphereLight(0x5a66a0, 0x201a30, 1.2);
+    const hemi = new THREE.HemisphereLight(0x7385bd, 0x302b3d, 1.5);
     this.scene.add(hemi);
-    const moon = new THREE.DirectionalLight(0x9fb4ff, 1.2);
+    const moon = new THREE.DirectionalLight(0xb4c8ff, 1.5);
     moon.position.set(-120, 200, -80);
     this.scene.add(moon);
-    const pink = new THREE.DirectionalLight(0xff2d95, 0.25);
+    const pink = new THREE.DirectionalLight(0xff5cae, 0.32);
     pink.position.set(100, 60, 120);
     this.scene.add(pink);
 

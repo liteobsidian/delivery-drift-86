@@ -459,11 +459,11 @@ export class World {
     const w = (v: number) => (v / GS) * S;
 
     // base sidewalk tone
-    g.fillStyle = "#2b3140";
+    g.fillStyle = "#414a5c";
     g.fillRect(0, 0, S, S);
 
     // block pads slightly darker
-    g.fillStyle = "#232936";
+    g.fillStyle = "#30394a";
     const inner = CELL - ROAD_W;
     for (let i = 0; i < GRID_N - 1; i++) {
       for (let j = 0; j < GRID_N - 1; j++) {
@@ -474,7 +474,7 @@ export class World {
     }
 
     // roads
-    g.fillStyle = "#3a4050";
+    g.fillStyle = "#596273";
     const span = WORLD_HALF * 2 + ROAD_W;
     for (let i = 0; i < GRID_N; i++) {
       const c = -WORLD_HALF + i * CELL;
@@ -483,7 +483,7 @@ export class World {
     }
 
     // road edge lines
-    g.strokeStyle = "#4a5162";
+    g.strokeStyle = "#727c90";
     g.lineWidth = w(0.35);
     for (let i = 0; i < GRID_N; i++) {
       const c = -WORLD_HALF + i * CELL;
