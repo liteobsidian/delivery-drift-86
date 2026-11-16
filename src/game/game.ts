@@ -356,7 +356,7 @@ export class Game {
     const weeklyProgress = loadWeeklyProgress();
     const featuredWeeklyIndex = weekly.findIndex((route) => !weeklyProgress.completed.includes(route.id));
     const featuredWeekly = weekly[featuredWeeklyIndex >= 0 ? featuredWeeklyIndex : 0];
-    const showWeeklyEvent = !weeklyEventSeen();
+    const showWeeklyEvent = featuredWeeklyIndex >= 0 && !weeklyEventSeen();
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
       <div class="title-box home-box">

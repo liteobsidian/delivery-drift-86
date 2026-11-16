@@ -108,6 +108,13 @@ await eventPage.screenshot({ path: join(SHOTS, "02-weekly-event.png") });
 await eventPage.locator('[data-a="event-start"]').click();
 if (await eventPage.evaluate(() => window.__gameDebug?.screen?.()) !== "playing") fail("Weekly event start action did not start its route");
 if (!(await eventPage.evaluate(() => window.__gameDebug?.weeklyEventSeen?.()))) fail("Starting the weekly event did not record it as seen");
+await eventPage.evaluate(() => {
+  const ids = window.__gameDebug.weekly();
+  localStorage.setItem("delivery-drift-86-weekly-v1", JSON.stringify({ week: window.__gameDebug.weekKey(), completed: ids }));
+  localStorage.removeItem("delivery-drift-86-weekly-event-v1");
+  window.__gameDebug.exitMode();
+});
+if (await eventPage.locator('[data-a="event-start"]').count()) fail("Weekly event offered a replay after all routes were completed");
 await eventPage.close();
 // The page boots through a React shell (src/main.tsx -> src/App.tsx -> src/pages/Home.tsx),
 // so the canvas only exists after the first effect runs: wait for the readiness flag the game
