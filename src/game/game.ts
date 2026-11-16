@@ -11,11 +11,12 @@ import {
   LIGHT_YELLOW,
   CARGO_NAMES,
   ORDER_TITLES,
+  WORLD_MAPS,
   WORLD_HALF,
   CELL,
   GRID_N,
 } from "./config";
-import type { GameScreen, Order, Profile } from "./types";
+import type { GameScreen, MapId, Order, Profile } from "./types";
 import { loadProfile, saveProfile } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
@@ -61,9 +62,11 @@ export class Game {
   profile: Profile = loadProfile();
   audio = new AudioSystem();
   private input!: Input;
-  world = new World();
+  private worldCache = new Map<MapId, World>();
+  world = new World(this.profile.mapId);
   car: Car;
   traffic: Traffic;
+  private midriseAsset: { root: THREE.Group; size: THREE.Vector3 } | null = null;
   effects = new Effects();
 
   screen: GameScreen = "title";
@@ -140,6 +143,7 @@ export class Game {
     this.scene.add(pink);
 
     this.scene.add(this.world.group);
+    this.worldCache.set(this.world.mapId, this.world);
     this.car = new Car(tunedSpec(this.currentCarSpec(), this.currentUpgrades()));
     this.car.onSmoke = (x, z, strong) => this.effects.spawnSmoke(x, z, strong);
     this.scene.add(this.car.group);
@@ -161,7 +165,10 @@ export class Game {
       .then((assets) => {
         this.traffic.setCarModels(assets.traffic.map((m) => m.root));
         this.police.setModel(assets.police.root, assets.police.size.y + 0.05);
-        this.world.setHeroBuildings(assets.midrise.root, assets.midrise.size);
+        this.midriseAsset = { root: assets.midrise.root, size: assets.midrise.size };
+        for (const world of this.worldCache.values()) {
+          world.setHeroBuildings(assets.midrise.root, assets.midrise.size);
+        }
         this.heroModels = assets.hero;
         this.applyCarSpec(); // swap current car to its detailed body if available
         this.assetsReady = true;
@@ -233,6 +240,11 @@ export class Game {
       () => ({ x: this.car.pos.x, y: this.car.pos.y, z: this.car.pos.z });
     // verification hook (not user-facing)
     (window as unknown as { __gameDebug: unknown }).__gameDebug = {
+      mapId: () => this.world.mapId,
+      portVisuals: () => Boolean(
+        this.world.group.getObjectByName("port-warehouses-and-containers") &&
+        this.world.group.getObjectByName("port-gantry-cranes")
+      ),
       scene: this.scene,
       teleport: (x: number, z: number, heading?: number) => {
         this.car.pos.set(x, 0, z);
@@ -323,9 +335,14 @@ export class Game {
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
       <div class="title-box">
-        <div class="logo-sub">ночной курьер Токио</div>
+        <div class="logo-sub">ночной курьер · ${WORLD_MAPS.find((map) => map.id === p.mapId)?.name ?? "Токио"}</div>
         <h1 class="logo">DELIVERY<span> DRIFT</span> <em>86</em></h1>
         <p class="tagline">Доставляй быстро. Дрифти жёстко. Не разбей груз.</p>
+        <div class="map-picker" aria-label="Выбор карты">
+          ${WORLD_MAPS.map((map) => `<button class="map-card ${p.mapId === map.id ? "selected" : ""}" data-a="map:${map.id}" aria-pressed="${p.mapId === map.id}">
+            <b>${map.name}</b><span>${map.description}</span>
+          </button>`).join("")}
+        </div>
         <div class="title-buttons">
           <button class="btn primary" data-a="quick">БЫСТРАЯ ДОСТАВКА <kbd>ПРОБЕЛ</kbd></button>
           <button class="btn" data-a="cars">МАШИНЫ</button>
@@ -611,6 +628,10 @@ export class Game {
           this.buyUpgrade(arg as keyof Profile["upgrades"]["ae86"]);
           return;
         }
+        if (act === "map" && arg && (arg === "tokyo" || arg === "yokohama")) {
+          this.selectMap(arg);
+          return;
+        }
         if (act === "take" && arg !== undefined) {
           this.startOrder(this.orders[Number(arg)]);
           return;
@@ -618,6 +639,32 @@ export class Game {
         actions[act]?.();
       });
     });
+  }
+
+  private selectMap(mapId: MapId): void {
+    if (this.world.mapId !== mapId) {
+      this.scene.remove(this.world.group);
+      let nextWorld = this.worldCache.get(mapId);
+      if (!nextWorld) {
+        nextWorld = new World(mapId);
+        this.worldCache.set(mapId, nextWorld);
+        if (this.midriseAsset) nextWorld.setHeroBuildings(this.midriseAsset.root, this.midriseAsset.size);
+      }
+      this.world = nextWorld;
+      this.scene.add(this.world.group);
+      this.traffic.setWorld(this.world);
+      this.redFinedX.clear();
+      this.greenCooldown.clear();
+      this.world.hideDestination();
+      this.car.pos.set(0, 0, 0);
+      this.car.vel.set(0, 0, 0);
+      this.car.heading = Math.PI;
+      this.buildMinimapBase();
+      this.police.stop();
+      this.profile.mapId = mapId;
+      saveProfile(this.profile);
+    }
+    this.showScreen("title");
   }
 
   // ================= profile / economy =================
@@ -882,8 +929,13 @@ export class Game {
     const S = 150;
     const scale = S / (WORLD_HALF * 2 + ROAD_W * 2);
     const u = (v: number) => (v + WORLD_HALF + ROAD_W) * scale;
-    g.fillStyle = "rgba(10,14,28,0.75)";
+    g.fillStyle = this.world.mapId === "yokohama" ? "#102d39" : "rgba(10,14,28,0.75)";
     g.fillRect(0, 0, S, S);
+    if (this.world.mapId === "yokohama") {
+      const edge = WORLD_HALF + ROAD_W / 2;
+      g.fillStyle = "#3c464b";
+      g.fillRect(u(-edge), u(-edge), edge * 2 * scale, edge * 2 * scale);
+    }
     g.fillStyle = "#3a4152";
     for (let i = 0; i < GRID_N; i++) {
       const c = u(-WORLD_HALF + i * CELL);
@@ -1419,13 +1471,15 @@ export class Game {
     this.traffic.dispose();
     this.police.dispose();
     this.effects.dispose();
-    this.world.group.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      mesh.geometry?.dispose();
-      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
-      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-      else mat?.dispose();
-    });
+    for (const world of this.worldCache.values()) {
+      world.group.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        mesh.geometry?.dispose();
+        const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else mat?.dispose();
+      });
+    }
     this.renderer.dispose();
     this.screenEl.remove();
     this.hudEl.remove();

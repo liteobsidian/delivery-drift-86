@@ -1,10 +1,15 @@
-import type { CarSpec, UpgradeLevels } from "./types";
+import type { CarSpec, MapId, UpgradeLevels } from "./types";
 
 /** World layout constants. */
 export const CELL = 58; // road pitch
 export const ROAD_W = 14; // road width
 export const GRID_N = 7; // road lines per axis (GRID_N-1 blocks)
 export const WORLD_HALF = ((GRID_N - 1) * CELL) / 2; // 174
+
+export const WORLD_MAPS: { id: MapId; name: string; description: string }[] = [
+  { id: "tokyo", name: "Неоновый Токио", description: "Дрифт-кольцо и ночные улицы" },
+  { id: "yokohama", name: "Порт Ёкохама", description: "Контейнеры, краны и вода у дорог" },
+];
 export const SIDEWALK_W = 3.2;
 
 /** Fixed timestep. */

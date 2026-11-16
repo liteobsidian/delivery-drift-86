@@ -17,6 +17,8 @@ export type GameScreen =
   | "settings"
   | "achievements";
 
+export type MapId = "tokyo" | "yokohama";
+
 export interface UpgradeLevels {
   engine: number; // 0..3
   tires: number; // 0..3
@@ -39,6 +41,7 @@ export interface Profile {
   money: number;
   deliveries: number;
   carId: string; // "ae86" | "supra"
+  mapId: MapId;
   ownedCars: string[];
   upgrades: Record<string, UpgradeLevels>;
   bestEarn: number;

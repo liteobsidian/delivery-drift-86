@@ -87,6 +87,32 @@ html, body, #root {
   margin: 0 0 22px;
 }
 
+.map-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 auto 14px;
+  max-width: 520px;
+}
+
+.map-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 8px;
+  border: 1px solid #3d4560;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #202942, #141b2a);
+  color: #e8ecff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.map-card b { font-size: 12px; letter-spacing: 0.5px; }
+.map-card span { color: #9daacb; font-size: 10px; }
+.map-card.selected { border-color: #00e5ff; box-shadow: inset 0 0 14px rgba(0, 229, 255, 0.13); }
+
 .title-buttons {
   display: flex;
   flex-direction: column;
