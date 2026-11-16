@@ -26,5 +26,9 @@ verification-shots
 *.sln
 *.sw?
 
+# Agent workspaces and implementation ledgers
+.worktrees/
+.superpowers/
+
 # Local build cleanup history
 .game-build-files.json
