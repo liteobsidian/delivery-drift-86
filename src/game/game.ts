@@ -364,7 +364,7 @@ export class Game {
     const p = this.profile;
     this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades());
     const mapName = WORLD_MAPS.find((map) => map.id === p.mapId)?.name ?? "Неоновый Токио";
-    const weekly = weeklyRoutes();
+    const weekly = weeklyRoutes(new Date(), this.profile.mapId);
     const weeklyProgress = loadWeeklyProgress();
     const featuredWeeklyIndex = weekly.findIndex((route) => !weeklyProgress.completed.includes(route.id));
     const featuredWeekly = weekly[featuredWeeklyIndex >= 0 ? featuredWeeklyIndex : 0];
@@ -1516,7 +1516,8 @@ export class Game {
       lines.push(`Личный рекорд доставки: ₽${Math.round(record)}`);
       if (o.weeklyId) {
         const weekly = completeWeeklyRoute(o.weeklyId);
-        lines.push(`<span class="gold">Недельный маршрут пройден: ${weekly.completed.length}/3</span>`);
+        const completedOnMap = weeklyRoutes(new Date(), this.profile.mapId).filter((route) => weekly.completed.includes(route.id)).length;
+        lines.push(`<span class="gold">Недельный маршрут пройден: ${completedOnMap}/3</span>`);
       }
       this.audio.success();
     } else {

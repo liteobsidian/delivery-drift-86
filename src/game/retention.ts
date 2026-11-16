@@ -43,7 +43,8 @@ export function weeklyRoutes(date = new Date(), mapId: MapId = "tokyo"): WeeklyR
       const key = `${Math.round(dest.x / 10)},${Math.round(dest.z / 10)}`;
       if (distance > 60 && !used.has(key)) { used.add(key); break; }
     }
-    return { id: `${week}-${i + 1}`, title: ["Ночной экспресс", "Портовый рывок", "Неоновый маршрут"][i], dest, timeLimit: Math.round(distance / 13 + 45) };
+    const id = mapId === "tokyo" ? `${week}-${i + 1}` : `${week}-${mapId}-${i + 1}`;
+    return { id, title: ["Ночной экспресс", "Портовый рывок", "Неоновый маршрут"][i], dest, timeLimit: Math.round(distance / 13 + 45) };
   });
 }
 
