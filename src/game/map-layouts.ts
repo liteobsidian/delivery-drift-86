@@ -57,8 +57,7 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
     ],
     trafficRoutes: [],
     signalJunctions: [
-      { x: -4, z: -65 }, { x: -65, z: 21 }, { x: 1, z: 44 }, { x: 44, z: 0 },
-      { x: 72, z: 48 }, { x: -88, z: -63 }, { x: 98, z: -64 },
+      { x: -4, z: -65 }, { x: 1, z: 44 }, { x: -84, z: -64 }, { x: 100, z: -66 },
     ],
     parcels: [
       { x: 50, z: -50, width: 18, depth: 18, rotation: 0.08, zone: "downtown" },
@@ -89,6 +88,7 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
         { x: 20, z: 52 }, { x: -35, z: 67 }, { x: -84, z: 48 }, { x: -120, z: 20 },
         { x: -120, z: -30 },
       ], 12),
+      road("harbor-backstreet", [{ x: -150, z: 0 }, { x: -82, z: 12 }, { x: -38, z: 22 }, { x: 0, z: 0 }, { x: 50, z: -12 }, { x: 120, z: 20 }, { x: 145, z: 58 }], 12),
       road("pier-access-west", [{ x: -130, z: -28 }, { x: -100, z: -53 }, { x: -65, z: -65 }, { x: -35, z: -110 }], 10),
       road("pier-access-east", [{ x: 40, z: -82 }, { x: 58, z: -48 }, { x: 88, z: -14 }, { x: 110, z: -86 }], 10),
       road("quay-road", [{ x: -125, z: 88 }, { x: -88, z: 72 }, { x: -35, z: 67 }, { x: 20, z: 52 }, { x: 70, z: 72 }, { x: 112, z: 56 }, { x: 145, z: 58 }], 11),
@@ -102,14 +102,13 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
     ],
     trafficRoutes: [],
     signalJunctions: [
-      { x: -18, z: -25 }, { x: 32, z: -3 }, { x: 88, z: -14 }, { x: -35, z: 67 },
-      { x: 70, z: 72 }, { x: -120, z: -30 }, { x: 112, z: 56 },
+      { x: -35, z: 67 }, { x: 112, z: 56 },
     ],
     parcels: [
-      { x: 0, z: 10, width: 18, depth: 18, rotation: 0.08, zone: "port" },
+      { x: 82, z: 146, width: 18, depth: 18, rotation: 0, zone: "port" },
       { x: 0, z: -50, width: 18, depth: 18, rotation: -0.08, zone: "port" },
       { x: 40, z: 20, width: 18, depth: 18, rotation: 0.08, zone: "port" },
-      { x: -50, z: 20, width: 18, depth: 18, rotation: -0.08, zone: "port" },
+      { x: -54, z: -46, width: 18, depth: 18, rotation: 0, zone: "port" },
       { x: -6, z: -142, width: 18, depth: 18, rotation: 0, zone: "port" },
       { x: 114, z: -30, width: 18, depth: 18, rotation: 0, zone: "port" },
       { x: -78, z: 90, width: 18, depth: 18, rotation: 0, zone: "port" },

@@ -122,12 +122,32 @@ if (clamped.x !== tokyoBounds.maxX || clamped.z !== tokyoBounds.minZ) fail("Worl
 await page.locator('[data-a="map:tokyo"]').click();
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("Neon Tokyo could not be selected");
 if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port-only props leaked into Neon Tokyo");
+const tokyoTraffic = await page.evaluate(() => window.__gameDebug.trafficPos());
+if (!tokyoTraffic.length || (await page.evaluate((cars) => cars.some((car) => !window.__gameDebug.roadProbe(car.x, car.z).onRoad), tokyoTraffic))) fail("Tokyo NPC traffic left its authored roads");
+const tokyoLayout = await page.evaluate(() => window.__gameDebug.layoutSnapshot());
+if (!tokyoLayout.signals.length || (await page.evaluate((signals) => signals.some((point) => !window.__gameDebug.roadProbe(point.x, point.z).onRoad), tokyoLayout.signals))) fail("Tokyo signal junctions are not on authored roads");
 await portMapButton.click();
 const selectedMap = await page.evaluate(() => window.__gameDebug?.mapId?.());
 if (selectedMap !== "yokohama") fail("Selecting Yokohama did not switch the active map");
 if (!(await page.evaluate(() => window.__gameDebug?.portVisuals?.()))) fail("Yokohama map props were not built");
 const savedMap = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").mapId);
 if (savedMap !== "yokohama") fail("The selected map was not saved to the player profile");
+const yokohamaTraffic = await page.evaluate(() => window.__gameDebug.trafficPos());
+if (!yokohamaTraffic.length || (await page.evaluate((cars) => cars.some((car) => !window.__gameDebug.roadProbe(car.x, car.z).onRoad), yokohamaTraffic))) fail("Yokohama NPC traffic left its authored roads");
+const yokohamaLayout = await page.evaluate(() => window.__gameDebug.layoutSnapshot());
+if (!yokohamaLayout.signals.length || (await page.evaluate((signals) => signals.some((point) => !window.__gameDebug.roadProbe(point.x, point.z).onRoad), yokohamaLayout.signals))) fail("Yokohama signal junctions are not on authored roads");
+const layoutSignature = (layout) => JSON.stringify(layout.roads.map(({ id, points }) => [id, points]));
+if (layoutSignature(tokyoLayout) === layoutSignature(yokohamaLayout)) fail("Tokyo and Yokohama minimap road topologies are identical");
+await page.locator('[data-a="quick"]').click();
+await page.waitForTimeout(700);
+await page.screenshot({ path: join(SHOTS, "04-yokohama-network.png") });
+await page.evaluate(() => window.__gameDebug?.exitMode?.());
+await page.locator('[data-a="map:tokyo"]').click();
+await page.locator('[data-a="quick"]').click();
+await page.waitForTimeout(700);
+await page.screenshot({ path: join(SHOTS, "05-tokyo-network.png") });
+await page.evaluate(() => window.__gameDebug?.exitMode?.());
+await page.locator('[data-a="map:yokohama"]').click();
 await page.locator('[data-a="map:tokyo"]').click();
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("Switching back to Tokyo did not rebuild the city");
 if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port props remained after switching back to Tokyo");
@@ -136,7 +156,7 @@ if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "yokohama") fai
 const weeklyIds = await page.evaluate(() => window.__gameDebug?.weekly?.());
 if (!Array.isArray(weeklyIds) || weeklyIds.length !== 3) fail("The weekly route set is missing");
 const routeData = await page.evaluate(() => window.__gameDebug?.weeklyRoutes?.());
-if (routeData.some((route) => Math.abs(route.dest.x) > 174 || Math.abs(route.dest.z) > 174 || ![route.dest.x, route.dest.z].some((v) => Math.abs(v - (Math.round((v + 174) / 58) * 58 - 174)) < 15))) fail("A weekly route destination is outside the driveable road grid");
+if (!(await page.evaluate((routes) => routes.every((route) => window.__gameDebug.roadProbe(route.dest.x, route.dest.z).onRoad), routeData))) fail("A weekly route destination is outside the authored road network");
 if (await page.evaluate(() => window.__gameDebug?.weekKey?.("2026-11-15T23:59:00Z")) !== "2026-11-09") fail("UTC weekly key changed before Monday");
 if (await page.evaluate(() => window.__gameDebug?.weekKey?.("2026-11-16T00:00:00Z")) !== "2026-11-16") fail("UTC weekly key did not rotate on Monday");
 await page.locator('[data-a="records"]').click();
@@ -170,6 +190,8 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
 const beforeUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries);
 for (let i = 0; i < 2; i++) {
   await page.locator('[data-a="quick"]').click();
+  const orderDest = await page.evaluate(() => window.__gameDebug.orderDest());
+  if (!orderDest || !(await page.evaluate((point) => window.__gameDebug.roadProbe(point.x, point.z).onRoad, orderDest))) fail("A regular delivery destination is outside the authored road network");
   await page.evaluate(() => window.__gameDebug?.finishDelivery?.());
   await page.locator('[data-a="menu"]').click();
 }

@@ -2,6 +2,35 @@ import { describe, expect, it } from "vitest";
 import { CITY_LAYOUTS, cityLayoutFor, distanceToRoad, isOnLayoutRoad, parcelClearOfRoads, sampleRoadPoint } from "./map-layouts";
 
 describe("hand-authored city layouts", () => {
+  it("keeps the shared car spawn point on a road in both districts", () => {
+    expect(isOnLayoutRoad(cityLayoutFor("tokyo"), 0, 0)).toBe(true);
+    expect(isOnLayoutRoad(cityLayoutFor("yokohama"), 0, 0)).toBe(true);
+  });
+
+  it("places signals only where a horizontal and vertical arterial meet", () => {
+    for (const layout of Object.values(CITY_LAYOUTS)) {
+      expect(layout.signalJunctions.length).toBeGreaterThanOrEqual(2);
+      for (const point of layout.signalJunctions) {
+        const hasAxisApproach = (horizontal: boolean) => layout.roads.some((road) => {
+          for (let i = 0; i < road.points.length - 1; i++) {
+            const a = road.points[i];
+            const b = road.points[i + 1];
+            const dx = b.x - a.x;
+            const dz = b.z - a.z;
+            if (horizontal ? Math.abs(dx) < Math.abs(dz) * 1.8 : Math.abs(dz) < Math.abs(dx) * 1.8) continue;
+            const length2 = dx * dx + dz * dz;
+            const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.z - a.z) * dz) / length2));
+            const distance = Math.hypot(point.x - (a.x + dx * t), point.z - (a.z + dz * t));
+            if (distance <= road.width / 2) return true;
+          }
+          return false;
+        });
+        expect(hasAxisApproach(true), `${layout.id} signal lacks a horizontal approach at ${point.x},${point.z}`).toBe(true);
+        expect(hasAxisApproach(false), `${layout.id} signal lacks a vertical approach at ${point.x},${point.z}`).toBe(true);
+      }
+    }
+  });
+
   it("gives both districts different, drivable street shapes", () => {
     const tokyo = cityLayoutFor("tokyo");
     const yokohama = cityLayoutFor("yokohama");

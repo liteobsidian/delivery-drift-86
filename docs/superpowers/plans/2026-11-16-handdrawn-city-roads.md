@@ -86,12 +86,12 @@
 
 **Interfaces:** consumes Task 1 layout and Task 2 `World` road/bounds queries.
 
-- [ ] **Step 1: Add browser assertions for NPCs on-road, road-sampled orders, signal junctions, and distinct minimap topology**
-- [ ] **Step 2: Run `npm run verify` and confirm the new assertions fail on the old grid-backed systems**
-- [ ] **Step 3: Make traffic follow closed authored routes with lane offsets and turn headings; stop at map bounds using the layout extent**
-- [ ] **Step 4: Place the existing two-phase signals at authored major junctions and retain red-light checks at those locations**
-- [ ] **Step 5: Generate delivery destinations by `sampleRoadPoint`; draw minimap roads from `CityLayout.roads`**
-- [ ] **Step 6: Run `npm run verify` and confirm the new flow passes**
+- [x] **Step 1: Add browser assertions for NPCs on-road, road-sampled orders, signal junctions, and distinct minimap topology**
+- [x] **Step 2: Run `npm run verify` and confirm the new assertions fail on the old grid-backed systems**
+- [x] **Step 3: Make traffic follow closed authored routes with lane offsets and turn headings; stop at map bounds using the layout extent**
+- [x] **Step 4: Place the existing two-phase signals at authored major junctions and retain red-light checks at those locations**
+- [x] **Step 5: Generate delivery destinations by `sampleRoadPoint`; draw minimap roads from `CityLayout.roads`**
+- [x] **Step 6: Run `npm run verify` and confirm the new flow passes**
 - [ ] **Step 7: Commit traffic and navigation integration**
 
 ### Task 4: Visual Review and Publish
@@ -100,8 +100,8 @@
 - Modify: `scripts/verify-game.mjs` (capture city screenshots)
 - Update: this plan's checkboxes
 
-- [ ] **Step 1: Capture and inspect both city maps and minimaps at desktop/mobile sizes**
-- [ ] **Step 2: Run `npm run build && npm run test:maps && npm run verify && git diff --check`**
-- [ ] **Step 3: Fix any visual/gameplay mismatch and repeat verification**
+- [x] **Step 1: Capture and inspect both city maps and minimaps at desktop size**
+- [x] **Step 2: Run `npm run build && npm run test:maps && npm run verify && git diff --check`**
+- [x] **Step 3: Fix any visual/gameplay mismatch and repeat verification**
 - [ ] **Step 4: Request a read-only branch review; fix Critical/Important findings**
 - [ ] **Step 5: Push a feature branch, open PR, wait for CI, merge to `main`, and verify production HTTPS deployment**
