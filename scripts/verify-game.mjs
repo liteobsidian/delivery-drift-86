@@ -123,6 +123,26 @@ if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("
 if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port props remained after switching back to Tokyo");
 await page.locator('[data-a="map:yokohama"]').click();
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "yokohama") fail("Yokohama could not be reselected after returning to Tokyo");
+const weeklyIds = await page.evaluate(() => window.__gameDebug?.weekly?.());
+if (!Array.isArray(weeklyIds) || weeklyIds.length !== 3) fail("The weekly route set is missing");
+const routeData = await page.evaluate(() => window.__gameDebug?.weeklyRoutes?.());
+if (routeData.some((route) => Math.abs(route.dest.x) > 174 || Math.abs(route.dest.z) > 174 || ![route.dest.x, route.dest.z].some((v) => Math.abs(v - (Math.round((v + 174) / 58) * 58 - 174)) < 15))) fail("A weekly route destination is outside the driveable road grid");
+if (await page.evaluate(() => window.__gameDebug?.weekKey?.("2026-11-15T23:59:00Z")) !== "2026-11-09") fail("UTC weekly key changed before Monday");
+if (await page.evaluate(() => window.__gameDebug?.weekKey?.("2026-11-16T00:00:00Z")) !== "2026-11-16") fail("UTC weekly key did not rotate on Monday");
+await page.locator('[data-a="records"]').click();
+if (!(await page.getByText("НЕДЕЛЬНЫЕ МАРШРУТЫ").count())) fail("The records and weekly routes screen did not open");
+await page.locator('[data-a="weekly:0"]').click();
+await page.evaluate(() => window.__gameDebug?.finishWeekly?.());
+if ((await page.evaluate(() => window.__gameDebug?.weeklyProgress?.()?.completed?.length)) !== 1) fail("Completing a weekly route was not saved");
+await page.locator('[data-a="menu"]').click();
+await page.locator('[data-a="records"]').click();
+await page.locator('[data-a="weekly:0"]').click();
+await page.evaluate(() => window.__gameDebug?.finishWeekly?.());
+if ((await page.evaluate(() => window.__gameDebug?.weeklyProgress?.()?.completed?.length)) !== 1) fail("Replaying a weekly route changed completed route progress");
+await page.locator('[data-a="menu"]').click();
+await page.locator('[data-a="records"]').click();
+if (!(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("delivery-drift-86-records-v1") ?? "{}")).some((key) => key.includes(":delivery:"))))) fail("Delivery personal records were not saved");
+await page.locator('[data-a="back"]').click();
 
 // Both short modes can start, complete, and be replayed without counting as deliveries.
 for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TIME ATTACK"]]) {
@@ -132,10 +152,19 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
   await page.evaluate(() => window.__gameDebug?.finishMode?.());
   if (!(await page.getByText(label, { exact: true }).count())) fail(`${label} did not show its result`);
   if (await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries) !== deliveries) fail(`${label} incorrectly counted as a delivery`);
+  if (!(await page.evaluate((mode) => Object.keys(JSON.parse(localStorage.getItem("delivery-drift-86-records-v1") ?? "{}")).some((key) => key.includes(`:${mode}:`)), mode))) fail(`${label} personal record was not saved`);
   await page.locator('[data-a="replay"]').click();
   if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} replay did not restart the same mode`);
   await page.evaluate(() => window.__gameDebug?.exitMode?.());
 }
+const beforeUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries);
+for (let i = 0; i < 2; i++) {
+  await page.locator('[data-a="quick"]').click();
+  await page.evaluate(() => window.__gameDebug?.finishDelivery?.());
+  await page.locator('[data-a="menu"]').click();
+}
+const afterUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries);
+if (afterUnlimited !== beforeUnlimited + 2) fail("Ordinary deliveries were not available repeatedly");
 
 // 1) The canvas must actually render content (not a black screen). Judge by reading the drawing
 //    buffer, not the screenshot — on headless/swiftshader the compositor may show the canvas as

@@ -15,7 +15,8 @@ export type GameScreen =
   | "paused"
   | "result"
   | "settings"
-  | "achievements";
+  | "achievements"
+  | "records";
 
 export type MapId = "tokyo" | "yokohama";
 
@@ -85,6 +86,7 @@ export interface Order {
   timeLimit: number; // seconds
   fragility: number; // damage multiplier
   distance: number;
+  weeklyId?: string;
 }
 
 export interface TrafficLight {
