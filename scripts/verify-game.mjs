@@ -124,6 +124,19 @@ if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port p
 await page.locator('[data-a="map:yokohama"]').click();
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "yokohama") fail("Yokohama could not be reselected after returning to Tokyo");
 
+// Both short modes can start, complete, and be replayed without counting as deliveries.
+for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TIME ATTACK"]]) {
+  const deliveries = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries);
+  await page.locator(`[data-a="${mode}"]`).click();
+  if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} did not start`);
+  await page.evaluate(() => window.__gameDebug?.finishMode?.());
+  if (!(await page.getByText(label, { exact: true }).count())) fail(`${label} did not show its result`);
+  if (await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries) !== deliveries) fail(`${label} incorrectly counted as a delivery`);
+  await page.locator('[data-a="replay"]').click();
+  if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} replay did not restart the same mode`);
+  await page.evaluate(() => window.__gameDebug?.exitMode?.());
+}
+
 // 1) The canvas must actually render content (not a black screen). Judge by reading the drawing
 //    buffer, not the screenshot — on headless/swiftshader the compositor may show the canvas as
 //    black while the drawing buffer holds the real frame. WebGL needs preserveDrawingBuffer for
