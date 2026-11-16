@@ -790,3 +790,27 @@ html, body, #root {
   .hud-cargo-text { display: none; }
   .hud-top { font-size: 10px; gap: 6px; }
 }
+
+.activity-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.activity-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 8px;
+  border: 1px solid #3d4560;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #202942, #141b2a);
+  color: #e8ecff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.activity-card b { color: #00e5ff; font-size: 13px; letter-spacing: 1px; }
+.activity-card span { color: #aab4d8; font-size: 11px; }
+.activity-card:hover { border-color: #00e5ff; background: #222f49; }

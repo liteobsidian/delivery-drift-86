@@ -71,6 +71,7 @@ export class Game {
 
   screen: GameScreen = "title";
   order: Order | null = null;
+  mode: "delivery" | "drift-trial" | "time-attack" = "delivery";
   orders: Order[] = [];
   timeLeft = 0;
   driftScore = 0;
@@ -241,6 +242,9 @@ export class Game {
     // verification hook (not user-facing)
     (window as unknown as { __gameDebug: unknown }).__gameDebug = {
       mapId: () => this.world.mapId,
+      mode: () => this.mode,
+      finishMode: () => { if (this.mode !== "delivery") this.completeOrder(true, "Тестовый финиш"); },
+      exitMode: () => this.showScreen("title"),
       portVisuals: () => Boolean(
         this.world.group.getObjectByName("port-warehouses-and-containers") &&
         this.world.group.getObjectByName("port-gantry-cranes")
@@ -345,6 +349,10 @@ export class Game {
         </div>
         <div class="title-buttons">
           <button class="btn primary" data-a="quick">БЫСТРАЯ ДОСТАВКА <kbd>ПРОБЕЛ</kbd></button>
+          <div class="activity-picker" aria-label="Режимы заезда">
+            <button class="activity-card" data-a="drift-trial"><b>DRIFT TRIAL</b><span>60 секунд · набери очки дрифтом</span></button>
+            <button class="activity-card" data-a="time-attack"><b>TIME ATTACK</b><span>Доберись до точки до истечения времени</span></button>
+          </div>
           <button class="btn" data-a="cars">МАШИНЫ</button>
           <button class="btn" data-a="garage">ГАРАЖ</button>
           <button class="btn" data-a="achievements">АЧИВКИ ${p.unlockedAch.length > 0 ? `<span class="gold">(${p.unlockedAch.length}/${ACHIEVEMENTS.length})</span>` : ""}</button>
@@ -364,6 +372,8 @@ export class Game {
       </div>`;
     this.bindScreen({
       quick: () => this.quickStart(),
+      "drift-trial": () => this.startMode("drift-trial"),
+      "time-attack": () => this.startMode("time-attack"),
       cars: () => this.showScreen("cars"),
       garage: () => this.showScreen("garage"),
       achievements: () => this.showScreen("achievements"),
@@ -588,21 +598,22 @@ export class Game {
     this.bindScreen({ back: () => this.showScreen("title") });
   }
 
-  private lastResult: { ok: boolean; lines: string[] } = { ok: false, lines: [] };
+  private lastResult: { ok: boolean; lines: string[]; mode?: string; title?: string } = { ok: false, lines: [] };
 
   private renderResult(): void {
     const r = this.lastResult;
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
       <div class="panel result ${r.ok ? "ok" : "bad"}">
-        <h2>${r.ok ? "ДОСТАВЛЕНО!" : "ЗАКАЗ ПРОВАЛЕН"}</h2>
+        <h2>${r.title ?? (r.ok ? "ДОСТАВЛЕНО!" : "ЗАКАЗ ПРОВАЛЕН")}</h2>
         <div class="result-lines">${r.lines.map((l) => `<div>${l}</div>`).join("")}</div>
-        <button class="btn primary" data-a="more">ЕЩЁ ЗАКАЗ <kbd>ПРОБЕЛ</kbd></button>
+        ${r.mode ? `<button class="btn primary" data-a="replay">ПОВТОРИТЬ ЗАЕЗД</button>` : `<button class="btn primary" data-a="more">ЕЩЁ ЗАКАЗ <kbd>ПРОБЕЛ</kbd></button>`}
         <button class="btn" data-a="garage">В ГАРАЖ</button>
         <button class="btn" data-a="menu">В МЕНЮ</button>
       </div>`;
     this.bindScreen({
       more: () => this.gotoOrders(),
+      replay: () => this.startMode(this.lastResult.mode as "drift-trial" | "time-attack"),
       garage: () => this.showScreen("garage"),
       menu: () => this.showScreen("title"),
     });
@@ -782,12 +793,28 @@ export class Game {
     this.startOrder(this.orders[0]);
   }
 
+  private startMode(mode: "drift-trial" | "time-attack"): void {
+    this.genOrders();
+    const order = { ...this.orders[0] };
+    if (mode === "drift-trial") {
+      order.title = "Drift Trial";
+      order.timeLimit = 60;
+      order.dest = { x: 0, z: 0 };
+    } else {
+      order.title = "Time Attack";
+      order.fragility = 99; // the race has no cargo damage condition
+      order.reward = 0;
+    }
+    this.startOrder(order, mode);
+  }
+
   private gotoOrders(): void {
     this.genOrders();
     this.showScreen("orders");
   }
 
-  private startOrder(o: Order): void {
+  private startOrder(o: Order, mode: "delivery" | "drift-trial" | "time-attack" = "delivery"): void {
+    this.mode = mode;
     this.order = o;
     this.orders = this.orders.filter((x) => x.id !== o.id);
     this.car.pos.set(0, 0, 0);
@@ -817,7 +844,7 @@ export class Game {
     this.audio.ensure();
     this.audio.startMusic();
     this.showScreen("playing");
-    this.toast(`Заказ: доставьте за ${o.timeLimit} с. Берегите груз!`);
+    this.toast(mode === "drift-trial" ? "Drift Trial: 60 секунд, цель — 800 очков дрифта" : mode === "time-attack" ? "Time Attack: достигните точки на карте" : `Заказ: доставьте за ${o.timeLimit} с. Берегите груз!`);
     if (this.input.isTouch && !this.profile.seenTutorial) {
       this.showTutorial(true);
     }
@@ -1213,11 +1240,11 @@ export class Game {
           this.car.pos.z - this.order.dest.z
         )
       : 999;
-    if (dDest < 4.2) this.completeOrder(true, "Точка назначения достигнута");
-    else if (this.car.cargo <= 0)
+    if (this.mode !== "drift-trial" && dDest < 4.2) this.completeOrder(true, "Точка назначения достигнута");
+    else if (this.mode === "delivery" && this.car.cargo <= 0)
       this.completeOrder(false, "Груз разбит вдребезги");
     else if (this.timeLeft <= 0)
-      this.completeOrder(false, "Время вышло — клиент ушёл");
+      this.completeOrder(this.mode === "drift-trial" && this.driftScore >= 800, this.mode === "drift-trial" ? "Заезд завершён" : "Время вышло — клиент ушёл");
 
     // toast fade
     if (this.toastTimer > 0) {
@@ -1322,6 +1349,20 @@ export class Game {
     this.audio.stopMusic();
     this.audio.updateEngine(0, 0, 0);
     const p = this.profile;
+    if (this.mode !== "delivery") {
+      const title = this.mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK";
+      const lines = [
+        `${reason}.`,
+        this.mode === "drift-trial"
+          ? `Очки дрифта: ${Math.round(this.driftScore)} · цель: 800`
+          : `Время: ${Math.max(0, o.timeLimit - this.timeLeft).toFixed(1)} с`,
+      ];
+      this.lastResult = { ok, lines, mode: this.mode, title };
+      this.order = null;
+      this.police.stop();
+      this.showScreen("result");
+      return;
+    }
     const lines: string[] = [`${reason}.`];
     let total = 0;
     if (ok) {
@@ -1374,7 +1415,9 @@ export class Game {
   private updateHud(): void {
     if (!this.order) return;
     const o = this.order;
-    this.hOrder.textContent = `📦 ${CARGO_NAMES[o.id % CARGO_NAMES.length]} · ₽${o.reward}`;
+    this.hOrder.textContent = this.mode === "delivery"
+      ? `📦 ${CARGO_NAMES[o.id % CARGO_NAMES.length]} · ₽${o.reward}`
+      : this.mode === "drift-trial" ? "DRIFT TRIAL · цель 800" : "TIME ATTACK · ФИНИШ";
     const t = Math.max(0, this.timeLeft);
     this.hTimer.textContent = `⏱ ${t.toFixed(0)}с`;
     this.hTimer.classList.toggle("low", t < 12);

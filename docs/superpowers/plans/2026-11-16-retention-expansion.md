@@ -41,9 +41,9 @@
 
 ### Task 2: Short Activity Modes
 
-- [ ] Add Drift Trial and Time Attack cards using the current map and car physics.
-- [ ] Give each mode a short target, result screen, and replay path; keep delivery as the default.
-- [ ] Add smoke checks for start, completion, and replay, then publish independently.
+- [x] Add Drift Trial and Time Attack cards using the current map and car physics.
+- [x] Give each mode a short target, result screen, and replay path; keep delivery as the default.
+- [x] Add smoke checks for start, completion, and replay, then publish independently.
 
 ### Task 3: Nitro
 
