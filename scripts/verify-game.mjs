@@ -181,13 +181,13 @@ await page.keyboard.press("Space");
 await page.waitForTimeout(400);
 
 // 3) Check direction without assuming a fixed frame rate on software-rendered CI.
-async function checkDirection(key, axis, direction) {
+async function checkDirection(key, axis, direction, distance = 0.05) {
   const before = await page.evaluate(() => window.__gameProbe());
   await page.keyboard.down(key);
   try {
     await page.waitForFunction(
-      ({ start, axis, direction }) => (window.__gameProbe()[axis] - start) * direction > 0.05,
-      { start: before[axis], axis, direction },
+      ({ start, axis, direction, distance }) => (window.__gameProbe()[axis] - start) * direction > distance,
+      { start: before[axis], axis, direction, distance },
       { timeout: 4000 },
     );
     return true;
@@ -201,6 +201,7 @@ async function checkDirection(key, axis, direction) {
 
 const probe = await page.evaluate(() => !!window.__gameProbe);
 if (probe) {
+  if (!await checkDirection("KeyS", "z", 1, 0.75)) fail("S did not move the car backwards at a useful speed");
   if (!await checkDirection("KeyW", "z", -1)) fail("W did not move forward");
   // Steering changes heading while gas keeps the car moving.
   await page.keyboard.down("KeyW");
