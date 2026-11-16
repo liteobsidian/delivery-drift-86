@@ -30,6 +30,7 @@ import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { carThumb, createShowroom } from "./showroom";
 import { LEVELS, courierLevel } from "./config";
+import { completeWeeklyRoute, loadRecords, loadWeeklyProgress, saveRecord, utcWeekKey, weeklyRoutes } from "./retention";
 
 const SD = ROAD_W / 2 + 1.6; // stop-line distance from intersection center
 
@@ -247,7 +248,13 @@ export class Game {
       mode: () => this.mode,
       nitroFuel: () => this.nitroFuel,
       finishMode: () => { if (this.mode !== "delivery") this.completeOrder(true, "Тестовый финиш"); },
+      finishDelivery: () => { if (this.mode === "delivery" && this.order) this.completeOrder(true, "Тестовая доставка"); },
       exitMode: () => this.showScreen("title"),
+      weekly: () => weeklyRoutes().map((route) => route.id),
+      weeklyRoutes: () => weeklyRoutes(),
+      weekKey: (date?: string) => utcWeekKey(date ? new Date(date) : new Date()),
+      finishWeekly: () => { if (this.order?.weeklyId) this.completeOrder(true, "Тестовый финиш"); },
+      weeklyProgress: () => loadWeeklyProgress(),
       portVisuals: () => Boolean(
         this.world.group.getObjectByName("port-warehouses-and-containers") &&
         this.world.group.getObjectByName("port-gantry-cranes")
@@ -331,6 +338,7 @@ export class Game {
     else if (s === "result") this.renderResult();
     else if (s === "settings") this.renderSettings();
     else if (s === "achievements") this.renderAchievements();
+    else if (s === "records") this.renderRecords();
     else this.clearScreen();
   }
 
@@ -359,6 +367,7 @@ export class Game {
           <button class="btn" data-a="cars">МАШИНЫ</button>
           <button class="btn" data-a="garage">ГАРАЖ</button>
           <button class="btn" data-a="achievements">АЧИВКИ ${p.unlockedAch.length > 0 ? `<span class="gold">(${p.unlockedAch.length}/${ACHIEVEMENTS.length})</span>` : ""}</button>
+          <button class="btn" data-a="records">РЕКОРДЫ · НЕДЕЛЬНЫЕ МАРШРУТЫ</button>
           <button class="btn" data-a="settings">⚙ НАСТРОЙКИ</button>
         </div>
         <div class="stats-row">
@@ -380,6 +389,7 @@ export class Game {
       cars: () => this.showScreen("cars"),
       garage: () => this.showScreen("garage"),
       achievements: () => this.showScreen("achievements"),
+      records: () => this.showScreen("records"),
       settings: () => {
         this.settingsFrom = "title";
         this.showScreen("settings");
@@ -601,6 +611,58 @@ export class Game {
     this.bindScreen({ back: () => this.showScreen("title") });
   }
 
+  private renderRecords(): void {
+    const records = loadRecords();
+    const rows = Object.entries(records).sort((a, b) => {
+      const [am, modeA, ac] = a[0].split(":");
+      const [bm, modeB, bc] = b[0].split(":");
+      return am.localeCompare(bm) || modeA.localeCompare(modeB) || ac.localeCompare(bc);
+    });
+    const recordRows = rows.length ? rows.map(([key, value]) => {
+      const [map, mode, car] = key.split(":");
+      const mapName = WORLD_MAPS.find((m) => m.id === map)?.name ?? map;
+      const modeName = mode === "drift-trial" ? "Drift Trial" : mode === "time-attack" ? "Time Attack" : "Доставка";
+      const metric = mode === "time-attack" ? `${value.toFixed(1)} с` : Math.round(value).toLocaleString("ru-RU");
+      return `<div class="record-row"><b>${modeName}</b><span>${mapName} · ${car.toUpperCase()}</span><strong>${metric}</strong></div>`;
+    }).join("") : `<p class="dim">Пока нет результатов. Заезжай в любой режим — лучший результат сохранится здесь.</p>`;
+    const routes = weeklyRoutes();
+    const progress = loadWeeklyProgress();
+    const routeRows = routes.map((route, i) => {
+      const done = progress.completed.includes(route.id);
+      return `<div class="weekly-row ${done ? "done" : ""}">
+        <div><b>${route.title}</b><span>${Math.round(route.timeLimit)} сек · ${Math.round(Math.hypot(route.dest.x, route.dest.z))} м${done ? " · уже пройден" : ""}</span></div>
+        <button class="btn small ${done ? "" : "primary"}" data-a="weekly:${i}">${done ? "ПОВТОРИТЬ" : "СТАРТ"}</button>
+      </div>`;
+    }).join("");
+    this.screenEl.style.display = "flex";
+    this.screenEl.innerHTML = `<div class="panel records-panel">
+      <h2>ЛИЧНЫЕ РЕКОРДЫ</h2>
+      <p class="dim">Лучшие результаты по карте, режиму и машине · неделя UTC ${progress.week}</p>
+      <div class="record-list">${recordRows}</div>
+      <h2>НЕДЕЛЬНЫЕ МАРШРУТЫ</h2>
+      <p class="dim">Новый набор каждый понедельник по UTC · обычные доставки доступны без ограничений</p>
+      <div class="weekly-list">${routeRows}</div>
+      <button class="btn" data-a="back">← В МЕНЮ</button>
+    </div>`;
+    this.bindScreen({ back: () => this.showScreen("title") });
+  }
+
+  private startWeeklyRoute(index: number): void {
+    const route = weeklyRoutes()[index];
+    if (!route) return;
+    const distance = Math.hypot(route.dest.x, route.dest.z);
+    this.startOrder({
+      id: this.orderId++,
+      title: route.title,
+      dest: route.dest,
+      reward: Math.round(220 + distance * 1.2),
+      timeLimit: route.timeLimit,
+      fragility: 1,
+      distance,
+      weeklyId: route.id,
+    });
+  }
+
   private lastResult: { ok: boolean; lines: string[]; mode?: string; title?: string } = { ok: false, lines: [] };
 
   private renderResult(): void {
@@ -644,6 +706,10 @@ export class Game {
         }
         if (act === "map" && arg && (arg === "tokyo" || arg === "yokohama")) {
           this.selectMap(arg);
+          return;
+        }
+        if (act === "weekly" && arg !== undefined) {
+          this.startWeeklyRoute(Number(arg));
           return;
         }
         if (act === "take" && arg !== undefined) {
@@ -1361,12 +1427,16 @@ export class Game {
     const p = this.profile;
     if (this.mode !== "delivery") {
       const title = this.mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK";
+      const record = this.mode === "drift-trial"
+        ? saveRecord(this.profile.mapId, this.mode, this.profile.carId, this.driftScore)
+        : ok ? saveRecord(this.profile.mapId, this.mode, this.profile.carId, Math.max(0, o.timeLimit - this.timeLeft)) : null;
       const lines = [
         `${reason}.`,
         this.mode === "drift-trial"
           ? `Очки дрифта: ${Math.round(this.driftScore)} · цель: 800`
           : `Время: ${Math.max(0, o.timeLimit - this.timeLeft).toFixed(1)} с`,
       ];
+      if (record !== null) lines.push(this.mode === "drift-trial" ? `Личный рекорд: ${Math.round(record)}` : `Лучшее время: ${record.toFixed(1)} с`);
       this.lastResult = { ok, lines, mode: this.mode, title };
       this.order = null;
       this.police.stop();
@@ -1401,6 +1471,12 @@ export class Game {
       p.bestEarn = Math.max(p.bestEarn, total);
       p.driftBest = Math.max(p.driftBest, Math.round(this.driftScore));
       if (this.car.cargo >= 99.5) p.stats.perfectDeliveries += 1;
+      const record = saveRecord(this.profile.mapId, "delivery", this.profile.carId, total);
+      lines.push(`Личный рекорд доставки: ₽${Math.round(record)}`);
+      if (o.weeklyId) {
+        const weekly = completeWeeklyRoute(o.weeklyId);
+        lines.push(`<span class="gold">Недельный маршрут пройден: ${weekly.completed.length}/3</span>`);
+      }
       this.audio.success();
     } else {
       const consolation = 40;

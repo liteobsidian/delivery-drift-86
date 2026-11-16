@@ -53,6 +53,6 @@
 
 ### Task 4: Personal Scoreboards and Weekly Routes
 
-- [ ] Add persistent personal records keyed by map, mode, and vehicle.
-- [ ] Generate a stable weekly route set from the UTC week key; show progress and replay.
-- [ ] Test persistence, weekly rotation, and unlimited ordinary deliveries; publish independently.
+- [x] Add persistent personal records keyed by map, mode, and vehicle.
+- [x] Generate a stable weekly route set from the UTC week key; show progress and replay.
+- [x] Test persistence, weekly rotation, and unlimited ordinary deliveries; publish independently.
