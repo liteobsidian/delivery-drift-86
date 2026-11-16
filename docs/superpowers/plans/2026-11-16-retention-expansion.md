@@ -47,9 +47,9 @@
 
 ### Task 3: Nitro
 
-- [ ] Add a finite nitro meter, a boost input for keyboard and touch, and a restrained speed/acceleration boost.
-- [ ] Refill through driving skill and near misses; do not add a purchase or energy wait.
-- [ ] Test fuel bounds, boost cap, mobile/keyboard input, and publish independently.
+- [x] Add a finite nitro meter, a boost input for keyboard and touch, and a restrained speed/acceleration boost.
+- [x] Refill through driving skill and near misses; do not add a purchase or energy wait.
+- [x] Test fuel bounds, boost cap, mobile/keyboard input, and publish independently.
 
 ### Task 4: Personal Scoreboards and Weekly Routes
 

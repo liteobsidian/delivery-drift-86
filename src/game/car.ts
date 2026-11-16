@@ -237,7 +237,7 @@ export class Car {
 
     if (this.wrecked) {
       // coasting wreck: no throttle, no steering, heavy scrub
-      input = { steer: 0, throttle: 0, brake: 0, reverse: 0, handbrake: false };
+      input = { steer: 0, throttle: 0, brake: 0, reverse: 0, handbrake: false, nitro: false };
     }
 
     const fwd = this.forward(tmpF);
@@ -250,10 +250,11 @@ export class Car {
     this.heading += steerInput * this.spec.steerRate * speedFactor * highSpeedDamp * dt;
 
     // --- engine / brake ---
-    const topSpeed = this.spec.topSpeed * (this.gripPenalty ? 0.85 : 1);
+    const boosting = input.nitro && input.throttle > 0 && speed >= -0.1;
+    const topSpeed = this.spec.topSpeed * (this.gripPenalty ? 0.85 : 1) * (boosting ? 1.32 : 1);
     if (input.throttle > 0 && speed < topSpeed) {
       const fade = Math.max(0.22, 1 - speed / topSpeed);
-      this.vel.addScaledVector(fwd, this.spec.accel * fade * input.throttle * dt);
+      this.vel.addScaledVector(fwd, this.spec.accel * (boosting ? 1.28 : 1) * fade * input.throttle * dt);
     }
     // DO NOT BREAK REVERSE: never apply service-brake force while reverse is
     // engaged; the opposing forces cancel and make the car crawl backwards.

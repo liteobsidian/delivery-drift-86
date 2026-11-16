@@ -219,6 +219,15 @@ await page.screenshot({ path: join(SHOTS, "01-title.png") });
 // 2) Enter playing
 await page.keyboard.press("Space");
 await page.waitForTimeout(400);
+const nitroBefore = await page.evaluate(() => window.__gameDebug?.nitroFuel?.());
+if (typeof nitroBefore !== "number") fail("Nitro fuel meter is not exposed");
+await page.keyboard.down("KeyW");
+await page.keyboard.down("ShiftLeft");
+await page.waitForTimeout(700);
+await page.keyboard.up("ShiftLeft");
+await page.keyboard.up("KeyW");
+const nitroAfter = await page.evaluate(() => window.__gameDebug?.nitroFuel?.());
+if (!(nitroAfter < nitroBefore && nitroAfter >= 0)) fail("Shift did not consume bounded nitro fuel");
 
 // 3) Check direction without assuming a fixed frame rate on software-rendered CI.
 async function checkDirection(key, axis, direction, distance = 0.05) {

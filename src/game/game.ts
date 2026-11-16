@@ -97,6 +97,8 @@ export class Game {
   private camPos = new THREE.Vector3(0, 5, 55);
   private toastTimer = 0;
   private hudTimer = 0;
+  nitroFuel = 100;
+  private hNitro!: HTMLElement;
   private readyFlagged = false;
 
   // DOM refs
@@ -243,6 +245,7 @@ export class Game {
     (window as unknown as { __gameDebug: unknown }).__gameDebug = {
       mapId: () => this.world.mapId,
       mode: () => this.mode,
+      nitroFuel: () => this.nitroFuel,
       finishMode: () => { if (this.mode !== "delivery") this.completeOrder(true, "Тестовый финиш"); },
       exitMode: () => this.showScreen("title"),
       portVisuals: () => Boolean(
@@ -366,7 +369,7 @@ export class Game {
           ${next ? `<span class="dim">до «${next.name}»: ${next.deliveries - p.deliveries} доставок</span>` : `<span class="gold">максимальный уровень</span>`}
         </div>
         ${this.input.isTouch ? "" : `<div class="hint-row">
-          <span>W/↑ газ</span><span>S/↓ тормоз</span><span>A D руль</span><span>ПРОБЕЛ дрифт</span><span>ESC пауза</span><span>M звук</span>
+          <span>W/↑ газ</span><span>S/↓ тормоз</span><span>A D руль</span><span>ПРОБЕЛ дрифт</span><span>SHIFT нитро</span><span>ESC пауза</span><span>M звук</span>
         </div>`}
         <p class="fine-print">прогресс хранится в этом браузере (localStorage)</p>
       </div>`;
@@ -885,9 +888,11 @@ export class Game {
     this.hSpeed = el("div", "hud-speed", "0");
     this.hMoney = el("div", "hud-money", "₽0");
     this.hDrift = el("div", "hud-drift", "");
+    this.hNitro = el("div", "hud-nitro", "НИТРО <span class='nitro-track'><i></i></span>");
     right.appendChild(this.hSpeed);
     right.appendChild(this.hMoney);
     right.appendChild(this.hDrift);
+    right.appendChild(this.hNitro);
     this.hudEl.appendChild(right);
 
     this.mmCanvas = document.createElement("canvas");
@@ -915,6 +920,7 @@ export class Game {
         <div class="tut-row"><span class="tut-ico wheel">🕹</span><span><b>Джойстик слева</b> — вперёд: газ, назад: задний ход, в стороны: руль</span></div>
         <div class="tut-row"><span class="tut-ico gas">■</span><span><b>ТОРМОЗ</b> — педаль справа внизу</span></div>
         <div class="tut-row"><span class="tut-ico hb">★</span><span><b>ДРИФТ</b> — занос на поворотах, даёт бонусы</span></div>
+        <div class="tut-row"><span class="tut-ico">🚀</span><span><b>НИТРО</b> — Shift на клавиатуре или кнопка справа; заряд возвращается за дрифт и проезды впритирку</span></div>
         <div class="tut-row"><span class="tut-ico">⚠</span><span>Брусчатка, лужи и удары бьют по <b>грузу</b>. На красный — штраф!</span></div>
         <div class="tut-row"><span class="tut-ico">🚀</span><span>Трамплины, впритирку, зелёный на скорости — всё это <b>₽ бонусы</b></span></div>
         <button class="btn primary" data-a="tut-ok">ПОНЯТНО!</button>
@@ -1060,6 +1066,8 @@ export class Game {
       return;
     }
     const inp = this.input.update();
+    inp.nitro = inp.nitro && inp.throttle > 0 && this.nitroFuel > 0;
+    if (inp.nitro) this.nitroFuel = Math.max(0, this.nitroFuel - dt * 28);
     // fully wrecked car explodes and ends the order
     if (this.car.hp <= 0 && !this.car.wrecked && this.wreckTimer < 0) {
       this.startWreck();
@@ -1078,6 +1086,7 @@ export class Game {
     const prevX = this.car.pos.x;
     const prevZ = this.car.pos.z;
     const res = this.car.step(dt, inp, this.world);
+    if (res.drift > 5 && Math.abs(res.speed) > 8) this.nitroFuel = Math.min(100, this.nitroFuel + dt * 5);
     const spec = this.car.spec;
     const frag = this.order.fragility;
     const protect = spec.cargoProtect;
@@ -1185,6 +1194,7 @@ export class Game {
         if (res.impact < 9 && this.scrapeCooldown <= 0) {
           this.scrapeCooldown = 3;
           this.addBonus(15, "Задел!");
+          this.nitroFuel = Math.min(100, this.nitroFuel + 12);
           this.profile.stats.scraps += 1;
         }
         if (this.car.hp < 30 && res.impact > 8 && !this.car.wheelLost) {
@@ -1432,6 +1442,7 @@ export class Game {
       this.driftScore > 50 && speed > 8
         ? `дрифт +${Math.round(this.driftScore)}`
         : "";
+    this.hNitro.querySelector("i")!.setAttribute("style", `transform:scaleX(${this.nitroFuel / 100})`);
     this.hChase.style.display = this.police.active ? "inline" : "none";
     this.drawMinimap();
     void speed;
