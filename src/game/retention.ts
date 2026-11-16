@@ -1,5 +1,5 @@
 import type { MapId } from "./types";
-import { CELL, GRID_N, WORLD_HALF } from "./config";
+import { cityLayoutFor, sampleRoadPoint } from "./map-layouts";
 
 const RECORD_KEY = "delivery-drift-86-records-v1";
 const WEEK_KEY = "delivery-drift-86-weekly-v1";
@@ -26,28 +26,25 @@ export function utcWeekKey(date = new Date()): string {
   return monday.toISOString().slice(0, 10);
 }
 
-export function weeklyRoutes(date = new Date()): WeeklyRoute[] {
+export function weeklyRoutes(date = new Date(), mapId: MapId = "tokyo"): WeeklyRoute[] {
   const week = utcWeekKey(date);
   let seed = 2166136261;
   for (const c of week) seed = Math.imul(seed ^ c.charCodeAt(0), 16777619) >>> 0;
+  for (const c of mapId) seed = Math.imul(seed ^ c.charCodeAt(0), 16777619) >>> 0;
   const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
   const used = new Set<string>();
+  const layout = cityLayoutFor(mapId);
   return Array.from({ length: 3 }, (_, i) => {
     let dest = { x: 0, z: 0 };
     let distance = 0;
     for (let attempt = 0; attempt < 40; attempt++) {
-      const ix = Math.floor(random() * GRID_N);
-      const iz = Math.floor(random() * GRID_N);
-      const offset = (random() - 0.5) * 8;
-      const vertical = random() < 0.5;
-      const cx = -WORLD_HALF + ix * CELL;
-      const cz = -WORLD_HALF + iz * CELL;
-      dest = vertical ? { x: cx + offset, z: cz } : { x: cx, z: cz + offset };
+      dest = sampleRoadPoint(layout, random);
       distance = Math.hypot(dest.x, dest.z);
       const key = `${Math.round(dest.x / 10)},${Math.round(dest.z / 10)}`;
       if (distance > 60 && !used.has(key)) { used.add(key); break; }
     }
-    return { id: `${week}-${i + 1}`, title: ["Ночной экспресс", "Портовый рывок", "Неоновый маршрут"][i], dest, timeLimit: Math.round(distance / 13 + 45) };
+    const id = mapId === "tokyo" ? `${week}-${i + 1}` : `${week}-${mapId}-${i + 1}`;
+    return { id, title: ["Ночной экспресс", "Портовый рывок", "Неоновый маршрут"][i], dest, timeLimit: Math.round(distance / 13 + 45) };
   });
 }
 

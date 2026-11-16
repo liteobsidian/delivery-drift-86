@@ -12,15 +12,12 @@ import {
   CARGO_NAMES,
   ORDER_TITLES,
   WORLD_MAPS,
-  WORLD_HALF,
-  CELL,
-  GRID_N,
 } from "./config";
 import type { GameScreen, MapId, Order, Profile } from "./types";
 import { loadProfile, saveProfile } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
-import { World, RING_R, ARC_R, DRIFT_ARCS } from "./world";
+import { World } from "./world";
 import { Car } from "./car";
 import { Traffic } from "./traffic";
 import { Police } from "./police";
@@ -28,6 +25,7 @@ import { loadGameAssets } from "./assets";
 import type { HeroModelKey, LoadedModel } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
+import { sampleRoadPoint } from "./map-layouts";
 import { carThumb, createShowroom } from "./showroom";
 import { completeWeeklyRoute, loadRecords, loadWeeklyProgress, mapAccessFor, markWeeklyEventSeen, saveRecord, utcWeekKey, weeklyEventSeen, weeklyRoutes } from "./retention";
 
@@ -245,13 +243,27 @@ export class Game {
     // verification hook (not user-facing)
     (window as unknown as { __gameDebug: unknown }).__gameDebug = {
       mapId: () => this.world.mapId,
+      roadProbe: (x: number, z: number) => ({
+        onRoad: this.world.isOnRoad(x, z),
+        nearestRoadDist: this.world.nearestRoadDist(x, z),
+        bounds: { ...this.world.layout.bounds },
+      }),
+      layoutSnapshot: () => ({
+        roads: this.world.layout.roads.map((road) => ({ id: road.id, points: road.points.map(({ x, z }) => ({ x, z })) })),
+        signals: this.world.layout.signalJunctions.map(({ x, z }) => ({ x, z })),
+      }),
+      resolveBoundary: (x: number, z: number) => {
+        const pos = new THREE.Vector3(x, 0, z);
+        this.world.collideBuildings(pos, 1, new THREE.Vector3());
+        return { x: pos.x, z: pos.z };
+      },
       mode: () => this.mode,
       nitroFuel: () => this.nitroFuel,
       finishMode: () => { if (this.mode !== "delivery") this.completeOrder(true, "Тестовый финиш"); },
       finishDelivery: () => { if (this.mode === "delivery" && this.order) this.completeOrder(true, "Тестовая доставка"); },
       exitMode: () => this.showScreen("title"),
-      weekly: () => weeklyRoutes().map((route) => route.id),
-      weeklyRoutes: () => weeklyRoutes(),
+      weekly: () => weeklyRoutes(new Date(), this.world.mapId).map((route) => route.id),
+      weeklyRoutes: () => weeklyRoutes(new Date(), this.world.mapId),
       weekKey: (date?: string) => utcWeekKey(date ? new Date(date) : new Date()),
       finishWeekly: () => { if (this.order?.weeklyId) this.completeOrder(true, "Тестовый финиш"); },
       weeklyProgress: () => loadWeeklyProgress(),
@@ -352,7 +364,7 @@ export class Game {
     const p = this.profile;
     this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades());
     const mapName = WORLD_MAPS.find((map) => map.id === p.mapId)?.name ?? "Неоновый Токио";
-    const weekly = weeklyRoutes();
+    const weekly = weeklyRoutes(new Date(), this.profile.mapId);
     const weeklyProgress = loadWeeklyProgress();
     const featuredWeeklyIndex = weekly.findIndex((route) => !weeklyProgress.completed.includes(route.id));
     const featuredWeekly = weekly[featuredWeeklyIndex >= 0 ? featuredWeeklyIndex : 0];
@@ -662,7 +674,7 @@ export class Game {
       const metric = mode === "time-attack" ? `${value.toFixed(1)} с` : Math.round(value).toLocaleString("ru-RU");
       return `<div class="record-row"><b>${modeName}</b><span>${mapName} · ${car.toUpperCase()}</span><strong>${metric}</strong></div>`;
     }).join("") : `<p class="dim">Пока нет результатов. Заезжай в любой режим — лучший результат сохранится здесь.</p>`;
-    const routes = weeklyRoutes();
+    const routes = weeklyRoutes(new Date(), this.world.mapId);
     const progress = loadWeeklyProgress();
     const routeRows = routes.map((route, i) => {
       const done = progress.completed.includes(route.id);
@@ -690,7 +702,7 @@ export class Game {
   }
 
   private startWeeklyRoute(index: number): void {
-    const route = weeklyRoutes()[index];
+    const route = weeklyRoutes(new Date(), this.world.mapId)[index];
     if (!route) return;
     const distance = Math.hypot(route.dest.x, route.dest.z);
     this.startOrder({
@@ -877,13 +889,7 @@ export class Game {
       let key = "";
       let guard = 0;
       do {
-        const i = Math.floor(Math.random() * GRID_N);
-        const j = Math.floor(Math.random() * GRID_N);
-        const off = (Math.random() - 0.5) * (CELL * 0.5);
-        const vertical = Math.random() < 0.5;
-        const cx = -WORLD_HALF + i * CELL;
-        const cz = -WORLD_HALF + j * CELL;
-        dest = vertical ? { x: cx + off, z: cz } : { x: cx, z: cz + off };
+        dest = sampleRoadPoint(this.world.layout, Math.random);
         const d = Math.hypot(dest.x, dest.z);
         key = `${Math.round(dest.x / 10)},${Math.round(dest.z / 10)}`;
         guard++;
@@ -1077,36 +1083,20 @@ export class Game {
     this.mmBase.width = this.mmBase.height = 150;
     const g = this.mmBase.getContext("2d")!;
     const S = 150;
-    const scale = S / (WORLD_HALF * 2 + ROAD_W * 2);
-    const u = (v: number) => (v + WORLD_HALF + ROAD_W) * scale;
+    const bounds = this.world.layout.bounds;
+    const scale = S / Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
+    const u = (x: number) => S / 2 + (x - (bounds.minX + bounds.maxX) / 2) * scale;
+    const v = (z: number) => S / 2 + (z - (bounds.minZ + bounds.maxZ) / 2) * scale;
     g.fillStyle = this.world.mapId === "yokohama" ? "#102d39" : "rgba(10,14,28,0.75)";
     g.fillRect(0, 0, S, S);
-    if (this.world.mapId === "yokohama") {
-      const edge = WORLD_HALF + ROAD_W / 2;
-      g.fillStyle = "#3c464b";
-      g.fillRect(u(-edge), u(-edge), edge * 2 * scale, edge * 2 * scale);
-    }
-    g.fillStyle = "#3a4152";
-    for (let i = 0; i < GRID_N; i++) {
-      const c = u(-WORLD_HALF + i * CELL);
-      g.fillRect(c - (ROAD_W / 2) * scale, u(-WORLD_HALF - ROAD_W / 2), ROAD_W * scale, (WORLD_HALF * 2 + ROAD_W) * scale);
-      g.fillRect(u(-WORLD_HALF - ROAD_W / 2), c - (ROAD_W / 2) * scale, (WORLD_HALF * 2 + ROAD_W) * scale, ROAD_W * scale);
-    }
-    // drift ring + cloverleaf arcs
-    g.strokeStyle = "#3a4152";
-    g.lineWidth = ROAD_W * scale;
-    g.beginPath();
-    g.arc(u(0), u(0), RING_R * scale, 0, Math.PI * 2);
-    g.stroke();
-    for (const a of DRIFT_ARCS) {
+    g.lineCap = "round";
+    g.lineJoin = "round";
+    for (const road of this.world.layout.roads) {
       g.beginPath();
-      g.arc(u(a.cx), u(a.cz), ARC_R * scale, a.a0, a.a1);
+      road.points.forEach((point, i) => i === 0 ? g.moveTo(u(point.x), v(point.z)) : g.lineTo(u(point.x), v(point.z)));
+      g.strokeStyle = "#3a4152";
+      g.lineWidth = road.width * scale;
       g.stroke();
-    }
-    // cobble patches
-    g.fillStyle = "rgba(120,90,70,0.9)";
-    for (const c of this.world.cobbles) {
-      g.fillRect(u(c.x - c.w / 2), u(c.z - c.h / 2), c.w * scale, c.h * scale);
     }
   }
 
@@ -1115,19 +1105,19 @@ export class Game {
     g.clearRect(0, 0, 150, 150);
     g.drawImage(this.mmBase, 0, 0);
     const S = 150;
-    const scale = S / (WORLD_HALF * 2 + ROAD_W * 2);
-    const u = (v: number) => (v + WORLD_HALF + ROAD_W) * scale;
-    // destination
+    const bounds = this.world.layout.bounds;
+    const scale = S / Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
+    const u = (x: number) => S / 2 + (x - (bounds.minX + bounds.maxX) / 2) * scale;
+    const v = (z: number) => S / 2 + (z - (bounds.minZ + bounds.maxZ) / 2) * scale;
     if (this.order) {
       const pulse = 3 + Math.sin(performance.now() / 200) * 1;
       g.fillStyle = "#22ffcc";
       g.beginPath();
-      g.arc(u(this.order.dest.x), u(this.order.dest.z), pulse + 1.5, 0, Math.PI * 2);
+      g.arc(u(this.order.dest.x), v(this.order.dest.z), pulse + 1.5, 0, Math.PI * 2);
       g.fill();
     }
-    // player arrow
     g.save();
-    g.translate(u(this.car.pos.x), u(this.car.pos.z));
+    g.translate(u(this.car.pos.x), v(this.car.pos.z));
     g.rotate(-this.car.heading + Math.PI);
     g.fillStyle = "#ff2d95";
     g.beginPath();
@@ -1526,7 +1516,8 @@ export class Game {
       lines.push(`Личный рекорд доставки: ₽${Math.round(record)}`);
       if (o.weeklyId) {
         const weekly = completeWeeklyRoute(o.weeklyId);
-        lines.push(`<span class="gold">Недельный маршрут пройден: ${weekly.completed.length}/3</span>`);
+        const completedOnMap = weeklyRoutes(new Date(), this.profile.mapId).filter((route) => weekly.completed.includes(route.id)).length;
+        lines.push(`<span class="gold">Недельный маршрут пройден: ${completedOnMap}/3</span>`);
       }
       this.audio.success();
     } else {

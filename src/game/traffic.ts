@@ -1,13 +1,24 @@
 import * as THREE from "three";
-import { CELL, GRID_N, WORLD_HALF, ROAD_W, LIGHT_CYCLE, LIGHT_YELLOW } from "./config";
+import { ROAD_W, LIGHT_CYCLE, LIGHT_YELLOW } from "./config";
+import type { TrafficRoute } from "./map-layouts";
 import type { World, LightVisual } from "./world";
+
+interface RouteData {
+  points: TrafficRoute["points"];
+  cumulative: number[];
+  length: number;
+}
 
 interface TrafficCar {
   mesh: THREE.Group;
   x: number;
   z: number;
-  axis: 0 | 1; // 0: moves along x, 1: along z
+  dx: number;
+  dz: number;
+  axis: 0 | 1;
   dir: 1 | -1;
+  routeIndex: number;
+  progress: number;
   speed: number;
   active: boolean;
   nearCooldown: number;
@@ -17,10 +28,11 @@ interface TrafficCar {
 const MAX_CARS = 12;
 const LANE = ROAD_W / 4;
 
-/** Simple traffic: cars loop along grid roads, stop at red lights, avoid the player a bit. */
+/** City traffic follows authored closed routes, including their bends and cul-de-sacs. */
 export class Traffic {
   readonly group = new THREE.Group();
   private cars: TrafficCar[] = [];
+  private routes: RouteData[] = [];
   private spawnTimer = 0;
   private rngState = 12345;
 
@@ -30,29 +42,29 @@ export class Traffic {
       const mesh = buildTrafficCarMesh(colors[i % colors.length]);
       mesh.visible = false;
       this.group.add(mesh);
-      this.cars.push({
-        mesh,
-        x: 0,
-        z: 0,
-        axis: 0,
-        dir: 1,
-        speed: 0,
-        active: false,
-        nearCooldown: 0,
-        hitCooldown: 0,
-      });
+      this.cars.push({ mesh, x: 0, z: 0, dx: 1, dz: 0, axis: 0, dir: 1, routeIndex: 0, progress: 0, speed: 0, active: false, nearCooldown: 0, hitCooldown: 0 });
     }
-    // pre-seed a few cars
+    this.rebuildRoutes();
     for (let i = 0; i < 6; i++) this.spawn(true);
   }
 
   setWorld(world: World): void {
     this.world = world;
-    this.cars.forEach((car) => {
-      car.active = false;
-      car.mesh.visible = false;
-    });
+    this.cars.forEach((car) => { car.active = false; car.mesh.visible = false; });
+    this.rebuildRoutes();
     for (let i = 0; i < 6; i++) this.spawn(true);
+  }
+
+  private rebuildRoutes(): void {
+    this.routes = this.world.layout.trafficRoutes.map((route) => {
+      const cumulative = [0];
+      for (let i = 0; i < route.points.length - 1; i++) {
+        const a = route.points[i];
+        const b = route.points[i + 1];
+        cumulative.push(cumulative[i] + Math.hypot(b.x - a.x, b.z - a.z));
+      }
+      return { points: route.points, cumulative, length: cumulative[cumulative.length - 1] };
+    }).filter((route) => route.length > 0);
   }
 
   private rnd(): number {
@@ -60,26 +72,46 @@ export class Traffic {
     return this.rngState / 0x7fffffff;
   }
 
-  private spawn(anywhere = false): void {
+  private pose(car: TrafficCar): void {
+    const route = this.routes[car.routeIndex];
+    if (!route) return;
+    const distance = ((car.progress % route.length) + route.length) % route.length;
+    const sampled = car.dir === 1 ? distance : (route.length - distance) % route.length;
+    let segment = 0;
+    while (segment < route.points.length - 2 && route.cumulative[segment + 1] < sampled) segment++;
+    const a = route.points[segment];
+    const b = route.points[segment + 1];
+    const segmentLength = route.cumulative[segment + 1] - route.cumulative[segment] || 1;
+    const t = Math.max(0, Math.min(1, (sampled - route.cumulative[segment]) / segmentLength));
+    const direction = car.dir;
+    const tx = (b.x - a.x) / segmentLength * direction;
+    const tz = (b.z - a.z) / segmentLength * direction;
+    const centerX = a.x + (b.x - a.x) * t;
+    const centerZ = a.z + (b.z - a.z) * t;
+    const lateral = direction === 1 ? -LANE : LANE;
+    car.x = centerX - tz * lateral;
+    car.z = centerZ + tx * lateral;
+    car.dx = tx;
+    car.dz = tz;
+    car.axis = Math.abs(tx) >= Math.abs(tz) ? 0 : 1;
+  }
+
+  private place(car: TrafficCar): void {
+    this.pose(car);
+    car.mesh.position.set(car.x, 0, car.z);
+    car.mesh.rotation.y = Math.atan2(-car.dx, -car.dz);
+  }
+
+  private spawn(_anywhere = false): void {
     const car = this.cars.find((c) => !c.active);
-    if (!car) return;
-    const i = Math.floor(this.rnd() * GRID_N);
-    car.axis = this.rnd() < 0.5 ? 0 : 1;
+    if (!car || !this.routes.length) return;
+    car.routeIndex = Math.floor(this.rnd() * this.routes.length);
     car.dir = this.rnd() < 0.5 ? 1 : -1;
-    const line = -WORLD_HALF + i * CELL + (car.dir === 1 ? -LANE : LANE);
-    const along = anywhere
-      ? (this.rnd() * 2 - 1) * WORLD_HALF
-      : -car.dir * (WORLD_HALF + 10);
-    if (car.axis === 0) {
-      car.x = along;
-      car.z = line;
-    } else {
-      car.x = line;
-      car.z = along;
-    }
+    car.progress = this.rnd() * this.routes[car.routeIndex].length;
     car.speed = 9 + this.rnd() * 5;
     car.active = true;
     car.mesh.visible = true;
+    this.place(car);
   }
 
   onNearMiss: (() => void) | null = null;
@@ -141,12 +173,7 @@ export class Traffic {
   }
 
   /** advance traffic; returns closing speed if any car hit the player this step */
-  update(
-    dt: number,
-    playerPos: THREE.Vector3,
-    playerVel: THREE.Vector3,
-    playerSpeed: number,
-  ): number {
+  update(dt: number, playerPos: THREE.Vector3, playerVel: THREE.Vector3, playerSpeed: number): number {
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
       this.spawnTimer = 2.2;
@@ -155,72 +182,46 @@ export class Traffic {
     let hit = 0;
     for (const c of this.cars) {
       if (!c.active) continue;
+      this.pose(c);
       c.nearCooldown = Math.max(0, c.nearCooldown - dt);
       c.hitCooldown = Math.max(0, c.hitCooldown - dt);
-
-      // red light ahead?
       let wantSpeed = c.speed;
       const light = this.lightAhead(c);
       if (light) {
-        const dist = c.axis === 0
-          ? (light.cx - c.x) * c.dir
-          : (light.cz - c.z) * c.dir;
-        const stopAt =
-          (c.axis === 0 ? light.cx : light.cz) -
-          c.dir * (ROAD_W / 2 + 2.4);
-        const dToStop =
-          (c.axis === 0 ? stopAt - c.x : stopAt - c.z) * c.dir;
+        const direction = c.axis === 0 ? Math.sign(c.dx) : Math.sign(c.dz);
+        const stopAt = (c.axis === 0 ? light.cx : light.cz) - direction * (ROAD_W / 2 + 2.4);
+        const coordinate = c.axis === 0 ? c.x : c.z;
+        const dToStop = (stopAt - coordinate) * direction;
         if (dToStop > -1 && dToStop < 12) wantSpeed = 0;
-        void dist;
       }
-      // player in the same lane ahead -> brake for a red-style stop; but if
-      // the player is beside/behind, keep going: ramming must actually collide
+
       const dx = playerPos.x - c.x;
       const dz = playerPos.z - c.z;
       const d2 = dx * dx + dz * dz;
       if (d2 < 64) {
-        const ahead = c.axis === 0 ? dx * c.dir : dz * c.dir;
-        const lateral = c.axis === 0 ? dz : dx;
-        if (ahead > -1 && Math.abs(lateral) < 3.4)
-          wantSpeed = Math.min(wantSpeed, Math.sqrt(d2) * 1.1);
+        const ahead = dx * c.dx + dz * c.dz;
+        const lateral = -dx * c.dz + dz * c.dx;
+        if (ahead > -1 && Math.abs(lateral) < 3.4) wantSpeed = Math.min(wantSpeed, Math.sqrt(d2) * 1.1);
       }
-      if (
-        c.nearCooldown === 0 &&
-        playerSpeed > 12 &&
-        d2 > 2.7 * 2.7 &&
-        d2 < 4.9 * 4.9
-      ) {
+      if (c.nearCooldown === 0 && playerSpeed > 12 && d2 > 2.7 * 2.7 && d2 < 4.9 * 4.9) {
         c.nearCooldown = 3.5;
         this.onNearMiss?.();
       }
 
-      // integrate
-      const v = wantSpeed * dt * (c.dir as number);
-      if (c.axis === 0) c.x += v;
-      else c.z += v;
-
-      // despawn at edges
-      if (Math.abs(c.x) > WORLD_HALF + 16 || Math.abs(c.z) > WORLD_HALF + 16) {
-        c.active = false;
-        c.mesh.visible = false;
-        continue;
-      }
-
-      // collide with player (circle-circle); impact = closing speed
+      const route = this.routes[c.routeIndex];
+      c.progress = (c.progress + wantSpeed * dt * c.dir + route.length) % route.length;
+      this.pose(c);
+      const cvx = c.dx * wantSpeed;
+      const cvz = c.dz * wantSpeed;
       const cdx = playerPos.x - c.x;
       const cdz = playerPos.z - c.z;
       const cd = Math.hypot(cdx, cdz);
       const contactRadius = 3.4;
       if (cd < contactRadius && c.hitCooldown === 0) {
-        const cvx = c.axis === 0 ? c.dir * wantSpeed : 0;
-        const cvz = c.axis === 1 ? c.dir * wantSpeed : 0;
         const closing = Math.hypot(playerVel.x - cvx, playerVel.z - cvz);
         if (closing > 3) {
           c.hitCooldown = 0.9;
           hit = Math.max(hit, closing);
-          // Separate both cars and cancel speed into the collision normal.
-          // Before this, only the NPC moved, so the player seemed to pass
-          // through it instead of hitting an obstacle.
           const nx = cd > 0.001 ? cdx / cd : 1;
           const nz = cd > 0.001 ? cdz / cd : 0;
           const push = contactRadius - cd + 0.04;
@@ -235,47 +236,31 @@ export class Traffic {
           }
         }
       }
-
-      // place mesh
       c.mesh.position.set(c.x, 0, c.z);
-      const targetRot =
-        c.axis === 0
-          ? c.dir === 1
-            ? -Math.PI / 2
-            : Math.PI / 2
-          : c.dir === 1
-            ? Math.PI
-            : 0;
-      c.mesh.rotation.y = targetRot;
+      c.mesh.rotation.y = Math.atan2(-c.dx, -c.dz);
     }
     return hit;
   }
 
   private lightAhead(c: TrafficCar): LightVisual | null {
-    // find nearest enforced intersection ahead along movement
     for (const l of this.world.lights) {
-      const ahead = c.axis === 0 ? (l.cx - c.x) * c.dir : (l.cz - c.z) * c.dir;
+      const dx = l.cx - c.x;
+      const dz = l.cz - c.z;
+      const ahead = dx * c.dx + dz * c.dz;
       if (ahead < 0 || ahead > ROAD_W * 2.2) continue;
-      // must be on the same road line
-      const laneCoord = c.axis === 0 ? c.z : c.x;
-      const lightCoord = c.axis === 0 ? l.cz : l.cx;
-      if (Math.abs(laneCoord - lightCoord) > ROAD_W / 2 + 1) continue;
-      // red for this axis?
-      const t = l.timer;
-      const redForAxis =
-        c.axis === 0
-          ? t >= LIGHT_CYCLE + LIGHT_YELLOW // x-road is red only after its yellow
-          : t < LIGHT_CYCLE + LIGHT_YELLOW;
+      const lateral = -dx * c.dz + dz * c.dx;
+      if (Math.abs(lateral) > ROAD_W / 2 + 1) continue;
+      const redForAxis = c.axis === 0
+        ? l.timer >= LIGHT_CYCLE + LIGHT_YELLOW
+        : l.timer < LIGHT_CYCLE + LIGHT_YELLOW;
       if (redForAxis) return l;
     }
     return null;
   }
 
-  /** verification helper: active car positions */
+  /** verification helper: active car positions and direction */
   debugPositions(): { x: number; z: number; axis: 0 | 1; dir: 1 | -1 }[] {
-    return this.cars
-      .filter((c) => c.active)
-      .map((c) => ({ x: c.x, z: c.z, axis: c.axis, dir: c.dir }));
+    return this.cars.filter((c) => c.active).map((c) => ({ x: c.x, z: c.z, axis: c.axis, dir: c.dir }));
   }
 
   dispose(): void {
