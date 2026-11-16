@@ -237,7 +237,7 @@ export class Car {
 
     if (this.wrecked) {
       // coasting wreck: no throttle, no steering, heavy scrub
-      input = { steer: 0, throttle: 0, brake: 0, handbrake: false };
+      input = { steer: 0, throttle: 0, brake: 0, reverse: 0, handbrake: false };
     }
 
     const fwd = this.forward(tmpF);
@@ -256,19 +256,13 @@ export class Car {
       this.vel.addScaledVector(fwd, this.spec.accel * fade * input.throttle * dt);
     }
     if (input.brake > 0) {
-      if (speed > 0.8) {
-        this.vel.addScaledVector(fwd, -this.spec.brake * input.brake * dt);
-      } else if (speed > -topSpeed * 0.5) {
-        // Once stopped, holding S engages reverse and keeps accelerating up
-        // to the reverse speed limit instead of braking the reverse roll.
-        this.vel.addScaledVector(fwd, -this.spec.accel * 0.78 * input.brake * dt);
+      if (Math.abs(speed) > 0.08) {
+        this.vel.addScaledVector(fwd, -Math.sign(speed) * this.spec.brake * input.brake * dt);
       }
     }
-
-    if (input.handbrake && speed > 0.5) {
-      // a handbrake is a brake: scrub forward speed, not only lateral grip
-      const scrub = Math.min(this.spec.brake * 0.55, speed / Math.max(dt, 1e-4));
-      this.vel.addScaledVector(fwd, -scrub * dt);
+    if (input.reverse > 0 && speed <= 0.8 && speed > -topSpeed * 0.5) {
+      // Keyboard S / joystick down brake to a stop, then engage reverse.
+      this.vel.addScaledVector(fwd, -this.spec.accel * 0.78 * input.reverse * dt);
     }
 
     // --- drag ---
@@ -441,8 +435,8 @@ export function buildCarMesh(
   const allWheelMeshes: THREE.Object3D[] = [];
   const bodyMat = new THREE.MeshStandardMaterial({
     color: spec.color,
-    roughness: 0.35,
-    metalness: 0.55,
+    roughness: 0.42,
+    metalness: 0.32,
   });
   const darkMat = new THREE.MeshStandardMaterial({
     color: spec.accent,
@@ -745,8 +739,8 @@ export function buildHeroMesh(
         const sm = c as THREE.MeshStandardMaterial;
         if (/body|paint/i.test(c.name) && sm.color) {
           sm.color.set(spec.color);
-          if ("metalness" in sm) sm.metalness = 0.35;
-          if ("roughness" in sm) sm.roughness = 0.35;
+          if ("metalness" in sm) sm.metalness = 0.2;
+          if ("roughness" in sm) sm.roughness = 0.42;
           if (!bodyMesh && /body/i.test(c.name)) bodyMesh = mesh;
         }
         if (/glass/i.test(c.name) && sm.color) glassMats.push(sm);

@@ -10,6 +10,7 @@ export interface InputState {
   steer: number; // -1 left .. +1 right
   throttle: number; // 0..1
   brake: number; // 0..1
+  reverse: number; // 0..1, used by keyboard S and the joystick downstroke
   handbrake: boolean;
 }
 
@@ -18,7 +19,7 @@ const JOY_DEAD = 8; // px deadzone around center
 
 export class Input {
   keys = new Set<string>();
-  state: InputState = { steer: 0, throttle: 0, brake: 0, handbrake: false };
+  state: InputState = { steer: 0, throttle: 0, brake: 0, reverse: 0, handbrake: false };
 
   onPause: (() => void) | null = null;
   onMute: (() => void) | null = null;
@@ -83,16 +84,19 @@ export class Input {
     if (k.has("KeyA") || k.has("ArrowLeft")) steer -= 1;
     if (k.has("KeyD") || k.has("ArrowRight")) steer += 1;
     let throttle = k.has("KeyW") || k.has("ArrowUp") ? 1 : 0;
-    let brake = k.has("KeyS") || k.has("ArrowDown") ? 1 : 0;
+    let brake = k.has("KeyS") || k.has("ArrowDown") || this.brakeTouch !== null ? 1 : 0;
+    let reverse = k.has("KeyS") || k.has("ArrowDown") ? 1 : 0;
     // joystick takes over when the finger is down
     if (this.joy) {
       steer = this.joySteer;
       throttle = this.joyThrottle;
       brake = Math.max(brake, this.joyBrake);
+      reverse = Math.max(reverse, this.joyBrake);
     }
     this.state.steer = steer;
     this.state.throttle = throttle;
     this.state.brake = brake;
+    this.state.reverse = reverse;
     this.state.handbrake = k.has("Space") || this.hb;
     return this.state;
   }
