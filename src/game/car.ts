@@ -148,7 +148,7 @@ export class Car {
 
   /** Spoiler rips off the trunk. */
   loseSpoiler(): void {
-    if (this.spoilerLost || !this.parts) return;
+    if (this.spoilerLost || !this.parts || this.parts.spoiler.children.length === 0) return;
     this.spoilerLost = true;
     const s = this.parts.spoiler;
     s.removeFromParent();
@@ -255,14 +255,16 @@ export class Car {
       const fade = Math.max(0.22, 1 - speed / topSpeed);
       this.vel.addScaledVector(fwd, this.spec.accel * fade * input.throttle * dt);
     }
-    if (input.brake > 0) {
-      if (Math.abs(speed) > 0.08) {
-        this.vel.addScaledVector(fwd, -Math.sign(speed) * this.spec.brake * input.brake * dt);
+    // DO NOT BREAK REVERSE: never apply service-brake force while reverse is
+    // engaged; the opposing forces cancel and make the car crawl backwards.
+    if (input.reverse > 0) {
+      if (speed > 0.8) {
+        this.vel.addScaledVector(fwd, -this.spec.brake * input.reverse * dt);
+      } else if (speed > -topSpeed * 0.5) {
+        this.vel.addScaledVector(fwd, -this.spec.accel * 0.78 * input.reverse * dt);
       }
-    }
-    if (input.reverse > 0 && speed <= 0.8 && speed > -topSpeed * 0.5) {
-      // Keyboard S / joystick down brake to a stop, then engage reverse.
-      this.vel.addScaledVector(fwd, -this.spec.accel * 0.78 * input.reverse * dt);
+    } else if (input.brake > 0 && Math.abs(speed) > 0.08) {
+      this.vel.addScaledVector(fwd, -Math.sign(speed) * this.spec.brake * input.brake * dt);
     }
 
     // --- drag ---
@@ -804,32 +806,6 @@ export function buildHeroMesh(
       (w) => !wingNodes.some((o) => o !== w && isDescendant(w, o))
     );
     for (const r of roots) spoiler.attach(r);
-  } else {
-    // no factory wing — grow a procedural GT wing via upgrades instead
-    spoiler.userData.procedural = true;
-    const wingMat = new THREE.MeshStandardMaterial({
-      color: 0x14161c,
-      roughness: 0.4,
-      metalness: 0.6,
-    });
-    const shellBounds = new THREE.Box3().setFromObject(bodyMesh as THREE.Object3D);
-    const shellSize = shellBounds.getSize(new THREE.Vector3());
-    const rearZ = shellBounds.max.z - shellSize.z * 0.08;
-    const deckY = shellBounds.max.y;
-    const bladeY = deckY + Math.max(0.12, shellSize.y * 0.12);
-    const wingWidth = Math.min(s.x * 0.94, shellSize.x * 0.92);
-    const blade = new THREE.Mesh(
-      new THREE.BoxGeometry(Math.max(1.3, wingWidth), 0.07, 0.34),
-      wingMat
-    );
-    blade.position.set(0, bladeY, rearZ);
-    spoiler.add(blade);
-    for (const sx of [-1, 1]) {
-      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, bladeY - deckY, 0.08), wingMat);
-      strut.position.set(sx * wingWidth * 0.32, (bladeY + deckY) / 2, rearZ);
-      spoiler.add(strut);
-    }
-    spoiler.visible = false;
   }
 
   // soft radial underglow in the car's own color (hard-edged plane reads as a slab)
