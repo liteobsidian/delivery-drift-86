@@ -43,23 +43,23 @@
 - `CityLayout = { id: MapId; bounds: { minX: number; maxX: number; minZ: number; maxZ: number }; roads: RoadPath[]; trafficRoutes: TrafficRoute[]; signalJunctions: CityPoint[]; parcels: CityParcel[] }`.
 - Export `CITY_LAYOUTS`, `cityLayoutFor(id)`, `distanceToRoad(layout,x,z)`, `isOnLayoutRoad(layout,x,z)`, `sampleRoadPoint(layout,rng)`, and `distanceToLayoutBounds`.
 
-- [ ] **Step 1: Write tests for road geometry, sampling, and layout integrity**
+- [x] **Step 1: Write tests for road geometry, sampling, and layout integrity**
   - Test centerline, segment midpoint, diagonal segment, and outside-width points for both layouts.
   - Sample 200 deterministic destinations per layout and assert each lies on-road and inside bounds.
   - Sample every authored traffic route at 1-unit intervals and assert every sample lies within a road corridor.
   - Assert parcels lie inside bounds and have a road-free center with their rotated footprint clear of the road margin.
 
-- [ ] **Step 2: Run `npm run test:maps` and confirm failure because the layout module/API does not exist**
+- [x] **Step 2: Run `npm run test:maps` and confirm failure because the layout module/API does not exist**
 
-- [ ] **Step 3: Implement geometry helpers and original Tokyo/Yokohama layout data**
+- [x] **Step 3: Implement geometry helpers and original Tokyo/Yokohama layout data**
   - Keep both maps within ±174 world units.
   - Use different street spacing and shapes; include loops, irregular blocks, a couple of diagonal connectors, and port access branches.
   - Build traffic paths only from authored road centerlines. Put signal nodes only at broad orthogonal crossings.
   - Define parcels as rotated rectangles clear of the roads.
 
-- [ ] **Step 4: Run `npm run test:maps` and confirm all geometry/layout checks pass**
+- [x] **Step 4: Run `npm run test:maps` and confirm all geometry/layout checks pass**
 
-- [ ] **Step 5: Commit the layout schema and data**
+- [x] **Step 5: Commit the layout schema and data**
 
 ### Task 2: Render Roads and Generate Safe Lots From Layouts
 
