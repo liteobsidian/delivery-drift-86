@@ -7,6 +7,7 @@ export function defaultProfile(): Profile {
     money: 500,
     deliveries: 0,
     carId: "ae86",
+    mapId: "tokyo",
     ownedCars: ["ae86"],
     upgrades: {
       ae86: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
@@ -42,6 +43,7 @@ function isValid(p: unknown): p is Profile {
     typeof o.money === "number" &&
     typeof o.deliveries === "number" &&
     typeof o.carId === "string" &&
+    (o.mapId === undefined || o.mapId === "tokyo" || o.mapId === "yokohama") &&
     Array.isArray(o.ownedCars) &&
     typeof o.upgrades === "object" &&
     o.upgrades !== null

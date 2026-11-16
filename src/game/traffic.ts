@@ -46,6 +46,15 @@ export class Traffic {
     for (let i = 0; i < 6; i++) this.spawn(true);
   }
 
+  setWorld(world: World): void {
+    this.world = world;
+    this.cars.forEach((car) => {
+      car.active = false;
+      car.mesh.visible = false;
+    });
+    for (let i = 0; i < 6; i++) this.spawn(true);
+  }
+
   private rnd(): number {
     this.rngState = (this.rngState * 1103515245 + 12345) & 0x7fffffff;
     return this.rngState / 0x7fffffff;

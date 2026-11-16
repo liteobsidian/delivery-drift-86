@@ -83,6 +83,12 @@ for (const exe of [null, ...CANDIDATES]) {
 }
 if (!browser) fail("no usable browser found (playwright bundled/chrome/chromium all unavailable)");
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+await page.addInitScript(() => {
+  // A legacy save has no mapId; the migration must keep the original city.
+  localStorage.setItem("delivery-drift-86-save-v1", JSON.stringify({
+    money: 500, deliveries: 0, carId: "ae86", ownedCars: ["ae86"], upgrades: {},
+  }));
+});
 
 const consoleErrors = [];
 page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
@@ -96,6 +102,27 @@ await page
   .waitForFunction(() => window.__GAME_READY__ === true, null, { timeout: 8000 })
   .catch(() => console.warn("WARN: window.__GAME_READY__ never turned true — falling back to a fixed wait (raise the flag in src/game/boot.ts)"));
 await page.waitForTimeout(1200);
+
+// The alternate map is selectable from the title screen and remains active
+// after beginning a delivery.
+const portMapButton = page.locator('[data-a="map:yokohama"]');
+if (await portMapButton.count() !== 1) fail("Yokohama Port map is missing from the title screen");
+const defaultMap = await page.evaluate(() => window.__gameDebug?.mapId?.());
+if (defaultMap !== "tokyo") fail("A legacy save did not default to Neon Tokyo");
+await page.locator('[data-a="map:tokyo"]').click();
+if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("Neon Tokyo could not be selected");
+if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port-only props leaked into Neon Tokyo");
+await portMapButton.click();
+const selectedMap = await page.evaluate(() => window.__gameDebug?.mapId?.());
+if (selectedMap !== "yokohama") fail("Selecting Yokohama did not switch the active map");
+if (!(await page.evaluate(() => window.__gameDebug?.portVisuals?.()))) fail("Yokohama map props were not built");
+const savedMap = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").mapId);
+if (savedMap !== "yokohama") fail("The selected map was not saved to the player profile");
+await page.locator('[data-a="map:tokyo"]').click();
+if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("Switching back to Tokyo did not rebuild the city");
+if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port props remained after switching back to Tokyo");
+await page.locator('[data-a="map:yokohama"]').click();
+if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "yokohama") fail("Yokohama could not be reselected after returning to Tokyo");
 
 // 1) The canvas must actually render content (not a black screen). Judge by reading the drawing
 //    buffer, not the screenshot — on headless/swiftshader the compositor may show the canvas as

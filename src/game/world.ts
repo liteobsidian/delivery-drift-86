@@ -7,6 +7,7 @@ import {
   LIGHT_CYCLE,
   LIGHT_YELLOW,
 } from "./config";
+import type { MapId } from "./types";
 
 /** Central drift ring (radius) at map center. */
 export const RING_R = 44;
@@ -86,6 +87,7 @@ export interface LightVisual {
 const GS = WORLD_HALF * 2 + ROAD_W * 2 + 60; // ground plane size
 
 export class World {
+  readonly mapId: MapId;
   readonly group = new THREE.Group();
   readonly buildings: AABB[] = [];
   readonly puddles: Puddle[] = [];
@@ -112,16 +114,23 @@ export class World {
   private markerRing!: THREE.Mesh;
   private time = 0;
 
-  constructor() {
+  constructor(mapId: MapId = "tokyo") {
+    this.mapId = mapId;
+    this.group.name = `world-${mapId}`;
     this.group.add(this.buildSky());
     this.group.add(this.buildGround());
+    if (mapId === "yokohama") this.group.add(this.buildHarborWater());
     this.group.add(this.buildBuildings());
     this.group.add(this.buildStreetProps());
-    this.group.add(this.buildBladeSigns());
-    this.group.add(this.buildNeonColumns());
-    this.group.add(this.buildBillboards());
-    this.group.add(this.buildNeonStrips());
-    this.group.add(this.buildRoadSigns());
+    if (mapId === "tokyo") {
+      this.group.add(this.buildBladeSigns());
+      this.group.add(this.buildNeonColumns());
+      this.group.add(this.buildBillboards());
+      this.group.add(this.buildNeonStrips());
+    } else {
+      this.group.add(this.buildPortCranes());
+    }
+    if (mapId === "tokyo") this.group.add(this.buildRoadSigns());
     this.group.add(this.buildPuddles());
     this.group.add(this.buildRamps());
     this.group.add(this.buildLights());
@@ -369,27 +378,57 @@ export class World {
 
   private buildSky(): THREE.Group {
     const g = new THREE.Group();
-    // mountain silhouette ring (Initial D vibe)
     const rng = mulberry32(1337);
-    const mat = new THREE.MeshBasicMaterial({ color: 0x0d1226, fog: false });
-    const geo = new THREE.ConeGeometry(1, 1, 5);
-    const inst = new THREE.InstancedMesh(geo, mat, 40);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    for (let i = 0; i < 40; i++) {
-      const a = (i / 40) * Math.PI * 2 + rng() * 0.1;
-      const r = 480 + rng() * 120;
-      const h = 90 + rng() * 130;
-      const w = 120 + rng() * 140;
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * Math.PI);
-      m.compose(
-        new THREE.Vector3(Math.cos(a) * r, h / 2 - 4, Math.sin(a) * r),
-        q,
-        new THREE.Vector3(w, h, w)
-      );
-      inst.setMatrixAt(i, m);
+    if (this.mapId === "tokyo") {
+      // Mountain silhouette ring (Initial D vibe).
+      const mat = new THREE.MeshBasicMaterial({ color: 0x0d1226, fog: false });
+      const geo = new THREE.ConeGeometry(1, 1, 5);
+      const inst = new THREE.InstancedMesh(geo, mat, 40);
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      for (let i = 0; i < 40; i++) {
+        const a = (i / 40) * Math.PI * 2 + rng() * 0.1;
+        const r = 480 + rng() * 120;
+        const h = 90 + rng() * 130;
+        const w = 120 + rng() * 140;
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * Math.PI);
+        m.compose(
+          new THREE.Vector3(Math.cos(a) * r, h / 2 - 4, Math.sin(a) * r),
+          q,
+          new THREE.Vector3(w, h, w)
+        );
+        inst.setMatrixAt(i, m);
+      }
+      g.add(inst);
+    } else {
+      // Distant harbor cranes break the mountain silhouette on the coastline.
+      const craneMat = new THREE.MeshBasicMaterial({ color: 0x172c3c, fog: false });
+      const craneGeo = new THREE.BoxGeometry(1, 1, 1);
+      const cranes = new THREE.InstancedMesh(craneGeo, craneMat, 24);
+      const matrix = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      let index = 0;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const r = 440 + rng() * 40;
+        const x = Math.cos(a) * r;
+        const z = Math.sin(a) * r;
+        const span = 70 + rng() * 35;
+        const height = 80 + rng() * 45;
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), a + Math.PI / 2);
+        const sideX = Math.cos(a + Math.PI / 2);
+        const sideZ = Math.sin(a + Math.PI / 2);
+        for (const side of [-1, 1]) {
+          matrix.compose(new THREE.Vector3(x + sideX * span * 0.45 * side, height / 2, z + sideZ * span * 0.45 * side), q, new THREE.Vector3(3, height, 3));
+          cranes.setMatrixAt(index++, matrix);
+        }
+        matrix.compose(new THREE.Vector3(x, height, z), q, new THREE.Vector3(span, 3, 3));
+        cranes.setMatrixAt(index++, matrix);
+        matrix.compose(new THREE.Vector3(x, height * 0.55, z), q, new THREE.Vector3(1, height * 0.8, 1));
+        cranes.setMatrixAt(index++, matrix);
+      }
+      g.add(cranes);
     }
-    g.add(inst);
     // stars
     const starGeo = new THREE.BufferGeometry();
     const n = 350;
@@ -441,13 +480,31 @@ export class World {
     const geo = new THREE.PlaneGeometry(GS, GS);
     const mat = new THREE.MeshStandardMaterial({
       map: tex,
-      roughness: 0.92,
-      metalness: 0.08,
+      roughness: this.mapId === "yokohama" ? 0.72 : 0.92,
+      metalness: this.mapId === "yokohama" ? 0.14 : 0.08,
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = -Math.PI / 2;
     mesh.receiveShadow = true;
     return mesh;
+  }
+
+  private buildHarborWater(): THREE.Group {
+    const group = new THREE.Group();
+    group.name = "harbor-water";
+    const water = new THREE.MeshBasicMaterial({ color: 0x123748 });
+    const edge = WORLD_HALF + ROAD_W / 2 + 14;
+    const strip = (width: number, depth: number, x: number, z: number) => {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), water);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(x, 0.025, z);
+      group.add(mesh);
+    };
+    strip(GS, 28, 0, -edge);
+    strip(GS, 28, 0, edge);
+    strip(28, GS, -edge, 0);
+    strip(28, GS, edge, 0);
+    return group;
   }
 
   private makeGroundTexture(): THREE.CanvasTexture {
@@ -459,11 +516,11 @@ export class World {
     const w = (v: number) => (v / GS) * S;
 
     // base sidewalk tone
-    g.fillStyle = "#414a5c";
+    g.fillStyle = this.mapId === "yokohama" ? "#424c55" : "#414a5c";
     g.fillRect(0, 0, S, S);
 
     // block pads slightly darker
-    g.fillStyle = "#30394a";
+    g.fillStyle = this.mapId === "yokohama" ? "#35434c" : "#30394a";
     const inner = CELL - ROAD_W;
     for (let i = 0; i < GRID_N - 1; i++) {
       for (let j = 0; j < GRID_N - 1; j++) {
@@ -474,7 +531,7 @@ export class World {
     }
 
     // roads
-    g.fillStyle = "#596273";
+    g.fillStyle = this.mapId === "yokohama" ? "#56616a" : "#596273";
     const span = WORLD_HALF * 2 + ROAD_W;
     for (let i = 0; i < GRID_N; i++) {
       const c = -WORLD_HALF + i * CELL;
@@ -731,6 +788,7 @@ export class World {
   }
 
   private buildBuildings(): THREE.Group {
+    if (this.mapId === "yokohama") return this.buildPortBuildings();
     const g = new THREE.Group();
     const rng = mulberry32(777);
     const winTex = this.makeBuildingTexture();
@@ -820,6 +878,175 @@ export class World {
     return g;
   }
 
+  private buildPortBuildings(): THREE.Group {
+    const group = new THREE.Group();
+    group.name = "port-warehouses-and-containers";
+    const rng = mulberry32(9182);
+    const inner = CELL - ROAD_W;
+    const warehouses: { x: number; z: number; w: number; h: number; d: number }[] = [];
+    const containers: { x: number; z: number; w: number; h: number; d: number; color: number; level: number }[] = [];
+    const paint = [0xe15a42, 0x32a8b4, 0xe1a83c, 0x627ead, 0x829951];
+
+    for (let i = 0; i < GRID_N - 1; i++) {
+      for (let j = 0; j < GRID_N - 1; j++) {
+        const bx = -WORLD_HALF + CELL * i + ROAD_W / 2;
+        const bz = -WORLD_HALF + CELL * j + ROAD_W / 2;
+        const cx = bx + inner / 2;
+        const cz = bz + inner / 2;
+        if ((i + j) % 3 === 0) {
+          const w = inner * 0.76;
+          const d = inner * 0.64;
+          const h = 8 + rng() * 3;
+          if (!this.rectHitsDriftRoad(cx, cz, w, d)) warehouses.push({ x: cx, z: cz, w, h, d });
+          continue;
+        }
+        for (const dx of [-9, 9]) {
+          for (const dz of [-7, 7]) {
+            const x = cx + dx;
+            const z = cz + dz;
+            const w = 8.2;
+            const d = 5.6;
+            const h = 2.7;
+            if (this.rectHitsDriftRoad(x, z, w, d)) continue;
+            const color = paint[Math.floor(rng() * paint.length)];
+            const levels = rng() > 0.72 ? 2 : 1;
+            for (let level = 0; level < levels; level++) {
+              containers.push({ x, z, w, h, d, color, level });
+            }
+            this.buildings.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
+            this.buildingHeights.push(levels * h);
+          }
+        }
+      }
+    }
+
+    const warehouseGeo = new THREE.BoxGeometry(1, 1, 1);
+    warehouseGeo.translate(0, 0.5, 0);
+    const warehouseTexture = this.makeWarehouseTexture();
+    const warehouseMat = new THREE.MeshStandardMaterial({
+      map: warehouseTexture,
+      color: 0xffffff,
+      roughness: 0.86,
+      metalness: 0.08,
+      emissive: 0x101820,
+    });
+    const warehouseMesh = new THREE.InstancedMesh(warehouseGeo, warehouseMat, warehouses.length);
+    const matrix = new THREE.Matrix4();
+    const quat = new THREE.Quaternion();
+    const tint = new THREE.Color();
+    warehouses.forEach((b, i) => {
+      matrix.compose(new THREE.Vector3(b.x, 0, b.z), quat, new THREE.Vector3(b.w, b.h, b.d));
+      warehouseMesh.setMatrixAt(i, matrix);
+      tint.setHex(i % 2 ? 0x8b999e : 0x737f86);
+      warehouseMesh.setColorAt(i, tint);
+      this.buildings.push({ minX: b.x - b.w / 2, maxX: b.x + b.w / 2, minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2 });
+      this.buildingHeights.push(b.h);
+    });
+    group.add(warehouseMesh);
+
+    const containerGeo = new THREE.BoxGeometry(1, 1, 1);
+    containerGeo.translate(0, 0.5, 0);
+    const containerMat = new THREE.MeshStandardMaterial({ map: this.makeContainerTexture(), color: 0xffffff, roughness: 0.72, metalness: 0.26 });
+    const containerMesh = new THREE.InstancedMesh(containerGeo, containerMat, containers.length);
+    containers.forEach((b, i) => {
+      matrix.compose(new THREE.Vector3(b.x, b.level * b.h, b.z), quat, new THREE.Vector3(b.w, b.h, b.d));
+      containerMesh.setMatrixAt(i, matrix);
+      tint.setHex(b.color);
+      containerMesh.setColorAt(i, tint);
+    });
+    group.add(containerMesh);
+    return group;
+  }
+
+  private buildPortCranes(): THREE.Group {
+    const group = new THREE.Group();
+    group.name = "port-gantry-cranes";
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0xffad4d, emissive: 0x542307, emissiveIntensity: 0.24, roughness: 0.62, metalness: 0.24 });
+    const beam = new THREE.BoxGeometry(1, 1, 1);
+    const addBeam = (x: number, y: number, z: number, w: number, h: number, d: number) => {
+      const mesh = new THREE.Mesh(beam, frameMat);
+      mesh.position.set(x, y, z);
+      mesh.scale.set(w, h, d);
+      group.add(mesh);
+    };
+    const spots = [
+      { i: 0, j: 2 }, { i: 5, j: 3 }, { i: 2, j: 0 }, { i: 3, j: 5 },
+    ];
+    for (const { i, j } of spots) {
+      const cx = -WORLD_HALF + (i + 0.5) * CELL;
+      const cz = -WORLD_HALF + (j + 0.5) * CELL;
+      const w = 24;
+      const d = 13;
+      if (this.rectHitsDriftRoad(cx, cz, w, d)) continue;
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          const x = cx + sx * w * 0.42;
+          const z = cz + sz * d * 0.38;
+          addBeam(x, 6.5, z, 0.8, 13, 0.8);
+          this.buildings.push({ minX: x - 0.6, maxX: x + 0.6, minZ: z - 0.6, maxZ: z + 0.6 });
+          this.buildingHeights.push(13);
+        }
+      }
+      addBeam(cx, 13, cz, w, 0.9, 0.9);
+      addBeam(cx, 13.8, cz, 2, 0.6, 2);
+    }
+    return group;
+  }
+
+  private makeContainerTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#d8dcda";
+    ctx.fillRect(0, 0, 128, 64);
+    for (let x = 3; x < 128; x += 7) {
+      ctx.fillStyle = "rgba(18,28,34,0.24)";
+      ctx.fillRect(x, 0, 2, 64);
+      ctx.fillStyle = "rgba(255,255,255,0.2)";
+      ctx.fillRect(x + 2, 0, 1, 64);
+    }
+    ctx.fillStyle = "rgba(12,20,26,0.68)";
+    ctx.fillRect(7, 48, 50, 9);
+    ctx.fillStyle = "#f5edda";
+    ctx.font = "bold 7px sans-serif";
+    ctx.fillText("YOKOHAMA · CARGO", 10, 55);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
+  private makeWarehouseTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#69777c";
+    ctx.fillRect(0, 0, 128, 128);
+    for (let y = 5; y < 128; y += 8) {
+      ctx.fillStyle = "rgba(230,238,235,0.11)";
+      ctx.fillRect(0, y, 128, 2);
+    }
+    ctx.fillStyle = "#26333a";
+    ctx.fillRect(28, 48, 72, 72);
+    ctx.strokeStyle = "#b9c3c0";
+    ctx.lineWidth = 2;
+    for (let y = 55; y < 118; y += 9) {
+      ctx.beginPath();
+      ctx.moveTo(31, y);
+      ctx.lineTo(97, y);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#e5b64d";
+    ctx.fillRect(5, 15, 21, 7);
+    ctx.fillStyle = "#f5edda";
+    ctx.font = "bold 7px sans-serif";
+    ctx.fillText("DOCK 86", 5, 32);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
   /** drop loaded mid-rise models onto the reserved spots (call once, after assets load) */
   setHeroBuildings(model: THREE.Group, modelSize: THREE.Vector3): void {
     const rng = mulberry32(4242);
@@ -901,38 +1128,40 @@ export class World {
     });
     g.add(poles, tips);
 
-    // neon signs on building faces
-    const signTex = this.makeNeonTexture();
-    for (let k = 0; k < 22; k++) {
-      const b = this.buildings[Math.floor(rng() * this.buildings.length)];
-      if (!b) continue;
-      const hue = rng();
-      const color = new THREE.Color().setHSL(hue, 1, 0.6);
-      const mat = new THREE.MeshBasicMaterial({
-        map: signTex,
-        transparent: true,
-        opacity: 0.9,
-        color,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
-      const w = 3 + rng() * 3;
-      const h = w * 2;
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-      const side = Math.floor(rng() * 4);
-      const y = 5 + rng() * 12;
-      if (side === 0) {
-        sign.position.set((b.minX + b.maxX) / 2, y, b.minZ - 0.15);
-      } else if (side === 1) {
-        sign.position.set((b.minX + b.maxX) / 2, y, b.maxZ + 0.15);
-      } else if (side === 2) {
-        sign.position.set(b.minX - 0.15, y, (b.minZ + b.maxZ) / 2);
-        sign.rotation.y = -Math.PI / 2;
-      } else {
-        sign.position.set(b.maxX + 0.15, y, (b.minZ + b.maxZ) / 2);
-        sign.rotation.y = Math.PI / 2;
+    if (this.mapId === "tokyo") {
+      // Neon signs belong to the downtown skyline, not the cargo terminal.
+      const signTex = this.makeNeonTexture();
+      for (let k = 0; k < 22; k++) {
+        const b = this.buildings[Math.floor(rng() * this.buildings.length)];
+        if (!b) continue;
+        const hue = rng();
+        const color = new THREE.Color().setHSL(hue, 1, 0.6);
+        const mat = new THREE.MeshBasicMaterial({
+          map: signTex,
+          transparent: true,
+          opacity: 0.9,
+          color,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        const w = 3 + rng() * 3;
+        const h = w * 2;
+        const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+        const side = Math.floor(rng() * 4);
+        const y = 5 + rng() * 12;
+        if (side === 0) {
+          sign.position.set((b.minX + b.maxX) / 2, y, b.minZ - 0.15);
+        } else if (side === 1) {
+          sign.position.set((b.minX + b.maxX) / 2, y, b.maxZ + 0.15);
+        } else if (side === 2) {
+          sign.position.set(b.minX - 0.15, y, (b.minZ + b.maxZ) / 2);
+          sign.rotation.y = -Math.PI / 2;
+        } else {
+          sign.position.set(b.maxX + 0.15, y, (b.minZ + b.maxZ) / 2);
+          sign.rotation.y = Math.PI / 2;
+        }
+        g.add(sign);
       }
-      g.add(sign);
     }
     return g;
   }
