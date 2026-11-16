@@ -41,23 +41,23 @@
 
 **Files:** `src/game/types.ts`, `src/game/game.ts`, `src/index.css`, `scripts/verify-game.mjs`.
 
-- [ ] Add `play`, `tracks`, and `profile` to `GameScreen` and their render methods.
-- [ ] Reduce home to the title, selected-place summary, one primary play button, and compact garage/cars/profile actions.
-- [ ] Move Delivery, Drift Trial, and Time Attack cards to Play; selecting one opens Tracks.
-- [ ] Render distinct Tokyo and Yokohama cards; show an 8-delivery lock/progress state for new careers.
-- [ ] Route a chosen activity and unlocked map into `quickStart`, `startMode`, or the weekly route without resetting existing save data.
-- [ ] Put records, weekly routes, and achievements behind Profile with clear back navigation.
-- [ ] Verify navigation, selected activity/map, locked/unlocked threshold, legacy saves, and desktop/mobile layout in `scripts/verify-game.mjs`.
-- [ ] Run `npm run build`, `npm run verify`, inspect screenshots, and `git diff --check`.
+- [x] Add `play`, `tracks`, and `profile` to `GameScreen` and their render methods.
+- [x] Reduce home to the title, selected-place summary, one primary play button, and compact garage/cars/profile actions.
+- [x] Move Delivery, Drift Trial, and Time Attack cards to Play; selecting one opens Tracks.
+- [x] Render distinct Tokyo and Yokohama cards; show an 8-delivery lock/progress state for new careers.
+- [x] Route a chosen activity and unlocked map into `quickStart`, `startMode`, or the weekly route without resetting existing save data.
+- [x] Put records, weekly routes, and achievements behind Profile with clear back navigation.
+- [x] Verify navigation, selected activity/map, locked/unlocked threshold, legacy saves, and desktop/mobile layout in `scripts/verify-game.mjs`.
+- [x] Run `npm run build`, `npm run verify`, inspect screenshots, and `git diff --check`.
 
 ### Task 3: Once-Weekly Startup Event Card
 
 **Files:** `src/game/game.ts`, `src/game/retention.ts`, `src/index.css`, `scripts/verify-game.mjs`.
 
-- [ ] On the first home screen of a UTC week, offer the first incomplete weekly route in a compact dismissible card.
-- [ ] “Играть” starts the route; “Позже” closes it; both record that the event was seen for this UTC week.
-- [ ] Verify both actions, no repeat during the same week, and reappearance at the next UTC week key.
-- [ ] Run `npm run build`, `npm run verify`, inspect screenshots, and `git diff --check`.
+- [x] On the first home screen of a UTC week, offer the first incomplete weekly route in a compact dismissible card.
+- [x] “Играть” starts the route; “Позже” closes it; both record that the event was seen for this UTC week.
+- [x] Verify both actions, no repeat during the same week, and reappearance at the next UTC week key.
+- [x] Run `npm run build`, `npm run verify`, inspect screenshots, and `git diff --check`.
 
 ### Task 4: Publish
 

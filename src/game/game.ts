@@ -29,7 +29,6 @@ import type { HeroModelKey, LoadedModel } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { carThumb, createShowroom } from "./showroom";
-import { LEVELS, courierLevel } from "./config";
 import { completeWeeklyRoute, loadRecords, loadWeeklyProgress, mapAccessFor, markWeeklyEventSeen, saveRecord, utcWeekKey, weeklyEventSeen, weeklyRoutes } from "./retention";
 
 const SD = ROAD_W / 2 + 1.6; // stop-line distance from intersection center
@@ -73,6 +72,7 @@ export class Game {
   screen: GameScreen = "title";
   order: Order | null = null;
   mode: "delivery" | "drift-trial" | "time-attack" = "delivery";
+  private pendingMode: "delivery" | "drift-trial" | "time-attack" = "delivery";
   orders: Order[] = [];
   timeLeft = 0;
   driftScore = 0;
@@ -233,7 +233,7 @@ export class Game {
     this.input.onPause = () => this.togglePause();
     this.input.onMute = () => this.toggleMute();
     this.input.onConfirm = () => {
-      if (this.screen === "title") this.quickStart();
+      if (this.screen === "title") this.showScreen("play");
       else if (this.screen === "result") this.gotoOrders();
     };
     this.audio.muted = this.profile.muted;
@@ -256,6 +256,7 @@ export class Game {
       finishWeekly: () => { if (this.order?.weeklyId) this.completeOrder(true, "Тестовый финиш"); },
       weeklyProgress: () => loadWeeklyProgress(),
       mapAccessFor,
+      setDeliveriesForTest: (deliveries: number) => { this.profile.deliveries = deliveries; saveProfile(this.profile); },
       weeklyEventSeen: (date?: string) => weeklyEventSeen(date ? new Date(date) : new Date()),
       markWeeklyEventSeen: (date?: string) => markWeeklyEventSeen(date ? new Date(date) : new Date()),
       portVisuals: () => Boolean(
@@ -334,6 +335,9 @@ export class Game {
     this.hudEl.style.display = s === "playing" ? "block" : "none";
     this.input.setTouchVisible(s === "playing");
     if (s === "title") this.renderTitle();
+    else if (s === "play") this.renderPlay();
+    else if (s === "tracks") this.renderTracks();
+    else if (s === "profile") this.renderProfile();
     else if (s === "garage") this.renderGarage();
     else if (s === "cars") this.renderCars();
     else if (s === "orders") this.renderOrders();
@@ -341,63 +345,93 @@ export class Game {
     else if (s === "result") this.renderResult();
     else if (s === "settings") this.renderSettings();
     else if (s === "achievements") this.renderAchievements();
-    else if (s === "records") this.renderRecords();
     else this.clearScreen();
   }
 
   private renderTitle(): void {
     const p = this.profile;
     this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades());
-    const lvl = courierLevel(p.deliveries);
-    const next = LEVELS[lvl + 1];
+    const mapName = WORLD_MAPS.find((map) => map.id === p.mapId)?.name ?? "Неоновый Токио";
+    const weekly = weeklyRoutes();
+    const weeklyProgress = loadWeeklyProgress();
+    const featuredWeeklyIndex = weekly.findIndex((route) => !weeklyProgress.completed.includes(route.id));
+    const featuredWeekly = weekly[featuredWeeklyIndex >= 0 ? featuredWeeklyIndex : 0];
+    const showWeeklyEvent = !weeklyEventSeen();
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
-      <div class="title-box">
-        <div class="logo-sub">ночной курьер · ${WORLD_MAPS.find((map) => map.id === p.mapId)?.name ?? "Токио"}</div>
+      <div class="title-box home-box">
+        <div class="logo-sub">НОЧНОЙ КУРЬЕР · ${mapName.toUpperCase()}</div>
         <h1 class="logo">DELIVERY<span> DRIFT</span> <em>86</em></h1>
         <p class="tagline">Доставляй быстро. Дрифти жёстко. Не разбей груз.</p>
-        <div class="map-picker" aria-label="Выбор карты">
-          ${WORLD_MAPS.map((map) => `<button class="map-card ${p.mapId === map.id ? "selected" : ""}" data-a="map:${map.id}" aria-pressed="${p.mapId === map.id}">
-            <b>${map.name}</b><span>${map.description}</span>
-          </button>`).join("")}
-        </div>
-        <div class="title-buttons">
-          <button class="btn primary" data-a="quick">БЫСТРАЯ ДОСТАВКА <kbd>ПРОБЕЛ</kbd></button>
-          <div class="activity-picker" aria-label="Режимы заезда">
-            <button class="activity-card" data-a="drift-trial"><b>DRIFT TRIAL</b><span>60 секунд · набери очки дрифтом</span></button>
-            <button class="activity-card" data-a="time-attack"><b>TIME ATTACK</b><span>Доберись до точки до истечения времени</span></button>
+        <div class="home-place"><span class="home-place-pin">◉</span><span>${mapName}</span><i>·</i><span>${this.currentCarSpec().name.replace("Toyota ", "")}</span></div>
+        <div class="home-actions">
+          <button class="btn primary home-play" data-a="play">ИГРАТЬ <span>→</span></button>
+          <div class="home-links">
+            <button class="btn" data-a="cars">МАШИНЫ</button>
+            <button class="btn" data-a="garage">ГАРАЖ</button>
+            <button class="btn" data-a="profile">ПРОФИЛЬ</button>
           </div>
-          <button class="btn" data-a="cars">МАШИНЫ</button>
-          <button class="btn" data-a="garage">ГАРАЖ</button>
-          <button class="btn" data-a="achievements">АЧИВКИ ${p.unlockedAch.length > 0 ? `<span class="gold">(${p.unlockedAch.length}/${ACHIEVEMENTS.length})</span>` : ""}</button>
-          <button class="btn" data-a="records">РЕКОРДЫ · НЕДЕЛЬНЫЕ МАРШРУТЫ</button>
-          <button class="btn" data-a="settings">⚙ НАСТРОЙКИ</button>
         </div>
-        <div class="stats-row">
-          <span>₽ ${p.money}</span>
-          <span>доставок: ${p.deliveries}</span>
-          <span>машина: ${this.currentCarSpec().name.replace("Toyota ", "")}</span>
-          <span class="gold">уровень ${lvl + 1} · ${LEVELS[lvl].name}</span>
-          ${next ? `<span class="dim">до «${next.name}»: ${next.deliveries - p.deliveries} доставок</span>` : `<span class="gold">максимальный уровень</span>`}
-        </div>
-        ${this.input.isTouch ? "" : `<div class="hint-row">
-          <span>W/↑ газ</span><span>S/↓ тормоз</span><span>A D руль</span><span>ПРОБЕЛ дрифт</span><span>SHIFT нитро</span><span>ESC пауза</span><span>M звук</span>
-        </div>`}
+        <div class="home-career"><span>₽ ${p.money}</span><span>${p.deliveries} доставок</span><span>${p.unlockedAch.length}/${ACHIEVEMENTS.length} достижений</span></div>
         <p class="fine-print">прогресс хранится в этом браузере (localStorage)</p>
-      </div>`;
+      </div>
+      ${showWeeklyEvent && featuredWeekly ? `<div class="weekly-event-shade"><section class="weekly-event-card" role="dialog" aria-modal="true" aria-labelledby="weekly-event-title">
+        <div class="journey-eyebrow">СОБЫТИЕ НЕДЕЛИ · UTC ${weeklyProgress.week}</div>
+        <h2 id="weekly-event-title">${featuredWeekly.title}</h2>
+        <p>Особый маршрут недели уже ждёт. Успей доехать за ${Math.round(featuredWeekly.timeLimit)} секунд.</p>
+        <div class="weekly-event-actions"><button class="btn" data-a="event-dismiss">ПОЗЖЕ</button><button class="btn primary" data-a="event-start">НАЧАТЬ ЗАЕЗД →</button></div>
+      </section></div>` : ""}`;
     this.bindScreen({
-      quick: () => this.quickStart(),
-      "drift-trial": () => this.startMode("drift-trial"),
-      "time-attack": () => this.startMode("time-attack"),
+      play: () => this.showScreen("play"),
       cars: () => this.showScreen("cars"),
       garage: () => this.showScreen("garage"),
-      achievements: () => this.showScreen("achievements"),
-      records: () => this.showScreen("records"),
-      settings: () => {
-        this.settingsFrom = "title";
-        this.showScreen("settings");
+      profile: () => this.showScreen("profile"),
+      "event-dismiss": () => { markWeeklyEventSeen(); this.showScreen("title"); },
+      "event-start": () => {
+        markWeeklyEventSeen();
+        this.startWeeklyRoute(featuredWeeklyIndex >= 0 ? featuredWeeklyIndex : 0);
       },
     });
+  }
+
+  private renderPlay(): void {
+    this.screenEl.style.display = "flex";
+    this.screenEl.innerHTML = `<div class="panel journey-panel">
+      <div class="journey-eyebrow">НОЧНОЙ КУРЬЕР · ${WORLD_MAPS.find((map) => map.id === this.profile.mapId)?.name}</div>
+      <h2>ВЫБЕРИ ЗАЕЗД</h2>
+      <p class="dim">Сначала выбери, как хочешь провести эту гонку.</p>
+      <div class="activity-picker journey-activities">
+        <button class="activity-card" data-a="activity:delivery"><b>ДОСТАВКА</b><span>Бесконечные заказы, деньги и развитие гаража</span><i>Выбрать →</i></button>
+        <button class="activity-card" data-a="activity:drift-trial"><b>DRIFT TRIAL</b><span>60 секунд · набери очки дрифтом</span><i>Выбрать →</i></button>
+        <button class="activity-card" data-a="activity:time-attack"><b>TIME ATTACK</b><span>Доберись до точки до истечения времени</span><i>Выбрать →</i></button>
+      </div>
+      <button class="btn" data-a="back">← НАЗАД</button>
+    </div>`;
+    this.bindScreen({ back: () => this.showScreen("title") });
+  }
+
+  private renderTracks(): void {
+    const cards = WORLD_MAPS.map((map) => {
+      const access = mapAccessFor(map.id, this.profile.deliveries, this.profile.mapId);
+      const locked = !access.unlocked;
+      const progress = Math.min(8, this.profile.deliveries);
+      return `<button class="map-card track-card ${this.profile.mapId === map.id ? "selected" : ""} ${locked ? "locked" : ""}" data-a="map:${map.id}" ${locked ? "disabled" : ""} aria-pressed="${this.profile.mapId === map.id}">
+        <span class="track-art track-${map.id}"><i>${map.id === "tokyo" ? "東京" : "横浜"}</i>${locked ? "<b class='track-lock'>🔒</b>" : ""}</span>
+        <b>${map.name}</b>
+        <span>${locked ? `Откроется после ${8} доставок` : map.description}</span>
+        ${locked ? `<span class="track-progress">${progress} / 8 доставок</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
+      </button>`;
+    }).join("");
+    const modeName = this.pendingMode === "delivery" ? "Доставка" : this.pendingMode === "drift-trial" ? "Drift Trial" : "Time Attack";
+    this.screenEl.style.display = "flex";
+    this.screenEl.innerHTML = `<div class="panel journey-panel tracks-panel">
+      <div class="journey-eyebrow">${modeName.toUpperCase()}</div>
+      <h2>ВЫБЕРИ МЕСТО</h2>
+      <p class="dim">Новые районы открываются по мере карьеры.</p>
+      <div class="map-picker track-picker">${cards}</div>
+      <button class="btn" data-a="back">← К РЕЖИМАМ</button>
+    </div>`;
+    this.bindScreen({ back: () => this.showScreen("play") });
   }
 
   private renderCars(): void {
@@ -611,10 +645,10 @@ export class Game {
         <div class="ach-list">${rows}</div>
         <button class="btn" data-a="back">← НАЗАД</button>
       </div>`;
-    this.bindScreen({ back: () => this.showScreen("title") });
+    this.bindScreen({ back: () => this.showScreen("profile") });
   }
 
-  private renderRecords(): void {
+  private renderProfile(): void {
     const records = loadRecords();
     const rows = Object.entries(records).sort((a, b) => {
       const [am, modeA, ac] = a[0].split(":");
@@ -639,15 +673,20 @@ export class Game {
     }).join("");
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `<div class="panel records-panel">
+      <div class="journey-eyebrow">ПРОФИЛЬ · ${this.currentCarSpec().name.replace("Toyota ", "")}</div>
       <h2>ЛИЧНЫЕ РЕКОРДЫ</h2>
       <p class="dim">Лучшие результаты по карте, режиму и машине · неделя UTC ${progress.week}</p>
       <div class="record-list">${recordRows}</div>
       <h2>НЕДЕЛЬНЫЕ МАРШРУТЫ</h2>
       <p class="dim">Новый набор каждый понедельник по UTC · обычные доставки доступны без ограничений</p>
       <div class="weekly-list">${routeRows}</div>
+      <button class="btn" data-a="achievements">ДОСТИЖЕНИЯ ${this.profile.unlockedAch.length}/${ACHIEVEMENTS.length}</button>
       <button class="btn" data-a="back">← В МЕНЮ</button>
     </div>`;
-    this.bindScreen({ back: () => this.showScreen("title") });
+    this.bindScreen({
+      back: () => this.showScreen("title"),
+      achievements: () => this.showScreen("achievements"),
+    });
   }
 
   private startWeeklyRoute(index: number): void {
@@ -708,7 +747,15 @@ export class Game {
           return;
         }
         if (act === "map" && arg && (arg === "tokyo" || arg === "yokohama")) {
-          this.selectMap(arg);
+          if (this.selectMap(arg)) {
+            if (this.pendingMode === "delivery") this.quickStart();
+            else this.startMode(this.pendingMode);
+          }
+          return;
+        }
+        if (act === "activity" && arg && (arg === "delivery" || arg === "drift-trial" || arg === "time-attack")) {
+          this.pendingMode = arg;
+          this.showScreen("tracks");
           return;
         }
         if (act === "weekly" && arg !== undefined) {
@@ -724,7 +771,8 @@ export class Game {
     });
   }
 
-  private selectMap(mapId: MapId): void {
+  private selectMap(mapId: MapId): boolean {
+    if (!mapAccessFor(mapId, this.profile.deliveries, this.profile.mapId).unlocked) return false;
     if (this.world.mapId !== mapId) {
       this.scene.remove(this.world.group);
       let nextWorld = this.worldCache.get(mapId);
@@ -747,7 +795,7 @@ export class Game {
       this.profile.mapId = mapId;
       saveProfile(this.profile);
     }
-    this.showScreen("title");
+    return true;
   }
 
   // ================= profile / economy =================
@@ -1537,6 +1585,9 @@ export class Game {
     // menu screens show the showroom turntable instead of the city
     if (
       this.screen === "title" ||
+      this.screen === "play" ||
+      this.screen === "tracks" ||
+      this.screen === "profile" ||
       this.screen === "garage" ||
       this.screen === "orders" ||
       this.screen === "settings" ||
