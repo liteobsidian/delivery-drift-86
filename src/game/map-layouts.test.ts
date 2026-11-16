@@ -60,7 +60,7 @@ describe("hand-authored city layouts", () => {
           }
         }
       }
-      expect(layout.parcels.length).toBeGreaterThan(0);
+      expect(layout.parcels.length).toBeGreaterThanOrEqual(10);
       for (const parcel of layout.parcels) {
         expect(parcelClearOfRoads(layout, parcel, 3), `${layout.id}: parcel (${parcel.x}, ${parcel.z}) overlaps a road`).toBe(true);
         expect(parcel.x - parcel.width / 2).toBeGreaterThanOrEqual(layout.bounds.minX);

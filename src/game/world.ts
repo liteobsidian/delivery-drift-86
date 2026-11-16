@@ -8,6 +8,7 @@ import {
   LIGHT_YELLOW,
 } from "./config";
 import type { MapId } from "./types";
+import { cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad } from "./map-layouts";
 
 /** Central drift ring (radius) at map center. */
 export const RING_R = 44;
@@ -88,6 +89,7 @@ const GS = WORLD_HALF * 2 + ROAD_W * 2 + 60; // ground plane size
 
 export class World {
   readonly mapId: MapId;
+  readonly layout;
   readonly group = new THREE.Group();
   readonly buildings: AABB[] = [];
   readonly puddles: Puddle[] = [];
@@ -116,6 +118,7 @@ export class World {
 
   constructor(mapId: MapId = "tokyo") {
     this.mapId = mapId;
+    this.layout = cityLayoutFor(mapId);
     this.group.name = `world-${mapId}`;
     this.group.add(this.buildSky());
     this.group.add(this.buildGround());
@@ -146,13 +149,11 @@ export class World {
 
   /** true when the point is over a road surface (not inside a block) */
   isOnRoad(x: number, z: number): boolean {
-    return this.nearestRoadDist(x, z) <= ROAD_W / 2;
+    return isOnLayoutRoad(this.layout, x, z);
   }
 
   nearestRoadDist(x: number, z: number): number {
-    const dx = this.distToLine(x);
-    const dz = this.distToLine(z);
-    return Math.min(dx, dz, this.driftRoadDist(x, z));
+    return Math.max(0, Math.min(...this.layout.roads.map((road) => distanceToRoadPath(road, x, z) - road.width / 2)));
   }
 
   /** distance to the drift ring + cloverleaf arcs (the central plaza). */
@@ -188,19 +189,14 @@ export class World {
   private rectHitsDriftRoad(x: number, z: number, w: number, d: number): boolean {
     const hw = w / 2;
     const hd = d / 2;
-    const half = ROAD_W / 2 + 0.8;
+    const half = 0.8;
     const samples: [number, number][] = [
       [x, z],
       [x - hw, z - hd], [x + hw, z - hd], [x - hw, z + hd], [x + hw, z + hd],
       [x, z - hd], [x, z + hd], [x - hw, z], [x + hw, z],
     ];
-    return samples.some(([sx, sz]) => this.driftRoadDist(sx, sz) <= half);
-  }
-
-  private distToLine(v: number): number {
-    const k = Math.round((v + WORLD_HALF) / CELL);
-    const c = -WORLD_HALF + Math.max(0, Math.min(GRID_N - 1, k)) * CELL;
-    return Math.abs(v - c);
+    return samples.some(([sx, sz]) => this.layout.roads.some((road) =>
+      distanceToRoadPath(road, sx, sz) <= road.width / 2 + half));
   }
 
   rampAt(x: number, z: number): Ramp | null {
@@ -267,15 +263,15 @@ export class World {
       }
     }
     // world bounds
-    const B = WORLD_HALF + ROAD_W / 2 + 4;
-    if (Math.abs(pos.x) > B) {
+    const { minX, maxX, minZ, maxZ } = this.layout.bounds;
+    if (pos.x < minX || pos.x > maxX) {
       impact = Math.max(impact, Math.abs(vel.x));
-      pos.x = Math.sign(pos.x) * B;
+      pos.x = Math.max(minX, Math.min(maxX, pos.x));
       vel.x *= -0.3;
     }
-    if (Math.abs(pos.z) > B) {
+    if (pos.z < minZ || pos.z > maxZ) {
       impact = Math.max(impact, Math.abs(vel.z));
-      pos.z = Math.sign(pos.z) * B;
+      pos.z = Math.max(minZ, Math.min(maxZ, pos.z));
       vel.z *= -0.3;
     }
     return impact;
@@ -512,273 +508,75 @@ export class World {
     const cv = document.createElement("canvas");
     cv.width = cv.height = S;
     const g = cv.getContext("2d")!;
-    const u = (v: number) => ((v + GS / 2) / GS) * S;
-    const w = (v: number) => (v / GS) * S;
+    const u = (v: number) => ((v - this.layout.bounds.minX) / (this.layout.bounds.maxX - this.layout.bounds.minX)) * S;
+    const v = (z: number) => ((z - this.layout.bounds.minZ) / (this.layout.bounds.maxZ - this.layout.bounds.minZ)) * S;
+    const w = (value: number) => value / (this.layout.bounds.maxX - this.layout.bounds.minX) * S;
 
-    // base sidewalk tone
     g.fillStyle = this.mapId === "yokohama" ? "#424c55" : "#414a5c";
     g.fillRect(0, 0, S, S);
-
-    // block pads slightly darker
-    g.fillStyle = this.mapId === "yokohama" ? "#35434c" : "#30394a";
-    const inner = CELL - ROAD_W;
-    for (let i = 0; i < GRID_N - 1; i++) {
-      for (let j = 0; j < GRID_N - 1; j++) {
-        const bx = -WORLD_HALF + CELL * i + ROAD_W / 2;
-        const bz = -WORLD_HALF + CELL * j + ROAD_W / 2;
-        g.fillRect(u(bx), u(bz), w(inner), w(inner));
-      }
-    }
-
-    // roads
-    g.fillStyle = this.mapId === "yokohama" ? "#56616a" : "#596273";
-    const span = WORLD_HALF * 2 + ROAD_W;
-    for (let i = 0; i < GRID_N; i++) {
-      const c = -WORLD_HALF + i * CELL;
-      g.fillRect(u(c - ROAD_W / 2), u(-WORLD_HALF - ROAD_W / 2), w(ROAD_W), w(span));
-      g.fillRect(u(-WORLD_HALF - ROAD_W / 2), u(c - ROAD_W / 2), w(span), w(ROAD_W));
-    }
-
-    // road edge lines
-    g.strokeStyle = "#727c90";
-    g.lineWidth = w(0.35);
-    for (let i = 0; i < GRID_N; i++) {
-      const c = -WORLD_HALF + i * CELL;
-      for (const s of [-1, 1]) {
-        const e = c + (s * ROAD_W) / 2;
-        g.beginPath();
-        g.moveTo(u(e), u(-WORLD_HALF - ROAD_W / 2));
-        g.lineTo(u(e), u(WORLD_HALF + ROAD_W / 2));
-        g.stroke();
-        g.beginPath();
-        g.moveTo(u(-WORLD_HALF - ROAD_W / 2), u(e));
-        g.lineTo(u(WORLD_HALF + ROAD_W / 2), u(e));
-        g.stroke();
-      }
-    }
-
-    // --- central drift ring + cloverleaf arcs (painted like grid roads) ---
-    g.strokeStyle = "#3a4050";
-    g.lineWidth = w(ROAD_W);
-    g.beginPath();
-    g.arc(u(0), u(0), w(RING_R), 0, Math.PI * 2);
-    g.stroke();
-    for (const a of DRIFT_ARCS) {
-      g.beginPath();
-      g.arc(u(a.cx), u(a.cz), w(ARC_R), a.a0, a.a1);
-      g.stroke();
-    }
-    // edge lines
-    g.strokeStyle = "#4a5162";
-    g.lineWidth = w(0.35);
-    for (const e of [-1, 1]) {
-      g.beginPath();
-      g.arc(u(0), u(0), w(RING_R + (e * ROAD_W) / 2), 0, Math.PI * 2);
-      g.stroke();
-    }
-    for (const a of DRIFT_ARCS) {
-      for (const e of [-1, 1]) {
-        g.beginPath();
-        g.arc(u(a.cx), u(a.cz), w(ARC_R + (e * ROAD_W) / 2), a.a0, a.a1);
-        g.stroke();
-      }
-    }
-    // wear speckle on the new asphalt
-    const drng = mulberry32(31337);
-    for (let n = 0; n < 700; n++) {
-      const arng2 = drng;
-      const onRing = arng2() < 0.55;
-      let px: number, pz: number;
-      if (onRing) {
-        const t = arng2() * Math.PI * 2;
-        const r = RING_R + (arng2() * 2 - 1) * (ROAD_W / 2 - 0.8);
-        px = Math.cos(t) * r;
-        pz = Math.sin(t) * r;
-      } else {
-        const a = DRIFT_ARCS[Math.floor(arng2() * DRIFT_ARCS.length)];
-        const t = a.a0 + arng2() * (a.a1 - a.a0);
-        const r = ARC_R + (arng2() * 2 - 1) * (ROAD_W / 2 - 0.8);
-        px = a.cx + Math.cos(t) * r;
-        pz = a.cz + Math.sin(t) * r;
-      }
-      const shade = arng2();
-      g.fillStyle = shade < 0.5 ? "rgba(16,19,26,0.5)" : "rgba(96,104,124,0.35)";
-      const r2 = 0.5 + arng2() * 1.6;
-      g.fillRect(u(px - r2 / 2), u(pz - r2 / 2), w(r2), w(r2));
-    }
-
-    // asphalt wear: speckle + tar patches + manholes keep the road from
-    // reading as flat vector fill
-    const arng = mulberry32(777);
-    const ROADS: [number, boolean][] = [];
-    for (let i = 0; i < GRID_N; i++) ROADS.push([-WORLD_HALF + i * CELL, i % 2 === 0]);
-    for (let n = 0; n < 3400; n++) {
-      const [c, vertical] = ROADS[Math.floor(arng() * ROADS.length)];
-      const t = (arng() * 2 - 1) * (WORLD_HALF + ROAD_W / 2 - 2);
-      const o = (arng() * 2 - 1) * (ROAD_W / 2 - 0.8);
-      const px = vertical ? c + o : t;
-      const pz = vertical ? t : c + o;
-      const shade = arng();
-      g.fillStyle = shade < 0.5 ? "rgba(16,19,26,0.5)" : "rgba(96,104,124,0.35)";
-      const r = 0.5 + arng() * 1.6;
-      g.fillRect(u(px - r / 2), u(pz - r / 2), w(r), w(r));
-    }
-    // tar patch seams
-    g.strokeStyle = "rgba(14,17,23,0.65)";
-    g.lineWidth = w(0.22);
-    for (let n = 0; n < 26; n++) {
-      const [c, vertical] = ROADS[Math.floor(arng() * ROADS.length)];
-      const t = (arng() * 2 - 1) * (WORLD_HALF - 8);
-      const half = 2.2 + arng() * 3.4;
-      g.strokeRect(
-        u((vertical ? c : t) - (vertical ? half * 0.5 : half)),
-        u((vertical ? t : c) - (vertical ? half : half * 0.5)),
-        w(vertical ? half * 0.5 * 2 : half * 2),
-        w(vertical ? half * 2 : half * 0.5 * 2)
-      );
-    }
-    // manhole covers near block centers
-    g.fillStyle = "#262c3a";
-    for (let n = 0; n < 40; n++) {
-      const [c, vertical] = ROADS[Math.floor(arng() * ROADS.length)];
-      const t = -WORLD_HALF + (Math.floor(arng() * (GRID_N - 1)) + 0.5) * CELL;
-      const o = (arng() * 2 - 1) * 3.4;
-      const px = vertical ? c + o : t;
-      const pz = vertical ? t : c + o;
-      g.beginPath();
-      g.arc(u(px), u(pz), w(0.55), 0, Math.PI * 2);
-      g.fill();
-      g.strokeStyle = "#3a4152";
-      g.lineWidth = w(0.12);
-      g.stroke();
-    }
-
-    // center dashes
-    g.strokeStyle = "#8b93a6";
-    g.lineWidth = w(0.45);
-    g.setLineDash([w(3), w(4)]);
-    for (let i = 0; i < GRID_N; i++) {
-      const c = -WORLD_HALF + i * CELL;
-      g.beginPath();
-      g.moveTo(u(c), u(-WORLD_HALF - ROAD_W / 2));
-      g.lineTo(u(c), u(WORLD_HALF + ROAD_W / 2));
-      g.stroke();
-      g.beginPath();
-      g.moveTo(u(-WORLD_HALF - ROAD_W / 2), u(c));
-      g.lineTo(u(WORLD_HALF + ROAD_W / 2), u(c));
-      g.stroke();
-    }
-    // drift ring + arcs get dashed centers too
-    g.beginPath();
-    g.arc(u(0), u(0), w(RING_R), 0, Math.PI * 2);
-    g.stroke();
-    for (const a of DRIFT_ARCS) {
-      g.beginPath();
-      g.arc(u(a.cx), u(a.cz), w(ARC_R), a.a0, a.a1);
-      g.stroke();
-    }
-    g.setLineDash([]);
-
-    // enforced intersections: crosswalk + stop lines + lane arrows
-    const stop = ROAD_W / 2 + 1.6;
-    g.fillStyle = "#9aa2b5";
-    const drawArrow = (
-      x: number,
-      z: number,
-      angle: number,
-      turn: 0 | 1 | -1
-    ) => {
+    for (const parcel of this.layout.parcels) {
       g.save();
-      g.translate(u(x), u(z));
-      g.rotate(angle);
-      g.fillStyle = "#aab2c4";
-      const L = w(2.7);
-      const W = w(0.75);
-      if (turn === 0) {
-        g.fillRect(-L / 2, -W / 2, L * 0.62, W);
-        g.beginPath();
-        g.moveTo(L * 0.08, -W * 1.2);
-        g.lineTo(L * 0.56, 0);
-        g.lineTo(L * 0.08, W * 1.2);
-        g.closePath();
-        g.fill();
-      } else {
-        // bent tail + head turning left/right
-        g.fillRect(-L / 2, -W / 2, L * 0.42, W);
-        g.save();
-        g.translate(-L * 0.08, 0);
-        g.rotate(turn * 1.1);
-        g.fillRect(0, -W / 2, L * 0.34, W);
-        g.beginPath();
-        g.moveTo(L * 0.26, -W * 1.2);
-        g.lineTo(L * 0.62, 0);
-        g.lineTo(L * 0.26, W * 1.2);
-        g.closePath();
-        g.fill();
-        g.restore();
-      }
+      g.translate(u(parcel.x), v(parcel.z));
+      g.rotate(-parcel.rotation);
+      g.fillStyle = parcel.zone === "port" ? "#35434c" : "#30394a";
+      g.fillRect(-w(parcel.width / 2), -w(parcel.depth / 2), w(parcel.width), w(parcel.depth));
       g.restore();
-    };
-    let arrowK = 0;
-    for (let i = 0; i < GRID_N; i += 2) {
-      for (let j = 0; j < GRID_N; j += 2) {
-        const cx = -WORLD_HALF + i * CELL;
-        const cz = -WORLD_HALF + j * CELL;
-        // crosswalk stripes
-        for (let k = -3; k <= 3; k++) {
-          g.fillRect(u(cx + k * 1.7 - 0.6), u(cz - ROAD_W / 2 - 0.4), w(1.2), w(0.8));
-          g.fillRect(u(cx + k * 1.7 - 0.6), u(cz + ROAD_W / 2 - 0.4), w(1.2), w(0.8));
-          g.fillRect(u(cx - ROAD_W / 2 - 0.4), u(cz + k * 1.7 - 0.6), w(0.8), w(1.2));
-          g.fillRect(u(cx + ROAD_W / 2 - 0.4), u(cz + k * 1.7 - 0.6), w(0.8), w(1.2));
-        }
-        // stop lines on all four entries
-        g.fillRect(u(cx - stop - 0.5), u(cz - ROAD_W / 2 + 1), w(1), w(ROAD_W - 2));
-        g.fillRect(u(cx + stop - 0.5), u(cz - ROAD_W / 2 + 1), w(1), w(ROAD_W - 2));
-        g.fillRect(u(cx - ROAD_W / 2 + 1), u(cz - stop - 0.5), w(ROAD_W - 2), w(1));
-        g.fillRect(u(cx - ROAD_W / 2 + 1), u(cz + stop - 0.5), w(ROAD_W - 2), w(1));
-        // lane arrows before the stop lines (one straight, one turn)
-        arrowK++;
-        const turnDir = arrowK % 2 === 0 ? (1 as const) : (-1 as const);
-        const ad = stop + 3.4;
-        drawArrow(cx + ad, cz - 3.3, Math.PI, 0);
-        drawArrow(cx + ad, cz + 3.3, Math.PI, turnDir);
-        drawArrow(cx - ad, cz - 3.3, 0, turnDir);
-        drawArrow(cx - ad, cz + 3.3, 0, 0);
-        drawArrow(cx - 3.3, cz + ad, -Math.PI / 2, 0);
-        drawArrow(cx + 3.3, cz + ad, -Math.PI / 2, turnDir);
-        drawArrow(cx - 3.3, cz - ad, Math.PI / 2, turnDir);
-        drawArrow(cx + 3.3, cz - ad, Math.PI / 2, 0);
+    }
+
+    g.lineCap = "round";
+    g.lineJoin = "round";
+    for (const road of this.layout.roads) {
+      const drawPath = () => {
+        g.beginPath();
+        road.points.forEach((p, i) => i === 0 ? g.moveTo(u(p.x), v(p.z)) : g.lineTo(u(p.x), v(p.z)));
+      };
+      drawPath();
+      g.strokeStyle = "#242a36";
+      g.lineWidth = w(road.width + 2.4);
+      g.stroke();
+      drawPath();
+      g.strokeStyle = this.mapId === "yokohama" ? "#56616a" : "#596273";
+      g.lineWidth = w(road.width);
+      g.stroke();
+      drawPath();
+      g.strokeStyle = "rgba(177,188,207,.48)";
+      g.lineWidth = w(0.42);
+      g.setLineDash([]);
+      g.stroke();
+      drawPath();
+      g.strokeStyle = "rgba(178,185,199,.68)";
+      g.lineWidth = w(0.52);
+      g.setLineDash([w(3.5), w(5)]);
+      g.stroke();
+      g.setLineDash([]);
+    }
+
+    // Crosswalks only mark the major authored intersections.
+    g.fillStyle = "rgba(193,202,217,.72)";
+    for (const junction of this.layout.signalJunctions) {
+      for (let i = -3; i <= 3; i++) {
+        g.fillRect(u(junction.x + i * 1.8 - 0.55), v(junction.z - 9), w(1.1), w(1.25));
+        g.fillRect(u(junction.x + i * 1.8 - 0.55), v(junction.z + 7.8), w(1.1), w(1.25));
+        g.fillRect(u(junction.x - 9), v(junction.z + i * 1.8 - 0.55), w(1.25), w(1.1));
+        g.fillRect(u(junction.x + 7.8), v(junction.z + i * 1.8 - 0.55), w(1.25), w(1.1));
       }
     }
 
-    // cobblestone patches
-    const rng = mulberry32(4242);
-    g.fillStyle = "#4a3f38";
-    for (let i = 0; i < GRID_N; i++) {
-      for (let j = 0; j < GRID_N - 1; j++) {
-        if ((i * 3 + j) % 4 !== 1) continue;
-        const vertical = (i + j) % 2 === 0;
-        const c = -WORLD_HALF + i * CELL;
-        const mid = -WORLD_HALF + CELL * (j + 0.5);
-        const len = CELL * 0.62;
-        const cw = ROAD_W - 1.6;
-        const x = vertical ? c - cw / 2 : mid - len / 2;
-        const z = vertical ? mid - len / 2 : c - cw / 2;
-        const pw = vertical ? cw : len;
-        const ph = vertical ? len : cw;
-        this.cobbles.push({ x, z, w: pw, h: ph });
-        g.fillRect(u(x), u(z), w(pw), w(ph));
-      }
-    }
-    // cobble noise dots
-    g.fillStyle = "#5a4c42";
-    for (const c of this.cobbles) {
-      const dots = 90;
-      for (let k = 0; k < dots; k++) {
-        const px = c.x + (rng() - 0.5) * c.w;
-        const pz = c.z + (rng() - 0.5) * c.h;
-        g.fillRect(u(px), u(pz), w(0.5), w(0.5));
-      }
+    // Deterministic asphalt wear sampled along the same centerlines as driving.
+    const rng = mulberry32(this.mapId === "tokyo" ? 31337 : 9182);
+    for (let n = 0; n < 3200; n++) {
+      const road = this.layout.roads[Math.floor(rng() * this.layout.roads.length)];
+      const segment = Math.floor(rng() * (road.points.length - 1));
+      const a = road.points[segment];
+      const b = road.points[segment + 1];
+      const t = rng();
+      const length = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      const lateral = (rng() - 0.5) * Math.max(0, road.width - 2);
+      const px = a.x + (b.x - a.x) * t - (b.z - a.z) / length * lateral;
+      const pz = a.z + (b.z - a.z) * t + (b.x - a.x) / length * lateral;
+      g.fillStyle = rng() < 0.5 ? "rgba(16,19,26,.42)" : "rgba(118,126,143,.3)";
+      const size = 0.4 + rng() * 1.8;
+      g.fillRect(u(px - size / 2), v(pz - size / 2), w(size), w(size));
     }
 
     const tex = new THREE.CanvasTexture(cv);
@@ -809,33 +607,25 @@ export class World {
       w: number;
       h: number;
       d: number;
+      rotation: number;
     }[] = [];
-    const inner = CELL - ROAD_W;
-    for (let i = 0; i < GRID_N - 1; i++) {
-      for (let j = 0; j < GRID_N - 1; j++) {
-        const bx = -WORLD_HALF + CELL * i + ROAD_W / 2;
-        const bz = -WORLD_HALF + CELL * j + ROAD_W / 2;
-        const n = 1 + Math.floor(rng() * 2);
-        for (let b = 0; b < n; b++) {
-          const w = inner * (n === 1 ? 0.82 : 0.42);
-          const d = inner * (0.6 + rng() * 0.2);
-          const h = 14 + rng() * 46;
-          const x =
-            n === 1
-              ? bx + inner / 2 + (rng() - 0.5) * 4
-              : bx + inner * (0.26 + 0.5 * b) + (rng() - 0.5) * 3;
-          const z = bz + inner / 2 + (rng() - 0.5) * 4;
-          // the central plaza (ring + cloverleaf arcs) stays building-free
-          if (this.rectHitsDriftRoad(x, z, w, d)) continue;
-          placements.push({ x, z, w, d, h });
-          this.buildings.push({
-            minX: x - w / 2,
-            maxX: x + w / 2,
-            minZ: z - d / 2,
-            maxZ: z + d / 2,
-          });
-          this.buildingHeights.push(h);
-        }
+    for (const parcel of this.layout.parcels) {
+      const n = parcel.width > 20 && rng() > 0.45 ? 2 : 1;
+      for (let b = 0; b < n; b++) {
+        const localX = n === 1 ? 0 : (b === 0 ? -1 : 1) * parcel.width * 0.22;
+        const localZ = (rng() - 0.5) * parcel.depth * 0.12;
+        const c = Math.cos(parcel.rotation);
+        const s = Math.sin(parcel.rotation);
+        const x = parcel.x + localX * c - localZ * s;
+        const z = parcel.z + localX * s + localZ * c;
+        const w = parcel.width * (n === 1 ? 0.72 : 0.36);
+        const d = parcel.depth * 0.72;
+        const h = 14 + rng() * 46;
+        placements.push({ x, z, w, d, h, rotation: parcel.rotation });
+        const ex = Math.abs(c) * w / 2 + Math.abs(s) * d / 2;
+        const ez = Math.abs(s) * w / 2 + Math.abs(c) * d / 2;
+        this.buildings.push({ minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez });
+        this.buildingHeights.push(h);
       }
     }
     const inst = new THREE.InstancedMesh(geo, mat, placements.length);
@@ -843,15 +633,17 @@ export class World {
     const q = new THREE.Quaternion();
     const col = new THREE.Color();
     placements.forEach((p, i) => {
-      q.identity();
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.rotation);
       if (i % 5 === 2) {
         // reserve this spot for a real mid-rise model (dropped in when assets load)
         this.heroSpots.push(p);
+        const ex = Math.abs(Math.cos(p.rotation)) * p.w / 2 + Math.abs(Math.sin(p.rotation)) * p.d / 2;
+        const ez = Math.abs(Math.sin(p.rotation)) * p.w / 2 + Math.abs(Math.cos(p.rotation)) * p.d / 2;
         this.heroAABBs.push({
-          minX: p.x - p.w / 2,
-          maxX: p.x + p.w / 2,
-          minZ: p.z - p.d / 2,
-          maxZ: p.z + p.d / 2,
+          minX: p.x - ex,
+          maxX: p.x + ex,
+          minZ: p.z - ez,
+          maxZ: p.z + ez,
         });
         m.compose(
           new THREE.Vector3(p.x, -60, p.z),
@@ -882,41 +674,37 @@ export class World {
     const group = new THREE.Group();
     group.name = "port-warehouses-and-containers";
     const rng = mulberry32(9182);
-    const inner = CELL - ROAD_W;
-    const warehouses: { x: number; z: number; w: number; h: number; d: number }[] = [];
-    const containers: { x: number; z: number; w: number; h: number; d: number; color: number; level: number }[] = [];
+    const warehouses: { x: number; z: number; w: number; h: number; d: number; rotation: number }[] = [];
+    const containers: { x: number; z: number; w: number; h: number; d: number; color: number; level: number; rotation: number }[] = [];
     const paint = [0xe15a42, 0x32a8b4, 0xe1a83c, 0x627ead, 0x829951];
 
-    for (let i = 0; i < GRID_N - 1; i++) {
-      for (let j = 0; j < GRID_N - 1; j++) {
-        const bx = -WORLD_HALF + CELL * i + ROAD_W / 2;
-        const bz = -WORLD_HALF + CELL * j + ROAD_W / 2;
-        const cx = bx + inner / 2;
-        const cz = bz + inner / 2;
-        if ((i + j) % 3 === 0) {
-          const w = inner * 0.76;
-          const d = inner * 0.64;
-          const h = 8 + rng() * 3;
-          if (!this.rectHitsDriftRoad(cx, cz, w, d)) warehouses.push({ x: cx, z: cz, w, h, d });
-          continue;
-        }
-        for (const dx of [-9, 9]) {
-          for (const dz of [-7, 7]) {
-            const x = cx + dx;
-            const z = cz + dz;
-            const w = 8.2;
-            const d = 5.6;
-            const h = 2.7;
-            if (this.rectHitsDriftRoad(x, z, w, d)) continue;
-            const color = paint[Math.floor(rng() * paint.length)];
-            const levels = rng() > 0.72 ? 2 : 1;
-            for (let level = 0; level < levels; level++) {
-              containers.push({ x, z, w, h, d, color, level });
-            }
-            this.buildings.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
-            this.buildingHeights.push(levels * h);
-          }
-        }
+    for (const [index, parcel] of this.layout.parcels.entries()) {
+      const c = Math.cos(parcel.rotation);
+      const s = Math.sin(parcel.rotation);
+      const place = (lx: number, lz: number) => ({ x: parcel.x + lx * c - lz * s, z: parcel.z + lx * s + lz * c });
+      if (index % 2 === 0) {
+        const w = parcel.width * 0.72;
+        const d = parcel.depth * 0.66;
+        const h = 8 + rng() * 3;
+        warehouses.push({ x: parcel.x, z: parcel.z, w, h, d, rotation: parcel.rotation });
+        const ex = Math.abs(c) * w / 2 + Math.abs(s) * d / 2;
+        const ez = Math.abs(s) * w / 2 + Math.abs(c) * d / 2;
+        this.buildings.push({ minX: parcel.x - ex, maxX: parcel.x + ex, minZ: parcel.z - ez, maxZ: parcel.z + ez });
+        this.buildingHeights.push(h);
+        continue;
+      }
+      for (const dx of [-4, 4]) for (const dz of [-4, 4]) {
+        const { x, z } = place(dx, dz);
+        const w = 4.4;
+        const d = 3.1;
+        const h = 2.7;
+        const color = paint[Math.floor(rng() * paint.length)];
+        const levels = rng() > 0.72 ? 2 : 1;
+        for (let level = 0; level < levels; level++) containers.push({ x, z, w, h, d, color, level, rotation: parcel.rotation });
+        const ex = Math.abs(c) * w / 2 + Math.abs(s) * d / 2;
+        const ez = Math.abs(s) * w / 2 + Math.abs(c) * d / 2;
+        this.buildings.push({ minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez });
+        this.buildingHeights.push(levels * h);
       }
     }
 
@@ -935,6 +723,7 @@ export class World {
     const quat = new THREE.Quaternion();
     const tint = new THREE.Color();
     warehouses.forEach((b, i) => {
+      quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.rotation);
       matrix.compose(new THREE.Vector3(b.x, 0, b.z), quat, new THREE.Vector3(b.w, b.h, b.d));
       warehouseMesh.setMatrixAt(i, matrix);
       tint.setHex(i % 2 ? 0x8b999e : 0x737f86);
@@ -949,6 +738,7 @@ export class World {
     const containerMat = new THREE.MeshStandardMaterial({ map: this.makeContainerTexture(), color: 0xffffff, roughness: 0.72, metalness: 0.26 });
     const containerMesh = new THREE.InstancedMesh(containerGeo, containerMat, containers.length);
     containers.forEach((b, i) => {
+      quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.rotation);
       matrix.compose(new THREE.Vector3(b.x, b.level * b.h, b.z), quat, new THREE.Vector3(b.w, b.h, b.d));
       containerMesh.setMatrixAt(i, matrix);
       tint.setHex(b.color);
@@ -970,11 +760,9 @@ export class World {
       group.add(mesh);
     };
     const spots = [
-      { i: 0, j: 2 }, { i: 5, j: 3 }, { i: 2, j: 0 }, { i: 3, j: 5 },
+      { x: -151, z: -148 }, { x: 151, z: -142 }, { x: 157, z: 116 }, { x: -157, z: 140 },
     ];
-    for (const { i, j } of spots) {
-      const cx = -WORLD_HALF + (i + 0.5) * CELL;
-      const cz = -WORLD_HALF + (j + 0.5) * CELL;
+    for (const { x: cx, z: cz } of spots) {
       const w = 24;
       const d = 13;
       if (this.rectHitsDriftRoad(cx, cz, w, d)) continue;
@@ -1107,14 +895,22 @@ export class World {
       emissiveIntensity: 2.4,
     });
     const positions: THREE.Vector3[] = [];
-    for (let i = 0; i < GRID_N; i++) {
-      for (let j = 0; j < GRID_N - 1; j++) {
+    for (const road of this.layout.roads) for (let i = 0; i < road.points.length - 1; i++) {
+      const a = road.points[i];
+      const b = road.points[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const length = Math.hypot(dx, dz) || 1;
+      const count = Math.floor(length / 30);
+      for (let j = 1; j <= count; j++) {
         if (rng() < 0.4) continue;
-        const c = -WORLD_HALF + i * CELL;
-        const mid = -WORLD_HALF + CELL * (j + 0.5);
-        positions.push(new THREE.Vector3(c + ROAD_W / 2 + 0.8, 7, mid));
-        if (rng() < 0.5)
-          positions.push(new THREE.Vector3(mid, 7, c - ROAD_W / 2 - 0.8));
+        const t = j / (count + 1);
+        const side = j % 2 === 0 ? 1 : -1;
+        const offset = road.width / 2 + 1.6;
+        const x = a.x + dx * t - dz / length * offset * side;
+        const z = a.z + dz * t + dx / length * offset * side;
+        if (this.isOnRoad(x, z)) continue;
+        positions.push(new THREE.Vector3(x, 7, z));
       }
     }
     const poles = new THREE.InstancedMesh(poleGeo, poleMat, positions.length);
@@ -1328,10 +1124,10 @@ export class World {
       const cx = (b.minX + b.maxX) / 2;
       const cz = (b.minZ + b.maxZ) / 2;
       const cands = [
-        { d: this.distToLine(b.minX), x: b.minX - 0.5, z: cz, ry: -Math.PI / 2 },
-        { d: this.distToLine(b.maxX), x: b.maxX + 0.5, z: cz, ry: Math.PI / 2 },
-        { d: this.distToLine(b.minZ), x: cx, z: b.minZ - 0.5, ry: Math.PI },
-        { d: this.distToLine(b.maxZ), x: cx, z: b.maxZ + 0.5, ry: 0 },
+        { d: this.nearestRoadDist(b.minX - 0.5, cz), x: b.minX - 0.5, z: cz, ry: -Math.PI / 2 },
+        { d: this.nearestRoadDist(b.maxX + 0.5, cz), x: b.maxX + 0.5, z: cz, ry: Math.PI / 2 },
+        { d: this.nearestRoadDist(cx, b.minZ - 0.5), x: cx, z: b.minZ - 0.5, ry: Math.PI },
+        { d: this.nearestRoadDist(cx, b.maxZ + 0.5), x: cx, z: b.maxZ + 0.5, ry: 0 },
       ];
       cands.sort((a, bb) => a.d - bb.d);
       const c = cands[0];
@@ -1428,10 +1224,10 @@ export class World {
       const cx = (b.minX + b.maxX) / 2;
       const cz = (b.minZ + b.maxZ) / 2;
       const cands = [
-        { d: this.distToLine(b.minX), x: b.minX - 0.45, z: cz, ry: -Math.PI / 2 },
-        { d: this.distToLine(b.maxX), x: b.maxX + 0.45, z: cz, ry: Math.PI / 2 },
-        { d: this.distToLine(b.minZ), x: cx, z: b.minZ - 0.45, ry: Math.PI },
-        { d: this.distToLine(b.maxZ), x: cx, z: b.maxZ + 0.45, ry: 0 },
+        { d: this.nearestRoadDist(b.minX - 0.45, cz), x: b.minX - 0.45, z: cz, ry: -Math.PI / 2 },
+        { d: this.nearestRoadDist(b.maxX + 0.45, cz), x: b.maxX + 0.45, z: cz, ry: Math.PI / 2 },
+        { d: this.nearestRoadDist(cx, b.minZ - 0.45), x: cx, z: b.minZ - 0.45, ry: Math.PI },
+        { d: this.nearestRoadDist(cx, b.maxZ + 0.45), x: cx, z: b.maxZ + 0.45, ry: 0 },
       ];
       cands.sort((a, bb) => a.d - bb.d);
       const c = cands[0];
@@ -1666,10 +1462,7 @@ export class World {
     const eul = new THREE.Euler();
     const dirs = ["left", "right", "up"] as const;
     let k = 0;
-    for (let i = 0; i < GRID_N; i += 2) {
-      for (let j = 0; j < GRID_N; j += 2) {
-        const cx = -WORLD_HALF + i * CELL;
-        const cz = -WORLD_HALF + j * CELL;
+    for (const { x: cx, z: cz } of this.layout.signalJunctions) {
         const px = cx + ROAD_W / 2 + 1.2;
         const pz = cz + ROAD_W / 2 + 1.2;
         // guide sign for the x-road, mounted on the light pole below the heads
@@ -1699,7 +1492,6 @@ export class World {
           m.compose(new THREE.Vector3(x, 1.15, z), q, new THREE.Vector3(1, 1, 1));
           this.chevronMats.push(m.clone());
         }
-      }
     }
     for (const d of dirs) {
       const list = per[d];
@@ -1764,13 +1556,17 @@ export class World {
     });
     for (let k = 0; k < 12; k++) {
       // scatter on road segments
-      const i = Math.floor(rng() * GRID_N);
-      const vertical = rng() < 0.5;
-      const c = -WORLD_HALF + i * CELL;
-      const along = (rng() - 0.5) * (CELL * (GRID_N - 2));
-      const off = (rng() - 0.5) * (ROAD_W - 6);
-      const x = vertical ? c + off : along;
-      const z = vertical ? along : c + off;
+      const road = this.layout.roads[Math.floor(rng() * this.layout.roads.length)];
+      const segment = Math.floor(rng() * (road.points.length - 1));
+      const a = road.points[segment];
+      const b = road.points[segment + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const length = Math.hypot(dx, dz) || 1;
+      const t = rng();
+      const off = (rng() - 0.5) * (road.width - 6);
+      const x = a.x + dx * t - dz / length * off;
+      const z = a.z + dz * t + dx / length * off;
       const r = 2.2 + rng() * 1.8;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.rotation.x = -Math.PI / 2;
@@ -1832,57 +1628,32 @@ export class World {
     // traffic keeps right: dir=+1 rides at -LANE, dir=-1 at +LANE; the ramp
     // sits IN a lane and its slope follows that lane's travel direction
     const LANE = ROAD_W / 4;
-    // two ramps on the drift ring itself — launch off the sweepers
-    for (const deg of [100, 280]) {
-      const t = (deg * Math.PI) / 180;
-      const x = Math.cos(t) * RING_R;
-      const z = Math.sin(t) * RING_R;
-      const dx = -Math.sin(t); // counter-clockwise tangent
-      const dz = Math.cos(t);
+    while (this.ramps.length < 6 && guard++ < 120) {
+      const road = this.layout.roads[Math.floor(rng() * this.layout.roads.length)];
+      const segment = Math.floor(rng() * (road.points.length - 1));
+      const a = road.points[segment];
+      const b = road.points[segment + 1];
+      const segX = b.x - a.x;
+      const segZ = b.z - a.z;
+      const segLength = Math.hypot(segX, segZ) || 1;
+      const along = 0.2 + rng() * 0.6;
+      const side = rng() < 0.5 ? -1 : 1;
+      const x = a.x + segX * along - segZ / segLength * side * LANE;
+      const z = a.z + segZ * along + segX / segLength * side * LANE;
+      const key = `${road.id},${segment},${Math.round(along * 5)}`;
+      if (placed.has(key)) continue;
+      placed.add(key);
+      const direction = side === -1 ? 1 : -1;
+      const dx = segX / segLength * direction;
+      const dz = segZ / segLength * direction;
       const rotY = Math.atan2(-dx, -dz);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, 0.02, z);
       mesh.rotation.y = rotY;
       g.add(mesh);
-      this.ramps.push({ x, z, w: 7.2, h: 7.2, angle: rotY, dx, dz });
-    }
-    while (this.ramps.length < 6 && guard++ < 60) {
-      const i = Math.floor(rng() * GRID_N);
-      const j = Math.floor(rng() * (GRID_N - 1));
-      const vertical = rng() < 0.5;
-      const c = -WORLD_HALF + i * CELL;
-      const mid = -WORLD_HALF + CELL * (j + 0.5);
-      const along = mid + (rng() - 0.5) * 14;
-      const key = `${i},${j},${vertical}`;
-      if (placed.has(key)) continue;
-      placed.add(key);
-      const side = rng() < 0.5 ? -1 : 1; // which lane (which travel direction)
-      // x-road: lane z = c + side*LANE, travel dir = side===-1 ? +x : -x
-      const x = vertical ? c + side * LANE : along;
-      const z = vertical ? along : c + side * LANE;
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(x, 0.02, z);
-      // geometry runs 7m along local z, 6.4m wide along local x; launch dir
-      // must equal the lane's travel direction: (-sin rotY, -cos rotY)
-      // x-road: dir (t,0) -> rotY = atan2(-t, 0); z-road: dir (0,t) -> rotY = atan2(0,-t)
-      const travel = side === -1 ? 1 : -1;
-      const rotY = vertical
-        ? (travel === 1 ? Math.PI : 0)
-        : (travel === 1 ? -Math.PI / 2 : Math.PI / 2);
-      mesh.rotation.y = rotY;
-      g.add(mesh);
-      const dx = -Math.sin(rotY);
-      const dz = -Math.cos(rotY);
-      this.ramps.push({
-        x,
-        z,
-        // AABB: along-travel extent 7m, across-travel extent 6.4m
-        w: vertical ? 6.6 : 7,
-        h: vertical ? 7 : 6.6,
-        angle: rotY,
-        dx,
-        dz,
-      });
+      const extentX = Math.abs(Math.cos(rotY)) * 3.3 + Math.abs(Math.sin(rotY)) * 3.5;
+      const extentZ = Math.abs(Math.sin(rotY)) * 3.3 + Math.abs(Math.cos(rotY)) * 3.5;
+      this.ramps.push({ x, z, w: extentX * 2, h: extentZ * 2, angle: rotY, dx, dz });
     }
     return g;
   }
@@ -1939,69 +1710,40 @@ export class World {
   private buildLights(): THREE.Group {
     const g = new THREE.Group();
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x39404f });
-    for (let i = 0; i < GRID_N; i += 2) {
-      for (let j = 0; j < GRID_N; j += 2) {
-        const cx = -WORLD_HALF + i * CELL;
-        const cz = -WORLD_HALF + j * CELL;
-        // one pole at corner, two 3-lamp heads facing each axis road
-        const pole = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.14, 0.18, 6.4, 6),
-          poleMat
-        );
-        pole.position.set(cx + ROAD_W / 2 + 1.2, 3.2, cz + ROAD_W / 2 + 1.2);
-        g.add(pole);
-        const headX = this.makeLightHead("x");
-        headX.group.position.set(
-          cx + ROAD_W / 2 + 1.2,
-          6.7,
-          cz + ROAD_W / 2 + 0.4
-        );
-        g.add(headX.group);
-        const headZ = this.makeLightHead("z");
-        headZ.group.position.set(
-          cx + ROAD_W / 2 + 0.4,
-          6.7,
-          cz + ROAD_W / 2 + 1.2
-        );
-        g.add(headZ.group);
-        // glowing stop-line strips on each approach: red/yellow paint the road
-        const stop = ROAD_W / 2 + 1.6;
-        const stripGeo = new THREE.PlaneGeometry(ROAD_W - 2, 1.5);
-        const strips: THREE.MeshBasicMaterial[] = [];
-        const stripDefs: [number, number, number][] = [
-          [cx + stop, cz, Math.PI / 2],
-          [cx - stop, cz, Math.PI / 2],
-          [cx, cz + stop, 0],
-          [cx, cz - stop, 0],
-        ];
-        for (const [sx, sz, rot] of stripDefs) {
-          const sm = new THREE.MeshBasicMaterial({
-            color: 0xff2a2a,
-            transparent: true,
-            opacity: 0,
-            depthWrite: false,
-          });
-          const strip = new THREE.Mesh(stripGeo, sm);
-          strip.rotation.x = -Math.PI / 2;
-          strip.rotation.z = rot;
-          strip.position.set(sx, 0.04, sz);
-          g.add(strip);
-          strips.push(sm);
-        }
-        const light: LightVisual = {
-          cx,
-          cz,
-          state: 0,
-          timer: ((i + j) * 1.7) % ((LIGHT_CYCLE + LIGHT_YELLOW) * 2),
-          phaseId: 0,
-          strips,
-          lampsX: headX.mats,
-          lampsZ: headZ.mats,
-        };
-        this.lights.push(light);
-        this.lightGrid.set(`${i},${j}`, light);
+    this.layout.signalJunctions.forEach(({ x: cx, z: cz }, index) => {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 6.4, 6), poleMat);
+      pole.position.set(cx + ROAD_W / 2 + 1.2, 3.2, cz + ROAD_W / 2 + 1.2);
+      g.add(pole);
+      const headX = this.makeLightHead("x");
+      headX.group.position.set(cx + ROAD_W / 2 + 1.2, 6.7, cz + ROAD_W / 2 + 0.4);
+      g.add(headX.group);
+      const headZ = this.makeLightHead("z");
+      headZ.group.position.set(cx + ROAD_W / 2 + 0.4, 6.7, cz + ROAD_W / 2 + 1.2);
+      g.add(headZ.group);
+      const stop = ROAD_W / 2 + 1.6;
+      const stripGeo = new THREE.PlaneGeometry(ROAD_W - 2, 1.5);
+      const strips: THREE.MeshBasicMaterial[] = [];
+      const stripDefs: [number, number, number][] = [
+        [cx + stop, cz, Math.PI / 2], [cx - stop, cz, Math.PI / 2],
+        [cx, cz + stop, 0], [cx, cz - stop, 0],
+      ];
+      for (const [sx, sz, rot] of stripDefs) {
+        const sm = new THREE.MeshBasicMaterial({ color: 0xff2a2a, transparent: true, opacity: 0, depthWrite: false });
+        const strip = new THREE.Mesh(stripGeo, sm);
+        strip.rotation.x = -Math.PI / 2;
+        strip.rotation.z = rot;
+        strip.position.set(sx, 0.04, sz);
+        g.add(strip);
+        strips.push(sm);
       }
-    }
+      const light: LightVisual = {
+        cx, cz, state: 0,
+        timer: (index * 1.7) % ((LIGHT_CYCLE + LIGHT_YELLOW) * 2),
+        phaseId: 0, strips, lampsX: headX.mats, lampsZ: headZ.mats,
+      };
+      this.lights.push(light);
+      this.lightGrid.set(`${index}`, light);
+    });
     return g;
   }
 

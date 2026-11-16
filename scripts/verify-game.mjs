@@ -109,6 +109,16 @@ const portMapButton = page.locator('[data-a="map:yokohama"]');
 if (await portMapButton.count() !== 1) fail("Yokohama Port map is missing from the title screen");
 const defaultMap = await page.evaluate(() => window.__gameDebug?.mapId?.());
 if (defaultMap !== "tokyo") fail("A legacy save did not default to Neon Tokyo");
+const hasRoadProbe = await page.evaluate(() => typeof window.__gameDebug?.roadProbe === "function");
+if (!hasRoadProbe) fail("World is not exposing the authored road query for verification");
+const tokyoRoadProbe = await page.evaluate(() => ({
+  onRoad: window.__gameDebug.roadProbe(8, -146).onRoad,
+  offRoad: window.__gameDebug.roadProbe(30, -100).onRoad,
+}));
+if (!tokyoRoadProbe.onRoad || tokyoRoadProbe.offRoad) fail("Tokyo road query does not match its authored layout");
+const tokyoBounds = await page.evaluate(() => window.__gameDebug.roadProbe(0, 0).bounds);
+const clamped = await page.evaluate(() => window.__gameDebug.resolveBoundary(220, -220));
+if (clamped.x !== tokyoBounds.maxX || clamped.z !== tokyoBounds.minZ) fail("World collision did not clamp the car to authored map bounds");
 await page.locator('[data-a="map:tokyo"]').click();
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("Neon Tokyo could not be selected");
 if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port-only props leaked into Neon Tokyo");

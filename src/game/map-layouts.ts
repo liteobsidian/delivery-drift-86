@@ -65,6 +65,12 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
       { x: 80, z: 10, width: 18, depth: 18, rotation: 0, zone: "downtown" },
       { x: -90, z: 30, width: 18, depth: 18, rotation: -0.08, zone: "downtown" },
       { x: -30, z: 90, width: 18, depth: 18, rotation: 0.08, zone: "downtown" },
+      { x: -14, z: -110, width: 18, depth: 18, rotation: 0, zone: "downtown" },
+      { x: 74, z: -94, width: 18, depth: 18, rotation: 0, zone: "downtown" },
+      { x: 74, z: 106, width: 18, depth: 18, rotation: 0, zone: "downtown" },
+      { x: -102, z: -86, width: 18, depth: 18, rotation: 0, zone: "downtown" },
+      { x: -94, z: 82, width: 18, depth: 18, rotation: 0, zone: "downtown" },
+      { x: 114, z: -22, width: 18, depth: 18, rotation: 0, zone: "downtown" },
     ],
   },
   yokohama: {
@@ -104,6 +110,14 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
       { x: 0, z: -50, width: 18, depth: 18, rotation: -0.08, zone: "port" },
       { x: 40, z: 20, width: 18, depth: 18, rotation: 0.08, zone: "port" },
       { x: -50, z: 20, width: 18, depth: 18, rotation: -0.08, zone: "port" },
+      { x: -6, z: -142, width: 18, depth: 18, rotation: 0, zone: "port" },
+      { x: 114, z: -30, width: 18, depth: 18, rotation: 0, zone: "port" },
+      { x: -78, z: 90, width: 18, depth: 18, rotation: 0, zone: "port" },
+      { x: -118, z: -70, width: 18, depth: 18, rotation: 0, zone: "port" },
+      { x: 74, z: -110, width: 18, depth: 18, rotation: 0, zone: "port" },
+      { x: 58, z: 90, width: 18, depth: 18, rotation: 0, zone: "port" },
+      { x: 66, z: 26, width: 18, depth: 18, rotation: 0, zone: "port" },
+      { x: 138, z: -94, width: 18, depth: 18, rotation: 0, zone: "port" },
     ],
   },
 };
@@ -129,19 +143,20 @@ export function cityLayoutFor(id: MapId): CityLayout { return CITY_LAYOUTS[id]; 
 
 export function distanceToRoad(layout: CityLayout, x: number, z: number): number {
   let nearest = Number.POSITIVE_INFINITY;
-  for (const roadPath of layout.roads) {
-    for (let i = 0; i < roadPath.points.length - 1; i++) {
-      const distance = pointSegmentDistance(x, z, roadPath.points[i], roadPath.points[i + 1]);
-      if (distance < nearest) nearest = distance;
-    }
+  for (const roadPath of layout.roads) nearest = Math.min(nearest, distanceToRoadPath(roadPath, x, z));
+  return nearest;
+}
+
+export function distanceToRoadPath(roadPath: RoadPath, x: number, z: number): number {
+  let nearest = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < roadPath.points.length - 1; i++) {
+    nearest = Math.min(nearest, pointSegmentDistance(x, z, roadPath.points[i], roadPath.points[i + 1]));
   }
   return nearest;
 }
 
 export function isOnLayoutRoad(layout: CityLayout, x: number, z: number): boolean {
-  return layout.roads.some((roadPath) => roadPath.width / 2 >=
-    roadPath.points.slice(0, -1).reduce((nearest, point, i) =>
-      Math.min(nearest, pointSegmentDistance(x, z, point, roadPath.points[i + 1])), Number.POSITIVE_INFINITY));
+  return layout.roads.some((roadPath) => distanceToRoadPath(roadPath, x, z) <= roadPath.width / 2);
 }
 
 export function sampleRoadPoint(layout: CityLayout, rng: () => number): CityPoint {

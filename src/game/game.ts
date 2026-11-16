@@ -245,6 +245,16 @@ export class Game {
     // verification hook (not user-facing)
     (window as unknown as { __gameDebug: unknown }).__gameDebug = {
       mapId: () => this.world.mapId,
+      roadProbe: (x: number, z: number) => ({
+        onRoad: this.world.isOnRoad(x, z),
+        nearestRoadDist: this.world.nearestRoadDist(x, z),
+        bounds: { ...this.world.layout.bounds },
+      }),
+      resolveBoundary: (x: number, z: number) => {
+        const pos = new THREE.Vector3(x, 0, z);
+        this.world.collideBuildings(pos, 1, new THREE.Vector3());
+        return { x: pos.x, z: pos.z };
+      },
       mode: () => this.mode,
       nitroFuel: () => this.nitroFuel,
       finishMode: () => { if (this.mode !== "delivery") this.completeOrder(true, "Тестовый финиш"); },

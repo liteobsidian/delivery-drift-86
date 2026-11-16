@@ -69,13 +69,13 @@
 
 **Interfaces:** consumes Task 1 `cityLayoutFor`, `isOnLayoutRoad`, and `CityLayout`.
 
-- [ ] **Step 1: Add tests for road widths, lot rotation, and boundary collision behavior**
-- [ ] **Step 2: Run focused tests and confirm the new world integration assertions fail**
-- [ ] **Step 3: Draw asphalt and road markings from road polylines; use rounded joins/caps and deterministic road wear**
-- [ ] **Step 4: Make `World.isOnRoad`/`nearestRoadDist`, bounds, and parcel collision use the layout; move Tokyo drift ring into its authored road paths**
-- [ ] **Step 5: Place Tokyo buildings and Yokohama warehouses/containers inside authored parcels; retain existing district materials and props**
-- [ ] **Step 6: Run `npm run test:maps` and `npm run build`; confirm tests pass**
-- [ ] **Step 7: Commit the world integration**
+- [x] **Step 1: Add tests for road widths, lot rotation, and boundary collision behavior**
+- [x] **Step 2: Run focused tests and confirm the new world integration assertions fail**
+- [x] **Step 3: Draw asphalt and road markings from road polylines; use rounded joins/caps and deterministic road wear**
+- [x] **Step 4: Make `World.isOnRoad`/`nearestRoadDist`, bounds, and parcel collision use the layout; move Tokyo drift ring into its authored road paths**
+- [x] **Step 5: Place Tokyo buildings and Yokohama warehouses/containers inside authored parcels; retain existing district materials and props**
+- [x] **Step 6: Run `npm run test:maps` and `npm run build`; confirm tests pass**
+- [x] **Step 7: Commit the world integration**
 
 ### Task 3: Route Traffic, Orders, Signals, and Minimap From the Same Data
 
