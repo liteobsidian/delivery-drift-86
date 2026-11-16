@@ -12,6 +12,7 @@ export interface InputState {
   brake: number; // 0..1
   reverse: number; // 0..1, used by keyboard S and the joystick downstroke
   handbrake: boolean;
+  nitro: boolean;
 }
 
 const JOY_RADIUS = 52; // px of finger travel for full deflection
@@ -19,7 +20,7 @@ const JOY_DEAD = 8; // px deadzone around center
 
 export class Input {
   keys = new Set<string>();
-  state: InputState = { steer: 0, throttle: 0, brake: 0, reverse: 0, handbrake: false };
+  state: InputState = { steer: 0, throttle: 0, brake: 0, reverse: 0, handbrake: false, nitro: false };
 
   onPause: (() => void) | null = null;
   onMute: (() => void) | null = null;
@@ -35,6 +36,7 @@ export class Input {
   private brakeTouch: number | null = null;
   private hbTouch: number | null = null;
   private hb = false;
+  private nitroTouch: number | null = null;
 
   readonly isTouch: boolean;
 
@@ -74,6 +76,7 @@ export class Input {
     this.joyBrake = 0;
     this.brakeTouch = null;
     this.hbTouch = null;
+    this.nitroTouch = null;
     this.hb = false;
     this.joyKnob?.style.setProperty("transform", "translate(0px, 0px)");
   };
@@ -98,6 +101,7 @@ export class Input {
     this.state.brake = brake;
     this.state.reverse = reverse;
     this.state.handbrake = k.has("Space") || this.hb;
+    this.state.nitro = k.has("ShiftLeft") || k.has("ShiftRight") || this.nitroTouch !== null;
     return this.state;
   }
 
@@ -127,6 +131,10 @@ export class Input {
     hb.textContent = "ДРИФТ";
     root.appendChild(brake);
     root.appendChild(hb);
+    const nitro = document.createElement("div");
+    nitro.id = "tc-nitro";
+    nitro.textContent = "НИТРО";
+    root.appendChild(nitro);
 
     const onPointer = (
       el: HTMLElement,
@@ -236,6 +244,12 @@ export class Input {
         this.hb = false;
         hb.classList.remove("on");
       }
+    );
+    onPointer(
+      nitro,
+      (id) => { this.nitroTouch = id; nitro.classList.add("on"); },
+      undefined,
+      () => { this.nitroTouch = null; nitro.classList.remove("on"); }
     );
 
     document.getElementById("game-root")?.appendChild(root);

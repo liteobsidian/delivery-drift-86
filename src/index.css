@@ -814,3 +814,51 @@ html, body, #root {
 .activity-card b { color: #00e5ff; font-size: 13px; letter-spacing: 1px; }
 .activity-card span { color: #aab4d8; font-size: 11px; }
 .activity-card:hover { border-color: #00e5ff; background: #222f49; }
+
+.hud-nitro {
+  width: 142px;
+  margin-top: 5px;
+  color: #55eaff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-shadow: 0 1px 4px #07101a;
+}
+
+.nitro-track {
+  display: block;
+  height: 6px;
+  margin-top: 3px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(17, 25, 46, 0.9);
+  border: 1px solid rgba(85, 234, 255, 0.5);
+}
+
+.nitro-track i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: linear-gradient(90deg, #00b7ff, #9df7ff);
+  box-shadow: 0 0 8px #00d5ff;
+}
+
+#tc-nitro {
+  position: absolute;
+  right: max(28px, env(safe-area-inset-right));
+  bottom: calc(max(244px, 46dvh) + env(safe-area-inset-bottom));
+  width: 66px;
+  height: 66px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid rgba(85, 234, 255, 0.7);
+  border-radius: 50%;
+  background: rgba(0, 190, 255, 0.16);
+  color: #9df7ff;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+#tc-nitro.on { background: rgba(0, 190, 255, 0.52); box-shadow: 0 0 18px rgba(0, 213, 255, 0.65); }
