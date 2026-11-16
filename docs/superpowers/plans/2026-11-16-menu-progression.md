@@ -32,10 +32,10 @@
 
 **Files:** `src/game/retention.ts`, `src/game/config.ts`, `scripts/verify-game.mjs`.
 
-- [ ] Add `isMapUnlocked(mapId, deliveries, selectedMap)` and `mapUnlocksAt(mapId)`; Tokyo is always open, Yokohama opens at 8 deliveries or when it is the profile's already-selected map.
-- [ ] Add UTC-week event state helpers beside weekly progress storage: read whether this week's event was seen and mark it seen.
-- [ ] Extend browser smoke checks for 0/7/8 delivery boundaries, legacy Yokohama access, and same-week event persistence.
-- [ ] Run `npm run build`, `npm run verify`, and `git diff --check`.
+- [x] Add `mapAccessFor(mapId, deliveries, selectedMap)`; Tokyo is always open, Yokohama opens at 8 deliveries or when it is the profile's already-selected map.
+- [x] Add UTC-week event state helpers beside weekly progress storage: read whether this week's event was seen and mark it seen.
+- [x] Extend browser smoke checks for 0/7/8 delivery boundaries, legacy Yokohama access, and same-week event persistence.
+- [x] Run `npm run build`, `npm run verify`, and `git diff --check`.
 
 ### Task 2: Focused Home, Activity, Track, and Profile Screens
 

@@ -30,7 +30,7 @@ import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { carThumb, createShowroom } from "./showroom";
 import { LEVELS, courierLevel } from "./config";
-import { completeWeeklyRoute, loadRecords, loadWeeklyProgress, saveRecord, utcWeekKey, weeklyRoutes } from "./retention";
+import { completeWeeklyRoute, loadRecords, loadWeeklyProgress, mapAccessFor, markWeeklyEventSeen, saveRecord, utcWeekKey, weeklyEventSeen, weeklyRoutes } from "./retention";
 
 const SD = ROAD_W / 2 + 1.6; // stop-line distance from intersection center
 
@@ -255,6 +255,9 @@ export class Game {
       weekKey: (date?: string) => utcWeekKey(date ? new Date(date) : new Date()),
       finishWeekly: () => { if (this.order?.weeklyId) this.completeOrder(true, "Тестовый финиш"); },
       weeklyProgress: () => loadWeeklyProgress(),
+      mapAccessFor,
+      weeklyEventSeen: (date?: string) => weeklyEventSeen(date ? new Date(date) : new Date()),
+      markWeeklyEventSeen: (date?: string) => markWeeklyEventSeen(date ? new Date(date) : new Date()),
       portVisuals: () => Boolean(
         this.world.group.getObjectByName("port-warehouses-and-containers") &&
         this.world.group.getObjectByName("port-gantry-cranes")

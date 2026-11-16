@@ -123,6 +123,18 @@ if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("
 if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port props remained after switching back to Tokyo");
 await page.locator('[data-a="map:yokohama"]').click();
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "yokohama") fail("Yokohama could not be reselected after returning to Tokyo");
+const hasMapAccess = await page.evaluate(() => typeof window.__gameDebug?.mapAccessFor === "function");
+if (!hasMapAccess) fail("Map unlock rules are missing");
+const accessCases = await page.evaluate(() => {
+  const check = window.__gameDebug.mapAccessFor;
+  return [check("tokyo", 0, "tokyo"), check("yokohama", 0, "tokyo"), check("yokohama", 7, "tokyo"), check("yokohama", 8, "tokyo"), check("yokohama", 0, "yokohama")];
+});
+if (!accessCases[0].unlocked || accessCases[1].unlocked || accessCases[1].deliveriesRemaining !== 8 || accessCases[2].deliveriesRemaining !== 1 || !accessCases[3].unlocked || !accessCases[4].unlocked) fail("Map unlock thresholds or legacy access are incorrect");
+const hasEventState = await page.evaluate(() => typeof window.__gameDebug?.weeklyEventSeen === "function" && typeof window.__gameDebug?.markWeeklyEventSeen === "function");
+if (!hasEventState) fail("Weekly event seen state helpers are missing");
+await page.evaluate(() => window.__gameDebug.markWeeklyEventSeen("2026-11-16T12:00:00Z"));
+if (!(await page.evaluate(() => window.__gameDebug.weeklyEventSeen("2026-11-17T12:00:00Z")))) fail("Weekly event dismissal was not kept for the same UTC week");
+if (await page.evaluate(() => window.__gameDebug.weeklyEventSeen("2026-11-23T00:00:00Z"))) fail("Weekly event dismissal leaked into the next UTC week");
 const weeklyIds = await page.evaluate(() => window.__gameDebug?.weekly?.());
 if (!Array.isArray(weeklyIds) || weeklyIds.length !== 3) fail("The weekly route set is missing");
 const routeData = await page.evaluate(() => window.__gameDebug?.weeklyRoutes?.());
