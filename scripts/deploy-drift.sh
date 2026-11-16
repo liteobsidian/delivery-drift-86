@@ -49,7 +49,7 @@ sftp -b "$temp_dir/upload.sftp" -P 22 \
 
 verify_file() {
   local file="$1" url="$2"
-  curl -fsS --compressed --connect-timeout 10 --retry 3 --max-time 30 "$url" -o "$temp_dir/served"
+  curl -fsS --compressed --connect-timeout 10 --retry 3 --retry-max-time 150 --max-time 90 "$url" -o "$temp_dir/served"
   if ! cmp -s "$file" "$temp_dir/served"; then
     echo "HTTPS response for $url differs from this build." >&2
     exit 1
