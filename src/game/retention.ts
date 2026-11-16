@@ -3,6 +3,7 @@ import { CELL, GRID_N, WORLD_HALF } from "./config";
 
 const RECORD_KEY = "delivery-drift-86-records-v1";
 const WEEK_KEY = "delivery-drift-86-weekly-v1";
+const WEEKLY_EVENT_KEY = "delivery-drift-86-weekly-event-v1";
 export type RecordMode = "delivery" | "drift-trial" | "time-attack";
 export interface WeeklyRoute {
   id: string;
@@ -11,6 +12,13 @@ export interface WeeklyRoute {
   timeLimit: number;
 }
 export interface WeeklyProgress { week: string; completed: string[] }
+export interface MapAccess { unlocked: boolean; deliveriesRemaining: number }
+
+export function mapAccessFor(mapId: MapId, deliveries: number, selectedMap: MapId): MapAccess {
+  const threshold = mapId === "tokyo" ? 0 : 8;
+  const unlocked = deliveries >= threshold || selectedMap === mapId;
+  return { unlocked, deliveriesRemaining: unlocked ? 0 : threshold - Math.max(0, deliveries) };
+}
 
 export function utcWeekKey(date = new Date()): string {
   const monday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -70,4 +78,14 @@ export function completeWeeklyRoute(id: string, date = new Date()): WeeklyProgre
   if (!progress.completed.includes(id)) progress.completed.push(id);
   try { localStorage.setItem(WEEK_KEY, JSON.stringify(progress)); } catch { /* private browsing */ }
   return progress;
+}
+
+export function weeklyEventSeen(date = new Date()): boolean {
+  try { return localStorage.getItem(WEEKLY_EVENT_KEY) === utcWeekKey(date); }
+  catch { return false; }
+}
+
+export function markWeeklyEventSeen(date = new Date()): void {
+  try { localStorage.setItem(WEEKLY_EVENT_KEY, utcWeekKey(date)); }
+  catch { /* private browsing */ }
 }

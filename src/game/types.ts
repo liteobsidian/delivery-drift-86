@@ -8,6 +8,9 @@ export interface Vec3Like {
 
 export type GameScreen =
   | "title"
+  | "play"
+  | "tracks"
+  | "profile"
   | "garage"
   | "cars"
   | "orders"
@@ -15,8 +18,7 @@ export type GameScreen =
   | "paused"
   | "result"
   | "settings"
-  | "achievements"
-  | "records";
+  | "achievements";
 
 export type MapId = "tokyo" | "yokohama";
 
