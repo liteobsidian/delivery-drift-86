@@ -8,7 +8,7 @@ import {
   LIGHT_YELLOW,
 } from "./config";
 import type { MapId } from "./types";
-import { cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad } from "./map-layouts";
+import { cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad, worldLengthToTexturePixels, worldToTextureCoordinate } from "./map-layouts";
 
 /** Central drift ring (radius) at map center. */
 export const RING_R = 44;
@@ -508,9 +508,9 @@ export class World {
     const cv = document.createElement("canvas");
     cv.width = cv.height = S;
     const g = cv.getContext("2d")!;
-    const u = (v: number) => ((v - this.layout.bounds.minX) / (this.layout.bounds.maxX - this.layout.bounds.minX)) * S;
-    const v = (z: number) => ((z - this.layout.bounds.minZ) / (this.layout.bounds.maxZ - this.layout.bounds.minZ)) * S;
-    const w = (value: number) => value / (this.layout.bounds.maxX - this.layout.bounds.minX) * S;
+    const u = (x: number) => worldToTextureCoordinate(x, GS, S);
+    const v = (z: number) => worldToTextureCoordinate(z, GS, S);
+    const w = (value: number) => worldLengthToTexturePixels(value, GS, S);
 
     g.fillStyle = this.mapId === "yokohama" ? "#424c55" : "#414a5c";
     g.fillRect(0, 0, S, S);

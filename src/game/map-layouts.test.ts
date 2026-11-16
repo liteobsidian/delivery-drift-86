@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { CITY_LAYOUTS, cityLayoutFor, distanceToRoad, isOnLayoutRoad, parcelClearOfRoads, sampleRoadPoint } from "./map-layouts";
+import { CITY_LAYOUTS, cityLayoutFor, distanceToRoad, isOnLayoutRoad, parcelClearOfRoads, sampleRoadPoint, worldLengthToTexturePixels, worldToTextureCoordinate } from "./map-layouts";
 
 describe("hand-authored city layouts", () => {
+  it("maps world geometry into the same ground-plane scale used by road queries", () => {
+    const textureSize = 2048;
+    const groundSize = 436;
+    expect(worldToTextureCoordinate(150, groundSize, textureSize)).toBeCloseTo((368 / 436) * textureSize);
+    expect(worldToTextureCoordinate(-groundSize / 2, groundSize, textureSize)).toBe(0);
+    expect(worldLengthToTexturePixels(14, groundSize, textureSize)).toBeCloseTo((14 / 436) * textureSize);
+  });
+
   it("keeps the shared car spawn point on a road in both districts", () => {
     expect(isOnLayoutRoad(cityLayoutFor("tokyo"), 0, 0)).toBe(true);
     expect(isOnLayoutRoad(cityLayoutFor("yokohama"), 0, 0)).toBe(true);

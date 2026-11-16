@@ -889,3 +889,60 @@ html, body, #root {
   .title-buttons { gap: 6px; margin-bottom: 8px; }
   .title-buttons > .btn { padding: 8px; }
 }
+
+.home-box { max-width: 820px; }
+.home-box .logo { white-space: nowrap; font-size: clamp(34px, 6vw, 58px); }
+.home-box .tagline { margin: 0 0 18px; }
+.home-place { display: flex; justify-content: center; align-items: center; gap: 9px; margin: 0 auto 16px; color: #d8e5ff; font-size: 13px; }
+.home-place-pin { color: #00e5ff; text-shadow: 0 0 9px #00e5ff; }
+.home-place i { color: #73809f; font-style: normal; }
+.home-actions { display: grid; gap: 10px; margin: 0 auto 18px; max-width: 400px; }
+.home-play { width: 100%; min-height: 58px; font-size: 18px; letter-spacing: 2px; }
+.home-play span { margin-left: 10px; font-size: 22px; }
+.home-links { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.home-links .btn { min-width: 0; padding: 10px 8px; font-size: 12px; }
+.home-career { display: flex; justify-content: center; flex-wrap: wrap; gap: 20px; color: #aeb8d7; font-size: 12px; }
+.weekly-event-shade { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; padding: 18px; background: rgba(3, 6, 14, .72); backdrop-filter: blur(7px); }
+.weekly-event-card { width: min(420px, 100%); padding: 24px; color: #e8ecff; text-align: left; border: 1px solid rgba(0, 229, 255, .5); border-radius: 16px; background: linear-gradient(145deg, #171d35, #0b1020); box-shadow: 0 18px 70px rgba(0,0,0,.65), 0 0 32px rgba(0,229,255,.12); }
+.weekly-event-card h2 { margin: 10px 0; font-size: 25px; }
+.weekly-event-card p { color: #aab4d8; line-height: 1.5; }
+.weekly-event-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }
+.weekly-event-actions .btn { min-width: 112px; }
+
+.journey-panel { width: min(740px, 94vw); max-height: 90vh; overflow-y: auto; text-align: center; }
+.journey-panel h2 { margin: 6px 0; }
+.journey-eyebrow { color: #00dffc; font-size: 10px; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; }
+.journey-panel > .dim { margin: 8px 0 18px; }
+.journey-activities { grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 auto 18px; max-width: 690px; }
+.journey-activities .activity-card { min-height: 200px; justify-content: flex-end; align-items: flex-start; padding: 18px; text-align: left; background-position: center; background-size: cover; }
+.journey-activities .activity-card b { font-size: 15px; }
+.journey-activities .activity-card span { font-size: 12px; }
+.journey-activities .activity-card i { color: #00e5ff; font-size: 11px; font-style: normal; margin-top: auto; }
+.journey-activities .activity-card[data-a="activity:delivery"] { background-image: linear-gradient(0deg, rgba(7,12,22,.98), rgba(7,12,22,.2)), radial-gradient(ellipse at 55% 20%, #3e546f, #10182a 70%); }
+.journey-activities .activity-card[data-a="activity:drift-trial"] { background-image: linear-gradient(0deg, rgba(7,12,22,.98), rgba(7,12,22,.2)), radial-gradient(ellipse at 45% 20%, #853a77, #17152d 70%); }
+.journey-activities .activity-card[data-a="activity:time-attack"] { background-image: linear-gradient(0deg, rgba(7,12,22,.98), rgba(7,12,22,.2)), radial-gradient(ellipse at 55% 20%, #1c6979, #11192e 70%); }
+
+.track-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 18px; max-width: 660px; }
+.track-card { position: relative; min-height: 300px; padding: 10px; overflow: hidden; border-color: #3e4b67; text-align: left; }
+.track-card > b { margin: 8px 8px 0; font-size: 18px; }
+.track-card > span:not(.track-art) { margin: 0 8px; color: #aab4d8; font-size: 12px; }
+.track-art { position: relative; display: flex; height: 185px; align-items: flex-end; justify-content: flex-end; padding: 14px; overflow: hidden; border-radius: 8px; }
+.track-art i { color: rgba(255,255,255,.8); font-size: 34px; font-style: normal; font-weight: 900; text-shadow: 0 2px 12px #000; }
+.track-tokyo { background: linear-gradient(180deg, transparent 30%, rgba(10,13,28,.72)), radial-gradient(ellipse at 54% 85%, #e33a90, transparent 48%), linear-gradient(135deg, #233959, #101523 58%, #473360); }
+.track-yokohama { background: linear-gradient(180deg, transparent 30%, rgba(10,18,27,.75)), linear-gradient(160deg, #4a7890 0 35%, #344859 36% 59%, #a75448 60% 70%, #194354 71%); }
+.track-card.selected { border-color: #00e5ff; box-shadow: 0 0 20px rgba(0,229,255,.2), inset 0 0 18px rgba(0,229,255,.1); }
+.track-card.locked { filter: saturate(.35); cursor: not-allowed; }
+.track-lock { position: absolute; top: 12px; left: 12px; padding: 8px 10px; border-radius: 18px; background: rgba(6,10,19,.8); }
+.track-progress { color: #ffd24a !important; }
+.track-enter { color: #00e5ff !important; font-size: 10px !important; font-weight: 900; letter-spacing: 1px; }
+
+@media (max-width: 680px) {
+  .home-box { padding: 18px 16px; }
+  .home-box .logo { white-space: normal; font-size: clamp(28px, 8vw, 42px); }
+  .home-links .btn { font-size: 10px; letter-spacing: .4px; }
+  .journey-activities { grid-template-columns: 1fr; }
+  .journey-activities .activity-card { min-height: 125px; }
+  .track-picker { grid-template-columns: 1fr; }
+  .track-card { min-height: 250px; }
+  .track-art { height: 145px; }
+}

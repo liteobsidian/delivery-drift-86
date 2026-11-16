@@ -32,3 +32,7 @@ verification-shots
 
 # Local build cleanup history
 .game-build-files.json
+
+# Local isolated feature worktrees
+.worktrees/
+.superpowers/

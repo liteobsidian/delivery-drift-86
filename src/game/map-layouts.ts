@@ -140,6 +140,14 @@ const pointSegmentDistance = (px: number, pz: number, a: CityPoint, b: CityPoint
 
 export function cityLayoutFor(id: MapId): CityLayout { return CITY_LAYOUTS[id]; }
 
+export function worldToTextureCoordinate(value: number, planeSize: number, textureSize: number): number {
+  return ((value + planeSize / 2) / planeSize) * textureSize;
+}
+
+export function worldLengthToTexturePixels(length: number, planeSize: number, textureSize: number): number {
+  return (length / planeSize) * textureSize;
+}
+
 export function distanceToRoad(layout: CityLayout, x: number, z: number): number {
   let nearest = Number.POSITIVE_INFINITY;
   for (const roadPath of layout.roads) nearest = Math.min(nearest, distanceToRoadPath(roadPath, x, z));
