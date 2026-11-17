@@ -43,7 +43,7 @@
 - [x] **Step 4: Author at least 24 original connected Yokohama roads with coastal, diagonal, and irregular neighborhood links**
 - [x] **Step 5: Update traffic loops and valid signals; keep Yokohama's layout road-only with no generated parcel placements**
 - [x] **Step 6: Run `npm run test:maps` and confirm geometry, traffic, and parcel assertions pass**
-- [ ] **Step 7: Commit the road layout revision**
+- [x] **Step 7: Commit the road layout revision**
 
 ### Task 2: Verify Visuals and Publish
 
