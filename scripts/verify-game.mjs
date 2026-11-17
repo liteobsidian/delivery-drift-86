@@ -154,8 +154,15 @@ await page.locator('[data-a="map:tokyo"]').click();
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("Neon Tokyo could not be selected");
 if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port-only props leaked into Neon Tokyo");
 if (await page.evaluate(() => window.__gameDebug?.screen?.()) !== "playing") fail("Choosing a map did not start the selected delivery");
+const tokyoBuildingCount = await page.evaluate(() => window.__gameDebug.cityBuildingCount());
+if (tokyoBuildingCount < 350) fail(`Tokyo's generated building infill is sparse: ${tokyoBuildingCount} sites`);
 const tokyoTraffic = await page.evaluate(() => window.__gameDebug.trafficPos());
-if (!tokyoTraffic.length || (await page.evaluate((cars) => cars.some((car) => !window.__gameDebug.roadProbe(car.x, car.z).onRoad), tokyoTraffic))) fail("Tokyo NPC traffic left its authored roads");
+if (tokyoTraffic.length < 6 || tokyoTraffic.length > 10 || (await page.evaluate((cars) => cars.some((car) => !window.__gameDebug.roadProbe(car.x, car.z).onRoad), tokyoTraffic))) fail("Tokyo NPC traffic is missing, overcrowded, or off its authored roads");
+if (tokyoTraffic.some((a, i) => tokyoTraffic.slice(i + 1).some((b) => {
+  if (a.routeIndex !== b.routeIndex || a.dir !== b.dir) return false;
+  const delta = Math.abs(a.progress - b.progress);
+  return Math.min(delta, a.routeLength - delta) < 16;
+}))) fail("Tokyo NPCs are packed too tightly in one lane");
 const tokyoLayout = await page.evaluate(() => window.__gameDebug.layoutSnapshot());
 if (!tokyoLayout.signals.length || (await page.evaluate((signals) => signals.some((point) => !window.__gameDebug.roadProbe(point.x, point.z).onRoad), tokyoLayout.signals))) fail("Tokyo signal junctions are not on authored roads");
 await page.waitForTimeout(700);
@@ -167,6 +174,8 @@ await page.locator('[data-a="activity:delivery"]').click();
 await page.locator('[data-a="map:yokohama"]').click();
 const selectedMap = await page.evaluate(() => window.__gameDebug?.mapId?.());
 if (selectedMap !== "yokohama") fail("Selecting Yokohama did not switch the active map");
+const yokohamaBuildingCount = await page.evaluate(() => window.__gameDebug.cityBuildingCount());
+if (yokohamaBuildingCount < 350) fail(`Yokohama's generated industrial infill is sparse: ${yokohamaBuildingCount} sites`);
 const yokohamaPortScene = await page.evaluate(() => window.__gameDebug?.portVisuals?.());
 if (
   !yokohamaPortScene || typeof yokohamaPortScene !== "object" ||
@@ -180,7 +189,12 @@ if (
   yokohamaPortScene.tankFarms < 1
 ) fail(`Yokohama's harbor water or port facilities were not rendered: ${JSON.stringify(yokohamaPortScene)}`);
 const yokohamaTraffic = await page.evaluate(() => window.__gameDebug.trafficPos());
-if (!yokohamaTraffic.length || (await page.evaluate((cars) => cars.some((car) => !window.__gameDebug.roadProbe(car.x, car.z).onRoad), yokohamaTraffic))) fail("Yokohama NPC traffic left its authored roads");
+if (yokohamaTraffic.length < 6 || yokohamaTraffic.length > 10 || (await page.evaluate((cars) => cars.some((car) => !window.__gameDebug.roadProbe(car.x, car.z).onRoad), yokohamaTraffic))) fail("Yokohama NPC traffic is missing, overcrowded, or off its authored roads");
+if (yokohamaTraffic.some((a, i) => yokohamaTraffic.slice(i + 1).some((b) => {
+  if (a.routeIndex !== b.routeIndex || a.dir !== b.dir) return false;
+  const delta = Math.abs(a.progress - b.progress);
+  return Math.min(delta, a.routeLength - delta) < 16;
+}))) fail("Yokohama NPCs are packed too tightly in one lane");
 const yokohamaLayout = await page.evaluate(() => window.__gameDebug.layoutSnapshot());
 if (!yokohamaLayout.signals.length || (await page.evaluate((signals) => signals.some((point) => !window.__gameDebug.roadProbe(point.x, point.z).onRoad), yokohamaLayout.signals))) fail("Yokohama signal junctions are not on authored roads");
 const layoutSignature = (layout) => JSON.stringify(layout.roads.map(({ id, points }) => [id, points]));
@@ -404,4 +418,4 @@ if (consoleErrors.length) fail(`${consoleErrors.length} console error(s): ${cons
 
 await browser.close();
 server.close();
-console.log("VERIFY OK: render/enter/direction/pause/console all passed; screenshots in verification-shots/");
+console.log(`VERIFY OK: render/enter/direction/pause/console all passed; ${tokyoBuildingCount} Tokyo buildings, ${yokohamaBuildingCount} Yokohama buildings; screenshots in verification-shots/`);

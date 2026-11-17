@@ -259,6 +259,7 @@ export class Game {
       },
       mode: () => this.mode,
       nitroFuel: () => this.nitroFuel,
+      cityBuildingCount: () => this.world.buildingCount(),
       finishMode: () => { if (this.mode !== "delivery") this.completeOrder(true, "Тестовый финиш"); },
       finishDelivery: () => { if (this.mode === "delivery" && this.order) this.completeOrder(true, "Тестовая доставка"); },
       exitMode: () => this.showScreen("title"),

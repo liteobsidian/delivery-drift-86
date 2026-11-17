@@ -8,6 +8,7 @@ import {
   LIGHT_YELLOW,
 } from "./config";
 import type { MapId } from "./types";
+import { generateCityBuildingSites, type CityBuildingSite } from "./city-building-layout";
 import { cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad, worldLengthToTexturePixels, worldToTextureCoordinate } from "./map-layouts";
 
 /** Central drift ring (radius) at map center. */
@@ -90,6 +91,7 @@ const GS = WORLD_HALF * 2 + ROAD_W * 2 + 60; // ground plane size
 export class World {
   readonly mapId: MapId;
   readonly layout;
+  readonly buildingSites: CityBuildingSite[];
   readonly group = new THREE.Group();
   readonly buildings: AABB[] = [];
   readonly puddles: Puddle[] = [];
@@ -119,6 +121,7 @@ export class World {
   constructor(mapId: MapId = "tokyo") {
     this.mapId = mapId;
     this.layout = cityLayoutFor(mapId);
+    this.buildingSites = generateCityBuildingSites(this.layout);
     this.group.name = `world-${mapId}`;
     this.group.add(this.buildSky());
     this.group.add(this.buildGround());
@@ -555,6 +558,20 @@ export class World {
       g.fillRect(-w(parcel.width / 2), -w(parcel.depth / 2), w(parcel.width), w(parcel.depth));
       g.restore();
     }
+    this.buildingSites.forEach((site, index) => {
+      g.save();
+      g.translate(u(site.x), v(site.z));
+      g.rotate(-site.rotation);
+      const shade = index % 3;
+      g.fillStyle = this.mapId === "yokohama"
+        ? ["#485157", "#444d54", "#4b555b"][shade]
+        : ["#343b4a", "#394152", "#313849"][shade];
+      g.fillRect(-w(site.width / 2), -w(site.depth / 2), w(site.width), w(site.depth));
+      g.strokeStyle = this.mapId === "yokohama" ? "rgba(175,190,189,.28)" : "rgba(136,151,176,.26)";
+      g.lineWidth = w(0.45);
+      g.strokeRect(-w(site.width / 2), -w(site.depth / 2), w(site.width), w(site.depth));
+      g.restore();
+    });
     for (const site of this.layout.portSites) {
       if (site.kind === "pier" || site.kind === "cargo-ship" || site.kind === "gantry-crane") continue;
       g.save();
@@ -644,55 +661,46 @@ export class World {
   }
 
   private buildBuildings(): THREE.Group {
-    if (this.mapId === "yokohama") return this.buildPortBuildings();
     const g = new THREE.Group();
-    const rng = mulberry32(777);
-    const winTex = this.makeBuildingTexture();
-    const mat = new THREE.MeshStandardMaterial({
-      map: winTex,
-      emissive: 0xffffff,
-      emissiveMap: winTex,
-      emissiveIntensity: 0.85,
-      color: 0x9aa0b4,
-      roughness: 0.85,
-      metalness: 0.1,
-    });
+    g.name = "city-buildings";
+    const rng = mulberry32(this.mapId === "tokyo" ? 777 : 4819);
+    const texture = this.mapId === "yokohama" ? this.makeIndustrialTexture() : this.makeBuildingTexture();
+    const mat = this.mapId === "yokohama"
+      ? new THREE.MeshStandardMaterial({ map: texture, color: 0x9aa5a6, emissive: 0x556164, emissiveIntensity: 0.2, roughness: 0.78, metalness: 0.2 })
+      : new THREE.MeshStandardMaterial({
+          map: texture,
+          emissive: 0xffffff,
+          emissiveMap: texture,
+          emissiveIntensity: 0.85,
+          color: 0x9aa0b4,
+          roughness: 0.85,
+          metalness: 0.1,
+        });
     const geo = new THREE.BoxGeometry(1, 1, 1);
     geo.translate(0, 0.5, 0);
-    const placements: {
-      x: number;
-      z: number;
-      w: number;
-      h: number;
-      d: number;
-      rotation: number;
-    }[] = [];
-    for (const parcel of this.layout.parcels) {
-      const n = parcel.width > 20 && rng() > 0.45 ? 2 : 1;
-      for (let b = 0; b < n; b++) {
-        const localX = n === 1 ? 0 : (b === 0 ? -1 : 1) * parcel.width * 0.22;
-        const localZ = (rng() - 0.5) * parcel.depth * 0.12;
-        const c = Math.cos(parcel.rotation);
-        const s = Math.sin(parcel.rotation);
-        const x = parcel.x + localX * c - localZ * s;
-        const z = parcel.z + localX * s + localZ * c;
-        const w = parcel.width * (n === 1 ? 0.72 : 0.36);
-        const d = parcel.depth * 0.72;
-        const h = 14 + rng() * 46;
-        placements.push({ x, z, w, d, h, rotation: parcel.rotation });
-        const ex = Math.abs(c) * w / 2 + Math.abs(s) * d / 2;
-        const ez = Math.abs(s) * w / 2 + Math.abs(c) * d / 2;
-        this.buildings.push({ minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez });
-        this.buildingHeights.push(h);
-      }
-    }
+    const placements = this.buildingSites.map((site) => ({
+      x: site.x,
+      z: site.z,
+      w: site.width,
+      h: site.height,
+      d: site.depth,
+      rotation: site.rotation,
+    }));
+    placements.forEach((p) => {
+      const c = Math.cos(p.rotation);
+      const s = Math.sin(p.rotation);
+      const ex = Math.abs(c) * p.w / 2 + Math.abs(s) * p.d / 2;
+      const ez = Math.abs(s) * p.w / 2 + Math.abs(c) * p.d / 2;
+      this.buildings.push({ minX: p.x - ex, maxX: p.x + ex, minZ: p.z - ez, maxZ: p.z + ez });
+      this.buildingHeights.push(p.h);
+    });
     const inst = new THREE.InstancedMesh(geo, mat, placements.length);
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const col = new THREE.Color();
     placements.forEach((p, i) => {
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.rotation);
-      if (i % 5 === 2) {
+      if (this.mapId === "tokyo" && this.heroSpots.length < 8 && i % 73 === 2) {
         // reserve this spot for a real mid-rise model (dropped in when assets load)
         this.heroSpots.push(p);
         const ex = Math.abs(Math.cos(p.rotation)) * p.w / 2 + Math.abs(Math.sin(p.rotation)) * p.d / 2;
@@ -720,11 +728,13 @@ export class World {
       const shade = 0.85 + rng() * 0.35;
       col.setRGB(shade, shade, shade * 1.08);
       inst.setColorAt(i, col);
-      if (p.h > 38) this.roofSpots.push(p);
+      if (p.h > 31) this.roofSpots.push(p);
     });
     inst.castShadow = false;
     inst.receiveShadow = false;
     g.add(inst);
+    g.userData.cityBuildingCount = placements.length;
+    if (this.mapId === "yokohama") g.add(this.buildPortBuildings());
     return g;
   }
 
@@ -1060,6 +1070,10 @@ export class World {
     return this.heroSpots.length;
   }
 
+  buildingCount(): number {
+    return this.buildingSites.length;
+  }
+
   private makeBuildingTexture(): THREE.CanvasTexture {
     const cv = document.createElement("canvas");
     cv.width = 128;
@@ -1084,6 +1098,40 @@ export class World {
     const tex = new THREE.CanvasTexture(cv);
     tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
+  }
+
+  private makeIndustrialTexture(): THREE.CanvasTexture {
+    const cv = document.createElement("canvas");
+    cv.width = 128;
+    cv.height = 128;
+    const g = cv.getContext("2d")!;
+    g.fillStyle = "#657176";
+    g.fillRect(0, 0, 128, 128);
+    for (let x = 5; x < 128; x += 8) {
+      g.fillStyle = "rgba(17,29,35,.3)";
+      g.fillRect(x, 0, 2, 128);
+      g.fillStyle = "rgba(225,232,227,.13)";
+      g.fillRect(x + 2, 0, 1, 128);
+    }
+    g.fillStyle = "#334047";
+    g.fillRect(22, 39, 84, 89);
+    g.fillStyle = "#29343a";
+    g.fillRect(29, 52, 70, 76);
+    g.strokeStyle = "rgba(188,201,199,.62)";
+    g.lineWidth = 2;
+    for (let y = 57; y < 126; y += 11) {
+      g.beginPath();
+      g.moveTo(32, y);
+      g.lineTo(96, y);
+      g.stroke();
+    }
+    g.fillStyle = "#e3b34c";
+    g.fillRect(7, 15, 23, 6);
+    g.fillStyle = "#17262c";
+    g.fillRect(7, 27, 30, 8);
+    const texture = new THREE.CanvasTexture(cv);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
   }
 
   private buildStreetProps(): THREE.Group {
