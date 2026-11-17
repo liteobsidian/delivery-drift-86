@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { ROAD_W, LIGHT_CYCLE, LIGHT_YELLOW } from "./config";
-import type { TrafficRoute } from "./map-layouts";
+import type { CityPoint, TrafficRoute } from "./map-layouts";
 import type { World, LightVisual } from "./world";
 
 interface RouteData {
@@ -20,20 +20,30 @@ interface TrafficCar {
   routeIndex: number;
   progress: number;
   speed: number;
+  actualSpeed: number;
   active: boolean;
   nearCooldown: number;
   hitCooldown: number;
 }
 
-const MAX_CARS = 12;
+const MAX_CARS = 10;
 const LANE = ROAD_W / 4;
+const INITIAL_CARS = 6;
+const SPAWN_INTERVAL = 6;
+const SPAWN_GAP = 22;
+const FOLLOWING_GAP = 20;
+
+/** Offset an NPC into the same relative lane side as its heading; reversing flips world-space lanes. */
+export function trafficLanePosition(center: CityPoint, tangent: CityPoint, lane: number): CityPoint {
+  return { x: center.x + tangent.z * lane, z: center.z - tangent.x * lane };
+}
 
 /** City traffic follows authored closed routes, including their bends and cul-de-sacs. */
 export class Traffic {
   readonly group = new THREE.Group();
   private cars: TrafficCar[] = [];
   private routes: RouteData[] = [];
-  private spawnTimer = 0;
+  private spawnTimer = SPAWN_INTERVAL;
   private rngState = 12345;
 
   constructor(private world: World) {
@@ -42,17 +52,18 @@ export class Traffic {
       const mesh = buildTrafficCarMesh(colors[i % colors.length]);
       mesh.visible = false;
       this.group.add(mesh);
-      this.cars.push({ mesh, x: 0, z: 0, dx: 1, dz: 0, axis: 0, dir: 1, routeIndex: 0, progress: 0, speed: 0, active: false, nearCooldown: 0, hitCooldown: 0 });
+      this.cars.push({ mesh, x: 0, z: 0, dx: 1, dz: 0, axis: 0, dir: 1, routeIndex: 0, progress: 0, speed: 0, actualSpeed: 0, active: false, nearCooldown: 0, hitCooldown: 0 });
     }
     this.rebuildRoutes();
-    for (let i = 0; i < 6; i++) this.spawn(true);
+    for (let i = 0; i < INITIAL_CARS; i++) this.spawn();
   }
 
   setWorld(world: World): void {
     this.world = world;
     this.cars.forEach((car) => { car.active = false; car.mesh.visible = false; });
     this.rebuildRoutes();
-    for (let i = 0; i < 6; i++) this.spawn(true);
+    this.spawnTimer = SPAWN_INTERVAL;
+    for (let i = 0; i < INITIAL_CARS; i++) this.spawn();
   }
 
   private rebuildRoutes(): void {
@@ -76,7 +87,7 @@ export class Traffic {
     const route = this.routes[car.routeIndex];
     if (!route) return;
     const distance = ((car.progress % route.length) + route.length) % route.length;
-    const sampled = car.dir === 1 ? distance : (route.length - distance) % route.length;
+    const sampled = distance;
     let segment = 0;
     while (segment < route.points.length - 2 && route.cumulative[segment + 1] < sampled) segment++;
     const a = route.points[segment];
@@ -88,9 +99,9 @@ export class Traffic {
     const tz = (b.z - a.z) / segmentLength * direction;
     const centerX = a.x + (b.x - a.x) * t;
     const centerZ = a.z + (b.z - a.z) * t;
-    const lateral = direction === 1 ? -LANE : LANE;
-    car.x = centerX - tz * lateral;
-    car.z = centerZ + tx * lateral;
+    const lanePosition = trafficLanePosition({ x: centerX, z: centerZ }, { x: tx, z: tz }, LANE);
+    car.x = lanePosition.x;
+    car.z = lanePosition.z;
     car.dx = tx;
     car.dz = tz;
     car.axis = Math.abs(tx) >= Math.abs(tz) ? 0 : 1;
@@ -102,13 +113,28 @@ export class Traffic {
     car.mesh.rotation.y = Math.atan2(-car.dx, -car.dz);
   }
 
-  private spawn(_anywhere = false): void {
+  private spawn(): void {
     const car = this.cars.find((c) => !c.active);
     if (!car || !this.routes.length) return;
-    car.routeIndex = Math.floor(this.rnd() * this.routes.length);
-    car.dir = this.rnd() < 0.5 ? 1 : -1;
-    car.progress = this.rnd() * this.routes[car.routeIndex].length;
+    let positionFound = false;
+    for (let attempt = 0; attempt < 48; attempt++) {
+      const routeIndex = Math.floor(this.rnd() * this.routes.length);
+      const dir = this.rnd() < 0.5 ? 1 : -1;
+      const progress = this.rnd() * this.routes[routeIndex].length;
+      if (this.cars.some((other) => {
+        if (!other.active || other.routeIndex !== routeIndex || other.dir !== dir) return false;
+        const gap = this.forwardGap(progress, other.progress, dir, this.routes[routeIndex].length);
+        return Math.min(gap, this.routes[routeIndex].length - gap) < SPAWN_GAP;
+      })) continue;
+      car.routeIndex = routeIndex;
+      car.dir = dir;
+      car.progress = progress;
+      positionFound = true;
+      break;
+    }
+    if (!positionFound) return;
     car.speed = 9 + this.rnd() * 5;
+    car.actualSpeed = car.speed;
     car.active = true;
     car.mesh.visible = true;
     this.place(car);
@@ -176,7 +202,7 @@ export class Traffic {
   update(dt: number, playerPos: THREE.Vector3, playerVel: THREE.Vector3, playerSpeed: number): number {
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
-      this.spawnTimer = 2.2;
+      this.spawnTimer = SPAWN_INTERVAL;
       this.spawn();
     }
     let hit = 0;
@@ -195,6 +221,11 @@ export class Traffic {
         if (dToStop > -1 && dToStop < 12) wantSpeed = 0;
       }
 
+      const leader = this.carAhead(c);
+      if (leader && leader.gap < FOLLOWING_GAP) {
+        wantSpeed = Math.min(wantSpeed, Math.max(0, leader.car.actualSpeed + (leader.gap - FOLLOWING_GAP) * 0.8));
+      }
+
       const dx = playerPos.x - c.x;
       const dz = playerPos.z - c.z;
       const d2 = dx * dx + dz * dz;
@@ -210,6 +241,7 @@ export class Traffic {
 
       const route = this.routes[c.routeIndex];
       c.progress = (c.progress + wantSpeed * dt * c.dir + route.length) % route.length;
+      c.actualSpeed = wantSpeed;
       this.pose(c);
       const cvx = c.dx * wantSpeed;
       const cvz = c.dz * wantSpeed;
@@ -258,9 +290,33 @@ export class Traffic {
     return null;
   }
 
-  /** verification helper: active car positions and direction */
-  debugPositions(): { x: number; z: number; axis: 0 | 1; dir: 1 | -1 }[] {
-    return this.cars.filter((c) => c.active).map((c) => ({ x: c.x, z: c.z, axis: c.axis, dir: c.dir }));
+  private forwardGap(from: number, to: number, direction: 1 | -1, routeLength: number): number {
+    const signed = (to - from) * direction;
+    return ((signed % routeLength) + routeLength) % routeLength;
+  }
+
+  private carAhead(car: TrafficCar): { car: TrafficCar; gap: number } | null {
+    const length = this.routes[car.routeIndex]?.length ?? 0;
+    if (!length) return null;
+    let leader: TrafficCar | null = null;
+    let closest = Number.POSITIVE_INFINITY;
+    for (const other of this.cars) {
+      if (!other.active || other === car || other.routeIndex !== car.routeIndex || other.dir !== car.dir) continue;
+      const gap = this.forwardGap(car.progress, other.progress, car.dir, length);
+      if (gap > 0.1 && gap < closest) {
+        closest = gap;
+        leader = other;
+      }
+    }
+    return leader ? { car: leader, gap: closest } : null;
+  }
+
+  /** verification helper: active car positions, heading and route spacing */
+  debugPositions(): { id: number; x: number; z: number; dx: number; dz: number; axis: 0 | 1; dir: 1 | -1; routeIndex: number; progress: number; routeLength: number }[] {
+    return this.cars.flatMap((c, id) => c.active ? [{
+      id, x: c.x, z: c.z, dx: c.dx, dz: c.dz, axis: c.axis, dir: c.dir,
+      routeIndex: c.routeIndex, progress: c.progress, routeLength: this.routes[c.routeIndex]?.length ?? 0,
+    }] : []);
   }
 
   dispose(): void {
