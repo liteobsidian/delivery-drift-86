@@ -30,15 +30,17 @@ describe("hand-authored city layouts", () => {
     for (const sweeper of sweepers) expect(sweeper.points.length).toBeGreaterThanOrEqual(9);
   });
 
-  it("gives Yokohama at least 24 streets spread across its full driving area", () => {
+  it("keeps Yokohama as a compact Lipetsk market district inside landscape bounds", () => {
     const yokohama = cityLayoutFor("yokohama");
-    expect(yokohama.roads.length).toBeGreaterThanOrEqual(24);
-    const x = yokohama.roads.flatMap((item) => item.points.map((point) => point.x));
-    const z = yokohama.roads.flatMap((item) => item.points.map((point) => point.z));
-    expect(Math.min(...x)).toBeLessThanOrEqual(-160);
-    expect(Math.max(...x)).toBeGreaterThanOrEqual(160);
-    expect(Math.min(...z)).toBeLessThanOrEqual(-140);
-    expect(Math.max(...z)).toBeGreaterThanOrEqual(140);
+    expect(yokohama.roads.length).toBeLessThanOrEqual(8);
+    expect(yokohama.bounds.maxX - yokohama.bounds.minX).toBeGreaterThan(yokohama.bounds.maxZ - yokohama.bounds.minZ);
+    expect(yokohama.roads.map(({ id }) => id)).toEqual(expect.arrayContaining([
+      "central-market-ring", "papina-street", "pobedy-avenue", "nedelina-street", "moskovskaya-street", "8-marta-street",
+    ]));
+    const ring = yokohama.roads.find(({ id }) => id === "central-market-ring");
+    expect(ring).toBeDefined();
+    expect(ring!.points[0]).toEqual(ring!.points[ring!.points.length - 1]);
+    expect(distanceToRoadPath(ring!, 42, 0)).toBeLessThan(0.1);
   });
 
   it("connects every Yokohama street to the same drivable network", () => {
@@ -95,7 +97,7 @@ describe("hand-authored city layouts", () => {
     const tokyo = cityLayoutFor("tokyo");
     const yokohama = cityLayoutFor("yokohama");
     expect(tokyo.roads.length).toBeGreaterThan(8);
-    expect(yokohama.roads.length).toBeGreaterThan(8);
+    expect(yokohama.roads.length).toBeGreaterThan(5);
     expect(tokyo.roads.map((road) => road.id)).not.toEqual(yokohama.roads.map((road) => road.id));
     for (const layout of [tokyo, yokohama]) {
       for (const road of layout.roads) {
