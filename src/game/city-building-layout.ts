@@ -11,9 +11,69 @@ interface Rect {
   width: number;
   depth: number;
   rotation: number;
+  cosRotation?: number;
+  sinRotation?: number;
 }
 
 const BUILDING_PITCH = 8;
+
+/** Layout angles rotate counterclockwise in X/Z; Three.js positive yaw turns local +X toward -Z. */
+export function cityBuildingMeshYaw(layoutRotation: number): number {
+  return -layoutRotation;
+}
+
+export interface CircleRectContact {
+  nx: number;
+  nz: number;
+  penetration: number;
+}
+
+/** Resolve a circle against a rotated footprint expressed in the layout's X/Z angle convention. */
+export function circleOrientedRectContact(
+  x: number,
+  z: number,
+  radius: number,
+  rect: Rect,
+): CircleRectContact | null {
+  const c = rect.cosRotation ?? (rect.rotation === 0 ? 1 : Math.cos(rect.rotation));
+  const s = rect.sinRotation ?? (rect.rotation === 0 ? 0 : Math.sin(rect.rotation));
+  const dx = x - rect.x;
+  const dz = z - rect.z;
+  const localX = dx * c + dz * s;
+  const localZ = -dx * s + dz * c;
+  const nearestX = Math.max(-rect.width / 2, Math.min(localX, rect.width / 2));
+  const nearestZ = Math.max(-rect.depth / 2, Math.min(localZ, rect.depth / 2));
+  const localDx = localX - nearestX;
+  const localDz = localZ - nearestZ;
+  const distance = Math.hypot(localDx, localDz);
+  if (distance >= radius) return null;
+
+  let nxLocal: number;
+  let nzLocal: number;
+  let penetration: number;
+  if (distance > 1e-6) {
+    nxLocal = localDx / distance;
+    nzLocal = localDz / distance;
+    penetration = radius - distance;
+  } else {
+    const edgeX = rect.width / 2 - Math.abs(localX);
+    const edgeZ = rect.depth / 2 - Math.abs(localZ);
+    if (edgeX <= edgeZ) {
+      nxLocal = Math.sign(localX) || 1;
+      nzLocal = 0;
+      penetration = radius + edgeX;
+    } else {
+      nxLocal = 0;
+      nzLocal = Math.sign(localZ) || 1;
+      penetration = radius + edgeZ;
+    }
+  }
+  return {
+    nx: nxLocal * c - nzLocal * s,
+    nz: nxLocal * s + nzLocal * c,
+    penetration,
+  };
+}
 
 function hash(x: number, z: number, salt: number): number {
   let value = Math.imul(x + 1, 0x45d9f3b) ^ Math.imul(z + 1, 0x119de1f3) ^ salt;
@@ -143,7 +203,6 @@ export function generateCityBuildingSites(layout: CityLayout): CityBuildingSite[
     if (footprintCorners.some((point) => point.x < minX || point.x > maxX || point.z < minZ || point.z > maxZ)) continue;
     if (!parcelClearOfRoads(layout, footprint, 1)) continue;
     if (layout.waterAreas.some((water) => overlapsWater(rect, water.points))) continue;
-    if (layout.parcels.some((parcel) => rectanglesOverlap(rect, parcel, 1))) continue;
     if (portSites.some((site) => rectanglesOverlap(rect, site, 2))) continue;
     if (sites.some((site) => rectanglesOverlap(rect, site, 0.35))) continue;
     sites.push(footprint);

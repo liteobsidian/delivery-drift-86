@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { cityLayoutFor } from "./map-layouts";
-import { Traffic } from "./traffic";
+import { Traffic, trafficLanePosition } from "./traffic";
 import type { World } from "./world";
 
 interface TrafficDebugCar {
@@ -21,6 +21,13 @@ function makeTraffic(): Traffic {
 }
 
 describe("NPC traffic regressions", () => {
+  it("keeps traffic moving in opposite directions on opposite lanes", () => {
+    const forward = trafficLanePosition({ x: 0, z: 0 }, { x: 1, z: 0 }, 3.5);
+    const reverse = trafficLanePosition({ x: 0, z: 0 }, { x: -1, z: 0 }, 3.5);
+    expect(forward.z).toBeLessThan(reverse.z);
+    expect(Math.hypot(forward.x - reverse.x, forward.z - reverse.z)).toBeCloseTo(7);
+  });
+
   it("faces in the direction its route progress actually moves", () => {
     const traffic = makeTraffic();
     const before = traffic.debugPositions() as unknown as TrafficDebugCar[];

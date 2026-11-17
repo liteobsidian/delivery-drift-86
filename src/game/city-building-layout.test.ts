@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cityLayoutFor, parcelClearOfRoads } from "./map-layouts";
-import { generateCityBuildingSites } from "./city-building-layout";
+import { circleOrientedRectContact, cityBuildingMeshYaw, generateCityBuildingSites } from "./city-building-layout";
 
 function pointInPolygon(x: number, z: number, points: { x: number; z: number }[]): boolean {
   let inside = false;
@@ -65,6 +65,22 @@ describe("generated city infill", () => {
     }
   });
 
+  it("rejects a water shape contained inside a building footprint", () => {
+    const layout = cityLayoutFor("tokyo");
+    const source = generateCityBuildingSites(layout)[0];
+    const water = {
+      id: "test-water-inside-building",
+      points: [
+        { x: source.x - 1, z: source.z - 1 },
+        { x: source.x + 1, z: source.z - 1 },
+        { x: source.x + 1, z: source.z + 1 },
+        { x: source.x - 1, z: source.z + 1 },
+      ],
+    };
+    const sites = generateCityBuildingSites({ ...layout, waterAreas: [...layout.waterAreas, water] });
+    expect(sites.some((site) => rectsOverlap(site, { x: source.x, z: source.z, width: 2, depth: 2, rotation: 0 }))).toBe(false);
+  });
+
   it("keeps generated footprints separate from each other and authored harbor facilities", () => {
     for (const id of ["tokyo", "yokohama"] as const) {
       const layout = cityLayoutFor(id);
@@ -73,10 +89,31 @@ describe("generated city infill", () => {
         for (let j = i + 1; j < sites.length; j++) {
           expect(rectsOverlap(sites[i], sites[j]), `${id} buildings overlap at ${sites[i].x},${sites[i].z}`).toBe(false);
         }
-        for (const authored of [...layout.parcels, ...layout.portSites]) {
+        for (const authored of layout.portSites) {
           expect(rectsOverlap(sites[i], authored), `${id} building overlaps an authored facility`).toBe(false);
         }
       }
     }
+  });
+
+  it("fills the manually authored Tokyo parcels instead of leaving their pads empty", () => {
+    const tokyo = cityLayoutFor("tokyo");
+    const sites = generateCityBuildingSites(tokyo);
+    for (const parcel of tokyo.parcels) {
+      expect(sites.some((site) => rectsOverlap(site, parcel)), `empty parcel at ${parcel.x},${parcel.z}`).toBe(true);
+    }
+  });
+
+  it("converts layout angles to Three.js yaw without flipping diagonal sites", () => {
+    expect(cityBuildingMeshYaw(Math.PI / 4)).toBeCloseTo(-Math.PI / 4);
+  });
+
+  it("collides with the visible footprint of rotated buildings, not their empty AABB corners", () => {
+    const rotated = { x: 0, z: 0, width: 8, depth: 4, rotation: Math.PI / 4 };
+    expect(circleOrientedRectContact(4, 4, 0.7, rotated)).toBeNull();
+    const inside = circleOrientedRectContact(0, 0, 0.7, rotated);
+    expect(inside).not.toBeNull();
+    expect(Math.hypot(inside!.nx, inside!.nz)).toBeCloseTo(1);
+    expect(inside!.penetration).toBeGreaterThan(2.6);
   });
 });

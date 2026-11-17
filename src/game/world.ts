@@ -8,7 +8,7 @@ import {
   LIGHT_YELLOW,
 } from "./config";
 import type { MapId } from "./types";
-import { generateCityBuildingSites, type CityBuildingSite } from "./city-building-layout";
+import { circleOrientedRectContact, cityBuildingMeshYaw, generateCityBuildingSites, type CityBuildingSite } from "./city-building-layout";
 import { cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad, worldLengthToTexturePixels, worldToTextureCoordinate } from "./map-layouts";
 
 /** Central drift ring (radius) at map center. */
@@ -46,6 +46,7 @@ export interface AABB {
   maxX: number;
   minZ: number;
   maxZ: number;
+  collisionRect?: { x: number; z: number; width: number; depth: number; rotation: number; cosRotation?: number; sinRotation?: number };
 }
 
 export interface Puddle {
@@ -237,7 +238,7 @@ export class World {
     return null;
   }
 
-  /** keep a circle (the car) out of building AABBs; returns impact speed or 0 */
+  /** keep a circle (the car) out of building footprints; returns impact speed or 0 */
   collideBuildings(
     pos: THREE.Vector3,
     radius: number,
@@ -245,24 +246,22 @@ export class World {
   ): number {
     let impact = 0;
     for (const b of this.buildings) {
-      const cx = Math.max(b.minX, Math.min(pos.x, b.maxX));
-      const cz = Math.max(b.minZ, Math.min(pos.z, b.maxZ));
-      const dx = pos.x - cx;
-      const dz = pos.z - cz;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < radius * radius) {
-        const d = Math.sqrt(d2) || 0.001;
-        const nx = dx / d;
-        const nz = dz / d;
-        const push = radius - d;
-        pos.x += nx * push;
-        pos.z += nz * push;
-        const vn = vel.x * nx + vel.z * nz;
-        if (vn < 0) {
-          impact = Math.max(impact, -vn);
-          vel.x -= vn * nx * 1.4;
-          vel.z -= vn * nz * 1.4;
-        }
+      const rect = b.collisionRect ?? {
+        x: (b.minX + b.maxX) / 2,
+        z: (b.minZ + b.maxZ) / 2,
+        width: b.maxX - b.minX,
+        depth: b.maxZ - b.minZ,
+        rotation: 0,
+      };
+      const contact = circleOrientedRectContact(pos.x, pos.z, radius, rect);
+      if (!contact) continue;
+      pos.x += contact.nx * contact.penetration;
+      pos.z += contact.nz * contact.penetration;
+      const vn = vel.x * contact.nx + vel.z * contact.nz;
+      if (vn < 0) {
+        impact = Math.max(impact, -vn);
+        vel.x -= vn * contact.nx * 1.4;
+        vel.z -= vn * contact.nz * 1.4;
       }
     }
     // world bounds
@@ -553,7 +552,7 @@ export class World {
     for (const parcel of this.layout.parcels) {
       g.save();
       g.translate(u(parcel.x), v(parcel.z));
-      g.rotate(-parcel.rotation);
+      g.rotate(parcel.rotation);
       g.fillStyle = parcel.zone === "port" ? "#35434c" : "#30394a";
       g.fillRect(-w(parcel.width / 2), -w(parcel.depth / 2), w(parcel.width), w(parcel.depth));
       g.restore();
@@ -561,7 +560,7 @@ export class World {
     this.buildingSites.forEach((site, index) => {
       g.save();
       g.translate(u(site.x), v(site.z));
-      g.rotate(-site.rotation);
+      g.rotate(site.rotation);
       const shade = index % 3;
       g.fillStyle = this.mapId === "yokohama"
         ? ["#485157", "#444d54", "#4b555b"][shade]
@@ -691,7 +690,13 @@ export class World {
       const s = Math.sin(p.rotation);
       const ex = Math.abs(c) * p.w / 2 + Math.abs(s) * p.d / 2;
       const ez = Math.abs(s) * p.w / 2 + Math.abs(c) * p.d / 2;
-      this.buildings.push({ minX: p.x - ex, maxX: p.x + ex, minZ: p.z - ez, maxZ: p.z + ez });
+      this.buildings.push({
+        minX: p.x - ex,
+        maxX: p.x + ex,
+        minZ: p.z - ez,
+        maxZ: p.z + ez,
+        collisionRect: { x: p.x, z: p.z, width: p.w, depth: p.d, rotation: p.rotation, cosRotation: c, sinRotation: s },
+      });
       this.buildingHeights.push(p.h);
     });
     const inst = new THREE.InstancedMesh(geo, mat, placements.length);
@@ -699,7 +704,7 @@ export class World {
     const q = new THREE.Quaternion();
     const col = new THREE.Color();
     placements.forEach((p, i) => {
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.rotation);
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), cityBuildingMeshYaw(p.rotation));
       if (this.mapId === "tokyo" && this.heroSpots.length < 8 && i % 73 === 2) {
         // reserve this spot for a real mid-rise model (dropped in when assets load)
         this.heroSpots.push(p);

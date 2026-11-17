@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { ROAD_W, LIGHT_CYCLE, LIGHT_YELLOW } from "./config";
-import type { TrafficRoute } from "./map-layouts";
+import type { CityPoint, TrafficRoute } from "./map-layouts";
 import type { World, LightVisual } from "./world";
 
 interface RouteData {
@@ -32,6 +32,11 @@ const INITIAL_CARS = 6;
 const SPAWN_INTERVAL = 6;
 const SPAWN_GAP = 22;
 const FOLLOWING_GAP = 20;
+
+/** Offset an NPC into the same relative lane side as its heading; reversing flips world-space lanes. */
+export function trafficLanePosition(center: CityPoint, tangent: CityPoint, lane: number): CityPoint {
+  return { x: center.x + tangent.z * lane, z: center.z - tangent.x * lane };
+}
 
 /** City traffic follows authored closed routes, including their bends and cul-de-sacs. */
 export class Traffic {
@@ -94,9 +99,9 @@ export class Traffic {
     const tz = (b.z - a.z) / segmentLength * direction;
     const centerX = a.x + (b.x - a.x) * t;
     const centerZ = a.z + (b.z - a.z) * t;
-    const lateral = direction === 1 ? -LANE : LANE;
-    car.x = centerX - tz * lateral;
-    car.z = centerZ + tx * lateral;
+    const lanePosition = trafficLanePosition({ x: centerX, z: centerZ }, { x: tx, z: tz }, LANE);
+    car.x = lanePosition.x;
+    car.z = lanePosition.z;
     car.dx = tx;
     car.dz = tz;
     car.axis = Math.abs(tx) >= Math.abs(tz) ? 0 : 1;
