@@ -57,4 +57,4 @@
 - [x] Confirm Yokohama map geometry and gameplay queries still use the same road source.
 - [x] Run the map tests and production build.
 - [x] Open the game, inspect Yokohama's gameplay view and minimap, and adjust any misplaced or obscured props.
-- [ ] Review `git diff --check` and push the finished branch.
+- [x] Review `git diff --check` and push the finished branch.
