@@ -15,7 +15,7 @@ Return Neon Tokyo to the familiar square street grid with its central drift ring
 
 - Do not copy or import GTA San Andreas road geometry. A checked GitHub candidate, `Leuansin/GTA-SA-Nodes-Json`, declares no license; do not redistribute its data.
 - Do not import buildings or landmarks from another game or map.
-- Do not redesign generated scenery, progression, vehicles, or city art in this change.
+- Keep scenery generation, progression, vehicles, and city rendering logic in place; Yokohama's road layout itself contains no generated lot positions or borrowed objects.
 
 ## Approaches
 

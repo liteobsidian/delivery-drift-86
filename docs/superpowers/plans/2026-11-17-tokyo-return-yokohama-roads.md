@@ -37,12 +37,12 @@
 - Consume and preserve `CityLayout`, `RoadPath`, `TrafficRoute`, `CityParcel`, `CITY_LAYOUTS`.
 - `roads`, `trafficRoutes`, `signalJunctions`, and `parcels` remain the shared source for existing gameplay.
 
-- [ ] **Step 1: Add failing tests for the legacy Tokyo grid/ring/sweepers and denser Yokohama network**
-- [ ] **Step 2: Run `npm run test:maps` and confirm the regression assertions fail**
-- [ ] **Step 3: Recreate Tokyo's grid at 58-unit spacing, ring radius 44, and four 38-unit quarter-circle roads**
-- [ ] **Step 4: Author at least 24 original connected Yokohama roads with coastal, diagonal, and irregular neighborhood links**
-- [ ] **Step 5: Update traffic loops, valid signals, and parcel locations only as needed to keep all geometry clear**
-- [ ] **Step 6: Run `npm run test:maps` and confirm geometry, traffic, and parcel assertions pass**
+- [x] **Step 1: Add failing tests for the legacy Tokyo grid/ring/sweepers and denser Yokohama network**
+- [x] **Step 2: Run `npm run test:maps` and confirm the regression assertions fail**
+- [x] **Step 3: Recreate Tokyo's grid at 58-unit spacing, ring radius 44, and four 38-unit quarter-circle roads**
+- [x] **Step 4: Author at least 24 original connected Yokohama roads with coastal, diagonal, and irregular neighborhood links**
+- [x] **Step 5: Update traffic loops and valid signals; keep Yokohama's layout road-only with no generated parcel placements**
+- [x] **Step 6: Run `npm run test:maps` and confirm geometry, traffic, and parcel assertions pass**
 - [ ] **Step 7: Commit the road layout revision**
 
 ### Task 2: Verify Visuals and Publish
@@ -51,7 +51,7 @@
 - Modify: `scripts/verify-game.mjs` if map assertions need adjustment
 - Update: this plan's checkboxes
 
-- [ ] **Step 1: Capture and inspect Tokyo/Yokohama gameplay and minimaps**
-- [ ] **Step 2: Run `npm run build && npm run test:maps && npm run verify && git diff --check`**
+- [x] **Step 1: Capture and inspect Tokyo/Yokohama gameplay and minimaps**
+- [x] **Step 2: Run `npm run build && npm run test:maps && npm run verify && git diff --check`**
 - [ ] **Step 3: Request read-only review and fix any Critical/Important findings**
 - [ ] **Step 4: Push a PR to `main`, wait for CI, merge, and verify the deployed assets over HTTPS**
