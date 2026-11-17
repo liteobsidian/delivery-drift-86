@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ROAD_W } from "./config";
 import { CITY_LAYOUTS, cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad, parcelClearOfRoads, sampleRoadPoint, worldLengthToTexturePixels, worldToTextureCoordinate } from "./map-layouts";
 
 describe("hand-authored city layouts", () => {
@@ -158,6 +159,20 @@ describe("hand-authored city layouts", () => {
         expect(parcel.x + parcel.width / 2).toBeLessThanOrEqual(layout.bounds.maxX);
         expect(parcel.z - parcel.depth / 2).toBeGreaterThanOrEqual(layout.bounds.minZ);
         expect(parcel.z + parcel.depth / 2).toBeLessThanOrEqual(layout.bounds.maxZ);
+      }
+    }
+  });
+
+  it("keeps traffic lane offsets inside each map's playable bounds", () => {
+    const laneOffset = ROAD_W / 4;
+    for (const layout of Object.values(CITY_LAYOUTS)) {
+      for (const route of layout.trafficRoutes) {
+        for (const point of route.points) {
+          expect(point.x - laneOffset).toBeGreaterThanOrEqual(layout.bounds.minX);
+          expect(point.x + laneOffset).toBeLessThanOrEqual(layout.bounds.maxX);
+          expect(point.z - laneOffset).toBeGreaterThanOrEqual(layout.bounds.minZ);
+          expect(point.z + laneOffset).toBeLessThanOrEqual(layout.bounds.maxZ);
+        }
       }
     }
   });

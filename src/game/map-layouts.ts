@@ -126,8 +126,8 @@ CITY_LAYOUTS.tokyo.trafficRoutes = [
   {
     id: "tokyo-outer-traffic",
     points: [
-      { x: -174, z: -174 }, { x: 174, z: -174 }, { x: 174, z: 174 },
-      { x: -174, z: 174 }, { x: -174, z: -174 },
+      { x: -116, z: -116 }, { x: 116, z: -116 }, { x: 116, z: 116 },
+      { x: -116, z: 116 }, { x: -116, z: -116 },
     ],
   },
   route("tokyo-downtown-traffic", CITY_LAYOUTS.tokyo.roads.find((item) => item.id === "drift-ring")!),

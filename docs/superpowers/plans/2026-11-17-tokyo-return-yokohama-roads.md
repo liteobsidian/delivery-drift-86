@@ -53,5 +53,5 @@
 
 - [x] **Step 1: Capture and inspect Tokyo/Yokohama gameplay and minimaps**
 - [x] **Step 2: Run `npm run build && npm run test:maps && npm run verify && git diff --check`**
-- [ ] **Step 3: Request read-only review and fix any Critical/Important findings**
+- [x] **Step 3: Request read-only review and fix any Critical/Important findings**
 - [ ] **Step 4: Push a PR to `main`, wait for CI, merge, and verify the deployed assets over HTTPS**
