@@ -71,52 +71,29 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
   },
   yokohama: {
     id: "yokohama",
-    bounds,
+    bounds: { minX: -210, maxX: 210, minZ: -140, maxZ: 140 },
     roads: [
-      road("outer-coastal-loop", [
-        { x: -162, z: -140 }, { x: -112, z: -154 }, { x: -58, z: -144 }, { x: 0, z: -154 },
-        { x: 58, z: -144 }, { x: 115, z: -152 }, { x: 157, z: -122 }, { x: 148, z: -78 },
-        { x: 162, z: -32 }, { x: 146, z: 12 }, { x: 159, z: 58 }, { x: 140, z: 108 },
-        { x: 100, z: 146 }, { x: 42, z: 138 }, { x: -14, z: 156 }, { x: -72, z: 142 },
-        { x: -124, z: 152 }, { x: -157, z: 112 }, { x: -146, z: 64 }, { x: -160, z: 20 },
-        { x: -145, z: -22 }, { x: -161, z: -74 }, { x: -137, z: -111 }, { x: -162, z: -140 },
-      ], 14),
-      road("harbor-loop", [
-        { x: -124, z: -88 }, { x: -76, z: -100 }, { x: -24, z: -90 }, { x: 28, z: -102 },
-        { x: 78, z: -91 }, { x: 113, z: -58 }, { x: 108, z: -17 }, { x: 126, z: 24 },
-        { x: 105, z: 65 }, { x: 60, z: 82 }, { x: 8, z: 72 }, { x: -44, z: 87 },
-        { x: -96, z: 64 }, { x: -121, z: 28 }, { x: -109, z: -22 }, { x: -124, z: -88 },
+      road("central-market-ring", circularRoadPoints(0, 0, 42, 0, Math.PI * 2, 64), 14),
+      road("papina-street", [
+        { x: -194, z: -82 }, { x: -151, z: -67 }, { x: -108, z: -51 }, { x: -68, z: -37 }, { x: -30, z: -29 },
       ], 12),
-      road("north-terminal", [{ x: -150, z: -118 }, { x: -110, z: -105 }, { x: -65, z: -114 }, { x: -15, z: -102 }, { x: 40, z: -119 }, { x: 93, z: -100 }, { x: 151, z: -112 }], 11),
-      road("north-ward", [{ x: -152, z: -76 }, { x: -100, z: -68 }, { x: -50, z: -81 }, { x: 0, z: -70 }, { x: 54, z: -79 }, { x: 104, z: -64 }, { x: 151, z: -74 }], 11),
-      road("market-street", [{ x: -154, z: -30 }, { x: -112, z: -15 }, { x: -68, z: -31 }, { x: -18, z: -12 }, { x: 32, z: -34 }, { x: 81, z: -16 }, { x: 122, z: -35 }, { x: 153, z: -28 }], 10),
-      road("central-avenue", [{ x: -152, z: 0 }, { x: -100, z: 0 }, { x: -50, z: 0 }, { x: 0, z: 0 }, { x: 50, z: 0 }, { x: 100, z: 0 }, { x: 152, z: 0 }], 14),
-      road("south-ward", [{ x: -152, z: 34 }, { x: -113, z: 48 }, { x: -72, z: 27 }, { x: -28, z: 44 }, { x: 0, z: 38 }, { x: 37, z: 19 }, { x: 69, z: 34 }, { x: 105, z: 41 }, { x: 153, z: 31 }], 11),
-      road("quay-road", [{ x: -149, z: 78 }, { x: -116, z: 65 }, { x: -78, z: 76 }, { x: -42, z: 61 }, { x: 0, z: 70 }, { x: 50, z: 85 }, { x: 100, z: 68 }, { x: 149, z: 78 }], 11),
-      road("south-terminal", [{ x: -132, z: 118 }, { x: -103, z: 103 }, { x: -72, z: 115 }, { x: -34, z: 122 }, { x: 20, z: 106 }, { x: 74, z: 121 }, { x: 104, z: 108 }, { x: 123, z: 105 }], 10),
-      road("western-gate", [{ x: -124, z: -142 }, { x: -120, z: -98 }, { x: -132, z: -50 }, { x: -124, z: -2 }, { x: -116, z: 48 }, { x: -128, z: 98 }, { x: -124, z: 145 }], 11),
-      road("west-market", [{ x: -78, z: -145 }, { x: -72, z: -98 }, { x: -83, z: -50 }, { x: -69, z: 0 }, { x: -82, z: 50 }, { x: -70, z: 100 }, { x: -78, z: 145 }], 10),
-      road("canal-street", [{ x: -32, z: -146 }, { x: -42, z: -99 }, { x: -30, z: -51 }, { x: -40, z: -5 }, { x: -28, z: 44 }, { x: -39, z: 96 }, { x: -24, z: 151 }], 10),
-      road("central-spine", [{ x: 0, z: -150 }, { x: 0, z: -100 }, { x: 0, z: -50 }, { x: 0, z: 0 }, { x: 0, z: 50 }, { x: 0, z: 100 }, { x: 0, z: 150 }], 12),
-      road("east-market", [{ x: 54, z: -145 }, { x: 48, z: -98 }, { x: 54, z: -50 }, { x: 50, z: 0 }, { x: 58, z: 50 }, { x: 46, z: 100 }, { x: 54, z: 145 }], 10),
-      road("eastern-gate", [{ x: 108, z: -142 }, { x: 114, z: -98 }, { x: 105, z: -50 }, { x: 116, z: 0 }, { x: 109, z: 50 }, { x: 121, z: 100 }, { x: 108, z: 145 }], 11),
-      road("harbor-gate", [{ x: 148, z: -140 }, { x: 139, z: -94 }, { x: 151, z: -48 }, { x: 143, z: 0 }, { x: 155, z: 48 }, { x: 141, z: 94 }, { x: 148, z: 140 }], 9),
-      road("northwest-diagonal", [{ x: -148, z: -136 }, { x: -105, z: -119 }, { x: -64, z: -91 }, { x: -28, z: -56 }, { x: -5, z: -22 }], 9),
-      road("northeast-diagonal", [{ x: 8, z: -40 }, { x: 42, z: -76 }, { x: 77, z: -104 }, { x: 116, z: -123 }, { x: 153, z: -130 }], 9),
-      road("west-river-cut", [{ x: -151, z: 20 }, { x: -114, z: 3 }, { x: -78, z: -9 }, { x: -45, z: -28 }, { x: -20, z: -56 }], 9),
-      road("south-river-cut", [{ x: -92, z: 146 }, { x: -59, z: 110 }, { x: -35, z: 78 }, { x: -8, z: 54 }, { x: 25, z: 42 }, { x: 52, z: 21 }], 9),
-      road("east-quay-link", [{ x: 47, z: 18 }, { x: 79, z: 42 }, { x: 111, z: 62 }, { x: 141, z: 76 }], 9),
-      road("west-neighborhood-loop", [{ x: -109, z: -50 }, { x: -94, z: -21 }, { x: -102, z: 13 }, { x: -83, z: 43 }, { x: -109, z: 67 }, { x: -124, z: 48 }, { x: -109, z: -50 }], 8.5),
-      road("east-neighborhood-loop", [{ x: 78, z: -53 }, { x: 93, z: -24 }, { x: 82, z: 8 }, { x: 101, z: 35 }, { x: 82, z: 57 }, { x: 66, z: 38 }, { x: 78, z: -53 }], 8.5),
-      road("old-town-loop", [{ x: -43, z: 17 }, { x: -19, z: 11 }, { x: 14, z: 17 }, { x: 30, z: 42 }, { x: 17, z: 63 }, { x: -12, z: 68 }, { x: -37, z: 52 }, { x: -43, z: 17 }], 8.5),
-      road("ferry-approach", [{ x: 145, z: 78 }, { x: 158, z: 99 }, { x: 143, z: 120 }, { x: 123, z: 105 }], 8.5),
-      road("hillside-switchback", [{ x: -157, z: 112 }, { x: -139, z: 96 }, { x: -153, z: 79 }, { x: -133, z: 60 }, { x: -146, z: 42 }], 8.5),
-      road("backstreet-s", [{ x: 24, z: -145 }, { x: 45, z: -129 }, { x: 36, z: -109 }, { x: 55, z: -92 }, { x: 40, z: -77 }, { x: 54, z: -58 }], 8.5),
-      road("dock-service-loop", [{ x: 120, z: -98 }, { x: 136, z: -75 }, { x: 127, z: -51 }, { x: 148, z: -35 }, { x: 135, z: -13 }, { x: 148, z: 0 }], 8.5),
+      road("pobedy-avenue", [
+        { x: -171, z: 123 }, { x: -135, z: 95 }, { x: -98, z: 66 }, { x: -62, z: 39 }, { x: -30, z: 29 },
+      ], 14),
+      road("nedelina-street", [
+        { x: 4, z: -130 }, { x: 0, z: -92 }, { x: -4, z: -58 }, { x: -5, z: -39 },
+        { x: -5, z: 0 }, { x: -5, z: 39 }, { x: -2, z: 77 }, { x: 4, z: 121 },
+      ], 12),
+      road("moskovskaya-street", [
+        { x: -198, z: 18 }, { x: -153, z: 16 }, { x: -111, z: 14 }, { x: -72, z: 11 }, { x: -42, z: 5 },
+      ], 12),
+      road("8-marta-street", [
+        { x: 29, z: -30 }, { x: 67, z: -39 }, { x: 109, z: -51 }, { x: 151, z: -68 }, { x: 198, z: -91 },
+      ], 11),
     ],
     trafficRoutes: [],
     signalJunctions: [
-      { x: -124, z: -70 }, { x: 54, z: -79 }, { x: 0, z: 38 }, { x: 108, z: 40 },
+      { x: 0, z: -42 }, { x: 0, z: 42 },
     ],
     parcels: [],
   },
@@ -133,8 +110,7 @@ CITY_LAYOUTS.tokyo.trafficRoutes = [
   route("tokyo-downtown-traffic", CITY_LAYOUTS.tokyo.roads.find((item) => item.id === "drift-ring")!),
 ];
 CITY_LAYOUTS.yokohama.trafficRoutes = [
-  route("yokohama-coastal-traffic", CITY_LAYOUTS.yokohama.roads.find((item) => item.id === "outer-coastal-loop")!),
-  route("yokohama-port-traffic", CITY_LAYOUTS.yokohama.roads.find((item) => item.id === "harbor-loop")!),
+  route("yokohama-market-traffic", CITY_LAYOUTS.yokohama.roads.find((item) => item.id === "central-market-ring")!),
 ];
 
 const pointSegmentDistance = (px: number, pz: number, a: CityPoint, b: CityPoint): number => {

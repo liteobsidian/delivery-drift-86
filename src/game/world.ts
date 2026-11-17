@@ -489,17 +489,20 @@ export class World {
     const group = new THREE.Group();
     group.name = "harbor-water";
     const water = new THREE.MeshBasicMaterial({ color: 0x123748 });
-    const edge = WORLD_HALF + ROAD_W / 2 + 14;
+    const { minX, maxX, minZ, maxZ } = this.layout.bounds;
+    const coastGap = 28;
+    const centerX = (minX + maxX) / 2;
+    const centerZ = (minZ + maxZ) / 2;
     const strip = (width: number, depth: number, x: number, z: number) => {
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), water);
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.set(x, 0.025, z);
       group.add(mesh);
     };
-    strip(GS, 28, 0, -edge);
-    strip(GS, 28, 0, edge);
-    strip(28, GS, -edge, 0);
-    strip(28, GS, edge, 0);
+    strip(maxX - minX + coastGap, coastGap, centerX, minZ - coastGap / 2);
+    strip(maxX - minX + coastGap, coastGap, centerX, maxZ + coastGap / 2);
+    strip(coastGap, maxZ - minZ, minX - coastGap / 2, centerZ);
+    strip(coastGap, maxZ - minZ, maxX + coastGap / 2, centerZ);
     return group;
   }
 
