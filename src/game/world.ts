@@ -488,9 +488,9 @@ export class World {
   private buildHarborWater(): THREE.Group {
     const group = new THREE.Group();
     group.name = "harbor-water";
-    const water = new THREE.MeshBasicMaterial({ color: 0x123748 });
+    const water = new THREE.MeshBasicMaterial({ color: 0x0d3b4c, fog: true });
     const { minX, maxX, minZ, maxZ } = this.layout.bounds;
-    const coastGap = 28;
+    const coastGap = 36;
     const centerX = (minX + maxX) / 2;
     const centerZ = (minZ + maxZ) / 2;
     const strip = (width: number, depth: number, x: number, z: number) => {
@@ -503,6 +503,26 @@ export class World {
     strip(maxX - minX + coastGap, coastGap, centerX, maxZ + coastGap / 2);
     strip(coastGap, maxZ - minZ, minX - coastGap / 2, centerZ);
     strip(coastGap, maxZ - minZ, maxX + coastGap / 2, centerZ);
+    const shoreline = new THREE.LineBasicMaterial({ color: 0x75a4ae, transparent: true, opacity: 0.46 });
+    for (const area of this.layout.waterAreas) {
+      const shape = new THREE.Shape();
+      shape.moveTo(area.points[0].x, -area.points[0].z);
+      for (const point of area.points.slice(1)) shape.lineTo(point.x, -point.z);
+      shape.closePath();
+      const inlet = new THREE.Mesh(new THREE.ShapeGeometry(shape), water);
+      inlet.rotation.x = -Math.PI / 2;
+      inlet.position.y = 0.04;
+      inlet.name = `water-area-${area.id}`;
+      group.add(inlet);
+
+      const edge = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(area.points.map(({ x, z }) => new THREE.Vector3(x, 0.075, z))),
+        shoreline,
+      );
+      edge.name = `shoreline-${area.id}`;
+      group.add(edge);
+    }
+    group.userData.interiorWater = this.layout.waterAreas.length;
     return group;
   }
 
@@ -517,12 +537,47 @@ export class World {
 
     g.fillStyle = this.mapId === "yokohama" ? "#424c55" : "#414a5c";
     g.fillRect(0, 0, S, S);
+    for (const area of this.layout.waterAreas) {
+      g.beginPath();
+      area.points.forEach((point, i) => i === 0 ? g.moveTo(u(point.x), v(point.z)) : g.lineTo(u(point.x), v(point.z)));
+      g.closePath();
+      g.fillStyle = "#123c4b";
+      g.fill();
+      g.strokeStyle = "rgba(133,177,184,.5)";
+      g.lineWidth = w(0.7);
+      g.stroke();
+    }
     for (const parcel of this.layout.parcels) {
       g.save();
       g.translate(u(parcel.x), v(parcel.z));
       g.rotate(-parcel.rotation);
       g.fillStyle = parcel.zone === "port" ? "#35434c" : "#30394a";
       g.fillRect(-w(parcel.width / 2), -w(parcel.depth / 2), w(parcel.width), w(parcel.depth));
+      g.restore();
+    }
+    for (const site of this.layout.portSites) {
+      if (site.kind === "pier" || site.kind === "cargo-ship" || site.kind === "gantry-crane") continue;
+      g.save();
+      g.translate(u(site.x), v(site.z));
+      g.rotate(site.rotation);
+      g.fillStyle = site.kind === "container-yard" ? "#3c4a50" : site.kind === "tank-farm" ? "#454d4c" : "#4a5559";
+      g.fillRect(-w(site.width / 2), -w(site.depth / 2), w(site.width), w(site.depth));
+      g.strokeStyle = site.kind === "container-yard" ? "rgba(237,181,81,.74)" : "rgba(157,180,178,.48)";
+      g.lineWidth = w(0.65);
+      g.setLineDash([]);
+      g.strokeRect(-w(site.width / 2), -w(site.depth / 2), w(site.width), w(site.depth));
+      if (site.kind === "container-yard") {
+        g.strokeStyle = "rgba(235,192,103,.55)";
+        g.lineWidth = w(0.5);
+        g.setLineDash([w(2), w(2)]);
+        for (let i = -1; i <= 1; i++) {
+          const x = i * site.width * 0.22;
+          g.beginPath();
+          g.moveTo(w(x), -w(site.depth * 0.4));
+          g.lineTo(w(x), w(site.depth * 0.4));
+          g.stroke();
+        }
+      }
       g.restore();
     }
 
@@ -676,111 +731,257 @@ export class World {
   private buildPortBuildings(): THREE.Group {
     const group = new THREE.Group();
     group.name = "port-warehouses-and-containers";
-    const rng = mulberry32(9182);
-    const warehouses: { x: number; z: number; w: number; h: number; d: number; rotation: number }[] = [];
-    const containers: { x: number; z: number; w: number; h: number; d: number; color: number; level: number; rotation: number }[] = [];
-    const paint = [0xe15a42, 0x32a8b4, 0xe1a83c, 0x627ead, 0x829951];
+    const stats = { warehouses: 0, containerStacks: 0, containerInstances: 0, piers: 0, cargoShips: 0, tankFarms: 0 };
+    const unitBox = new THREE.BoxGeometry(1, 1, 1);
+    const cranePaint = new THREE.MeshStandardMaterial({ color: 0xd7ded7, roughness: 0.82, metalness: 0.16, map: this.makeWarehouseTexture() });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x48555a, roughness: 0.76, metalness: 0.28 });
+    const doorMat = new THREE.MeshStandardMaterial({ color: 0x17252a, emissive: 0x10232a, emissiveIntensity: 0.55, roughness: 0.65 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0xd6ab57, emissive: 0x593b0e, emissiveIntensity: 0.35, roughness: 0.58, metalness: 0.28 });
+    const steelMat = new THREE.MeshStandardMaterial({ color: 0x64757a, roughness: 0.42, metalness: 0.72 });
+    const tankMat = new THREE.MeshStandardMaterial({ color: 0x71838a, roughness: 0.34, metalness: 0.66, emissive: 0x0b1a20 });
+    const tankBandMat = new THREE.MeshStandardMaterial({ color: 0xe0a94b, emissive: 0x422907, emissiveIntensity: 0.45, metalness: 0.34 });
+    const containerMat = new THREE.MeshStandardMaterial({ map: this.makeContainerTexture(), color: 0xffffff, roughness: 0.72, metalness: 0.28 });
+    const containerPaint = [0xc74c3e, 0x2297a5, 0xd39632, 0x5c75a1, 0x71834c, 0xb8b9aa];
+    const tint = new THREE.Color();
+    const matrix = new THREE.Matrix4();
+    const rotation = new THREE.Quaternion();
+    const addBox = (parent: THREE.Group, material: THREE.Material, x: number, y: number, z: number, w: number, h: number, d: number) => {
+      const mesh = new THREE.Mesh(unitBox, material);
+      mesh.position.set(x, y, z);
+      mesh.scale.set(w, h, d);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const addSite = (site: (typeof this.layout.portSites)[number], name: string) => {
+      const siteGroup = new THREE.Group();
+      siteGroup.name = `${name}-${site.id}`;
+      siteGroup.position.set(site.x, 0, site.z);
+      siteGroup.rotation.y = -site.rotation;
+      siteGroup.userData.siteId = site.id;
+      group.add(siteGroup);
+      return siteGroup;
+    };
+    const addBuildingBounds = (site: (typeof this.layout.portSites)[number], x: number, z: number, w: number, d: number, h: number) => {
+      const c = Math.cos(site.rotation);
+      const s = Math.sin(site.rotation);
+      const worldX = site.x + x * c - z * s;
+      const worldZ = site.z + x * s + z * c;
+      const ex = Math.abs(c) * w / 2 + Math.abs(s) * d / 2;
+      const ez = Math.abs(s) * w / 2 + Math.abs(c) * d / 2;
+      this.buildings.push({ minX: worldX - ex, maxX: worldX + ex, minZ: worldZ - ez, maxZ: worldZ + ez });
+      this.buildingHeights.push(h);
+    };
 
-    for (const [index, parcel] of this.layout.parcels.entries()) {
-      const c = Math.cos(parcel.rotation);
-      const s = Math.sin(parcel.rotation);
-      const place = (lx: number, lz: number) => ({ x: parcel.x + lx * c - lz * s, z: parcel.z + lx * s + lz * c });
-      if (index % 2 === 0) {
-        const w = parcel.width * 0.72;
-        const d = parcel.depth * 0.66;
-        const h = 8 + rng() * 3;
-        warehouses.push({ x: parcel.x, z: parcel.z, w, h, d, rotation: parcel.rotation });
-        const ex = Math.abs(c) * w / 2 + Math.abs(s) * d / 2;
-        const ez = Math.abs(s) * w / 2 + Math.abs(c) * d / 2;
-        this.buildings.push({ minX: parcel.x - ex, maxX: parcel.x + ex, minZ: parcel.z - ez, maxZ: parcel.z + ez });
-        this.buildingHeights.push(h);
+    for (const [siteIndex, site] of this.layout.portSites.entries()) {
+      if (site.kind === "warehouse") {
+        const place = addSite(site, "warehouse");
+        const width = site.width * 0.9;
+        const depth = site.depth * 0.82;
+        const height = 11;
+        addBox(place, cranePaint, 0, height / 2, 0, width, height, depth);
+        addBox(place, roofMat, 0, height + 0.4, 0, width + 1.8, 0.8, depth + 1.4);
+        addBox(place, steelMat, 0, height - 0.3, -depth * 0.32, width * 0.82, 0.32, 0.48);
+        for (const x of [-0.28, 0, 0.28]) {
+          const doorX = x * width;
+          const faceZ = depth / 2 + 0.08;
+          addBox(place, doorMat, doorX, 3.05, faceZ, 4.5, 5.5, 0.16);
+          for (const side of [-1, 1]) addBox(place, trimMat, doorX + side * 2.4, 3.05, faceZ + 0.12, 0.18, 6, 0.16);
+          addBox(place, trimMat, doorX, 6.05, faceZ + 0.12, 4.9, 0.2, 0.16);
+          addBox(place, trimMat, doorX, 6.55, faceZ + 0.26, 0.8, 0.12, 0.22);
+        }
+        for (const x of [-width * 0.36, width * 0.36]) {
+          addBox(place, roofMat, x, height + 1.5, -depth * 0.18, 2.4, 1.4, 2.6);
+          const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffbd55 }));
+          beacon.position.set(x, height + 2.35, depth * 0.2);
+          place.add(beacon);
+        }
+        addBuildingBounds(site, 0, 0, width, depth, height + 2.5);
+        stats.warehouses++;
         continue;
       }
-      for (const dx of [-4, 4]) for (const dz of [-4, 4]) {
-        const { x, z } = place(dx, dz);
-        const w = 4.4;
-        const d = 3.1;
-        const h = 2.7;
-        const color = paint[Math.floor(rng() * paint.length)];
-        const levels = rng() > 0.72 ? 2 : 1;
-        for (let level = 0; level < levels; level++) containers.push({ x, z, w, h, d, color, level, rotation: parcel.rotation });
-        const ex = Math.abs(c) * w / 2 + Math.abs(s) * d / 2;
-        const ez = Math.abs(s) * w / 2 + Math.abs(c) * d / 2;
-        this.buildings.push({ minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez });
-        this.buildingHeights.push(levels * h);
+
+      if (site.kind === "container-yard") {
+        const place = addSite(site, "container-yard");
+        const containerW = 9.2;
+        const containerD = 3.2;
+        const containerH = 2.8;
+        const cols = Math.max(2, Math.floor((site.width - 2) / 9.5));
+        const rows = Math.max(2, Math.floor((site.depth - 2) / 4.2));
+        const positions: { x: number; z: number; level: number; color: number }[] = [];
+        for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+          const x = (col - (cols - 1) / 2) * ((site.width - 3) / cols);
+          const z = (row - (rows - 1) / 2) * ((site.depth - 2) / rows);
+          const levels = (row + col + siteIndex) % 3 === 0 ? 2 : 1;
+          for (let level = 0; level < levels; level++) {
+            positions.push({ x, z, level, color: containerPaint[(row * cols + col + siteIndex) % containerPaint.length] });
+          }
+          addBuildingBounds(site, x, z, containerW, containerD, levels * containerH);
+        }
+        const instanced = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), containerMat, positions.length);
+        positions.forEach((item, i) => {
+          matrix.compose(new THREE.Vector3(item.x, item.level * containerH + containerH / 2, item.z), rotation.identity(), new THREE.Vector3(containerW, containerH, containerD));
+          instanced.setMatrixAt(i, matrix);
+          tint.setHex(item.color);
+          instanced.setColorAt(i, tint);
+        });
+        instanced.castShadow = true;
+        instanced.receiveShadow = true;
+        place.add(instanced);
+        stats.containerStacks++;
+        stats.containerInstances += positions.length;
+        continue;
+      }
+
+      if (site.kind === "tank-farm") {
+        const place = addSite(site, "fuel-tank-farm");
+        const radius = 3.1;
+        const height = 8.8;
+        const tank = new THREE.CylinderGeometry(radius, radius, height, 20);
+        const lid = new THREE.CylinderGeometry(radius, radius, 0.48, 20);
+        const band = new THREE.TorusGeometry(radius + 0.04, 0.16, 6, 20);
+        for (const x of [-7, 0, 7]) {
+          const body = new THREE.Mesh(tank, tankMat);
+          body.position.set(x, height / 2, 0);
+          body.castShadow = true;
+          place.add(body);
+          const top = new THREE.Mesh(lid, steelMat);
+          top.position.set(x, height + 0.18, 0);
+          place.add(top);
+          const stripe = new THREE.Mesh(band, tankBandMat);
+          stripe.rotation.x = Math.PI / 2;
+          stripe.position.set(x, 2.2, 0);
+          place.add(stripe);
+          addBox(place, steelMat, x + 1.1, height + 0.9, -0.9, 0.45, 1.8, 0.45);
+          addBuildingBounds(site, x, 0, radius * 2, radius * 2, height + 1);
+        }
+        stats.tankFarms++;
+        continue;
+      }
+
+      if (site.kind === "pier") {
+        const place = addSite(site, "cargo-pier");
+        const deckMat = new THREE.MeshStandardMaterial({ color: 0x59676b, roughness: 0.88, metalness: 0.12 });
+        addBox(place, deckMat, 0, 0.18, 0, site.width, 0.85, site.depth);
+        const pylonGeo = new THREE.CylinderGeometry(0.5, 0.7, 5.8, 8);
+        const pylons = Math.max(3, Math.floor(site.depth / 12));
+        for (let i = 0; i <= pylons; i++) {
+          const z = -site.depth / 2 + 2 + (site.depth - 4) * i / pylons;
+          for (const x of [-site.width * 0.38, site.width * 0.38]) {
+            const pylon = new THREE.Mesh(pylonGeo, steelMat);
+            pylon.position.set(x, -2.5, z);
+            place.add(pylon);
+          }
+          if (i === 0 || i === pylons) {
+            for (const side of [-1, 1]) {
+              const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.42, 0.9, 8), trimMat);
+              bollard.position.set(side * (site.width * 0.38), 0.95, z);
+              place.add(bollard);
+            }
+          }
+        }
+        for (const x of [-site.width / 2 + 0.5, site.width / 2 - 0.5]) {
+          addBox(place, trimMat, x, 0.72, 0, 0.24, 0.14, site.depth * 0.92);
+        }
+        stats.piers++;
+        continue;
+      }
+
+      if (site.kind === "cargo-ship") {
+        const place = addSite(site, "cargo-ship");
+        const hullShape = new THREE.Shape();
+        hullShape.moveTo(-site.width * 0.48, -site.depth * 0.42);
+        hullShape.lineTo(site.width * 0.3, -site.depth * 0.42);
+        hullShape.lineTo(site.width * 0.5, 0);
+        hullShape.lineTo(site.width * 0.3, site.depth * 0.42);
+        hullShape.lineTo(-site.width * 0.48, site.depth * 0.42);
+        hullShape.closePath();
+        const hullGeo = new THREE.ExtrudeGeometry(hullShape, { depth: 2.6, bevelEnabled: true, bevelSegments: 1, bevelSize: 0.35, bevelThickness: 0.24 });
+        hullGeo.rotateX(-Math.PI / 2);
+        const hull = new THREE.Mesh(hullGeo, new THREE.MeshStandardMaterial({ color: 0x273c4d, roughness: 0.42, metalness: 0.54 }));
+        hull.position.y = -1.2;
+        hull.castShadow = true;
+        place.add(hull);
+        addBox(place, roofMat, -site.width * 0.05, 1.55, 0, site.width * 0.74, 0.5, site.depth * 0.64);
+        const shipContainerGeo = new THREE.BoxGeometry(1, 1, 1);
+        const shipContainerMat = new THREE.MeshStandardMaterial({ color: 0xc44d3b, roughness: 0.72, metalness: 0.32, map: this.makeContainerTexture() });
+        for (const x of [-site.width * 0.2, 0, site.width * 0.2]) for (const z of [-site.depth * 0.17, site.depth * 0.17]) {
+          const cargo = new THREE.Mesh(shipContainerGeo, shipContainerMat);
+          cargo.position.set(x, 3.25, z);
+          cargo.scale.set(site.width * 0.17, 3, site.depth * 0.27);
+          cargo.castShadow = true;
+          place.add(cargo);
+        }
+        addBox(place, cranePaint, -site.width * 0.28, 4.4, 0, site.width * 0.16, 5.5, site.depth * 0.72);
+        addBox(place, doorMat, -site.width * 0.195, 4.5, site.depth * 0.37, 0.18, 3.7, site.depth * 0.32);
+        addBox(place, steelMat, -site.width * 0.31, 7.4, 0, 0.7, 1.1, 0.7);
+        for (const [x, color] of [[-site.width * 0.38, 0xff433d], [site.width * 0.42, 0x55ffb7]] as const) {
+          const light = new THREE.Mesh(new THREE.SphereGeometry(0.48, 8, 6), new THREE.MeshBasicMaterial({ color }));
+          light.position.set(x, 4.8, 0);
+          place.add(light);
+        }
+        stats.cargoShips++;
       }
     }
-
-    const warehouseGeo = new THREE.BoxGeometry(1, 1, 1);
-    warehouseGeo.translate(0, 0.5, 0);
-    const warehouseTexture = this.makeWarehouseTexture();
-    const warehouseMat = new THREE.MeshStandardMaterial({
-      map: warehouseTexture,
-      color: 0xffffff,
-      roughness: 0.86,
-      metalness: 0.08,
-      emissive: 0x101820,
-    });
-    const warehouseMesh = new THREE.InstancedMesh(warehouseGeo, warehouseMat, warehouses.length);
-    const matrix = new THREE.Matrix4();
-    const quat = new THREE.Quaternion();
-    const tint = new THREE.Color();
-    warehouses.forEach((b, i) => {
-      quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.rotation);
-      matrix.compose(new THREE.Vector3(b.x, 0, b.z), quat, new THREE.Vector3(b.w, b.h, b.d));
-      warehouseMesh.setMatrixAt(i, matrix);
-      tint.setHex(i % 2 ? 0x8b999e : 0x737f86);
-      warehouseMesh.setColorAt(i, tint);
-      this.buildings.push({ minX: b.x - b.w / 2, maxX: b.x + b.w / 2, minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2 });
-      this.buildingHeights.push(b.h);
-    });
-    group.add(warehouseMesh);
-
-    const containerGeo = new THREE.BoxGeometry(1, 1, 1);
-    containerGeo.translate(0, 0.5, 0);
-    const containerMat = new THREE.MeshStandardMaterial({ map: this.makeContainerTexture(), color: 0xffffff, roughness: 0.72, metalness: 0.26 });
-    const containerMesh = new THREE.InstancedMesh(containerGeo, containerMat, containers.length);
-    containers.forEach((b, i) => {
-      quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.rotation);
-      matrix.compose(new THREE.Vector3(b.x, b.level * b.h, b.z), quat, new THREE.Vector3(b.w, b.h, b.d));
-      containerMesh.setMatrixAt(i, matrix);
-      tint.setHex(b.color);
-      containerMesh.setColorAt(i, tint);
-    });
-    group.add(containerMesh);
+    group.userData.portStats = stats;
     return group;
   }
 
   private buildPortCranes(): THREE.Group {
     const group = new THREE.Group();
     group.name = "port-gantry-cranes";
-    const frameMat = new THREE.MeshStandardMaterial({ color: 0xffad4d, emissive: 0x542307, emissiveIntensity: 0.24, roughness: 0.62, metalness: 0.24 });
-    const beam = new THREE.BoxGeometry(1, 1, 1);
-    const addBeam = (x: number, y: number, z: number, w: number, h: number, d: number) => {
-      const mesh = new THREE.Mesh(beam, frameMat);
-      mesh.position.set(x, y, z);
-      mesh.scale.set(w, h, d);
-      group.add(mesh);
-    };
-    const spots = [
-      { x: -151, z: -148 }, { x: 151, z: -142 }, { x: 157, z: 116 }, { x: -157, z: 140 },
-    ];
-    for (const { x: cx, z: cz } of spots) {
-      const w = 24;
-      const d = 13;
-      if (this.rectHitsDriftRoad(cx, cz, w, d)) continue;
-      for (const sx of [-1, 1]) {
-        for (const sz of [-1, 1]) {
-          const x = cx + sx * w * 0.42;
-          const z = cz + sz * d * 0.38;
-          addBeam(x, 6.5, z, 0.8, 13, 0.8);
-          this.buildings.push({ minX: x - 0.6, maxX: x + 0.6, minZ: z - 0.6, maxZ: z + 0.6 });
-          this.buildingHeights.push(13);
-        }
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0xffa63d, emissive: 0x75340b, emissiveIntensity: 0.36, roughness: 0.54, metalness: 0.38 });
+    const braceMat = new THREE.MeshStandardMaterial({ color: 0x29363a, roughness: 0.52, metalness: 0.46 });
+    const lightMat = new THREE.MeshBasicMaterial({ color: 0xffcc68 });
+    const unitBox = new THREE.BoxGeometry(1, 1, 1);
+    let craneCount = 0;
+    for (const site of this.layout.portSites.filter(({ kind }) => kind === "gantry-crane")) {
+      const crane = new THREE.Group();
+      crane.name = `gantry-crane-${site.id}`;
+      crane.position.set(site.x, 0, site.z);
+      crane.rotation.y = -site.rotation;
+      crane.userData.siteId = site.id;
+      group.add(crane);
+      const w = site.width;
+      const d = site.depth;
+      const h = 16;
+      const addBeam = (x: number, y: number, z: number, width: number, height: number, depth: number, material: THREE.Material = frameMat, zRotation = 0) => {
+        const mesh = new THREE.Mesh(unitBox, material);
+        mesh.position.set(x, y, z);
+        mesh.scale.set(width, height, depth);
+        mesh.rotation.z = zRotation;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        crane.add(mesh);
+        return mesh;
+      };
+      for (const x of [-w * 0.42, w * 0.42]) for (const z of [-d * 0.38, d * 0.38]) {
+        addBeam(x, h / 2, z, 1.25, h, 1.1);
+        addBeam(x, 1.1, z, 2.2, 0.7, 2.0, braceMat);
+        const worldX = site.x + x * Math.cos(site.rotation) - z * Math.sin(site.rotation);
+        const worldZ = site.z + x * Math.sin(site.rotation) + z * Math.cos(site.rotation);
+        this.buildings.push({ minX: worldX - 0.8, maxX: worldX + 0.8, minZ: worldZ - 0.8, maxZ: worldZ + 0.8 });
+        this.buildingHeights.push(h);
       }
-      addBeam(cx, 13, cz, w, 0.9, 0.9);
-      addBeam(cx, 13.8, cz, 2, 0.6, 2);
+      for (const z of [-d * 0.38, d * 0.38]) {
+        addBeam(0, h, z, w + 3.2, 1.4, 1.5);
+        addBeam(0, h - 1.25, z, w + 3.2, 0.42, 2.1, braceMat);
+        addBeam(0, h - 0.58, z + Math.sign(z) * 0.8, w * 0.72, 0.16, 0.12, lightMat);
+      }
+      for (const x of [-w * 0.42, w * 0.42]) addBeam(x, h - 0.15, 0, 1.3, 1.4, d * 0.9);
+      addBeam(0, h - 2.1, 0, 6.6, 1.2, 5.8, braceMat);
+      addBeam(0, h - 2.85, 0, 4.7, 0.55, 4.2, frameMat);
+      for (const x of [-1.35, 1.35]) addBeam(x, h - 6.8, 0, 0.2, 10, 0.2, braceMat);
+      addBeam(0, h - 11.6, 0, 8, 0.45, 3.2, frameMat);
+      for (const [x, color] of [[-w * 0.42, 0xff463c], [w * 0.42, 0x52ffbd]] as const) {
+        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), new THREE.MeshBasicMaterial({ color }));
+        lamp.position.set(x, h + 1.15, 0);
+        crane.add(lamp);
+      }
+      craneCount++;
     }
+    group.userData.gantryCranes = craneCount;
     return group;
   }
 

@@ -11,6 +11,17 @@ export interface CityParcel {
   rotation: number;
   zone: "downtown" | "port";
 }
+export interface WaterArea { id: string; points: CityPoint[] }
+export type PortSiteKind = "warehouse" | "container-yard" | "gantry-crane" | "pier" | "cargo-ship" | "tank-farm";
+export interface PortSite {
+  id: string;
+  kind: PortSiteKind;
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  rotation: number;
+}
 export interface CityLayout {
   id: MapId;
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
@@ -18,6 +29,8 @@ export interface CityLayout {
   trafficRoutes: TrafficRoute[];
   signalJunctions: CityPoint[];
   parcels: CityParcel[];
+  waterAreas: WaterArea[];
+  portSites: PortSite[];
 }
 
 const bounds = { minX: -174, maxX: 174, minZ: -174, maxZ: 174 };
@@ -68,34 +81,107 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
       { x: -145, z: -87, width: 18, depth: 18, rotation: 0, zone: "downtown" },
       { x: -145, z: -145, width: 18, depth: 18, rotation: 0, zone: "downtown" },
     ],
+    waterAreas: [],
+    portSites: [],
   },
   yokohama: {
     id: "yokohama",
     bounds: { minX: -210, maxX: 210, minZ: -140, maxZ: 140 },
     roads: [
-      road("central-market-ring", circularRoadPoints(0, 0, 42, 0, Math.PI * 2, 64), 14),
-      road("papina-street", [
-        { x: -194, z: -82 }, { x: -151, z: -67 }, { x: -108, z: -51 }, { x: -68, z: -37 }, { x: -30, z: -29 },
-      ], 12),
-      road("pobedy-avenue", [
-        { x: -171, z: 123 }, { x: -135, z: 95 }, { x: -98, z: 66 }, { x: -62, z: 39 }, { x: -30, z: 29 },
+      road("port-spine", [
+        { x: 0, z: -130 }, { x: 5, z: -95 }, { x: -3, z: -54 }, { x: 0, z: -20 },
+        { x: 0, z: 17 }, { x: 2, z: 43 }, { x: 4, z: 55 },
       ], 14),
-      road("nedelina-street", [
-        { x: 4, z: -130 }, { x: 0, z: -92 }, { x: -4, z: -58 }, { x: -5, z: -39 },
-        { x: -5, z: 0 }, { x: -5, z: 39 }, { x: -2, z: 77 }, { x: 4, z: 121 },
+      road("west-approach", [
+        { x: -200, z: 120 }, { x: -169, z: 111 }, { x: -135, z: 91 }, { x: -103, z: 68 },
+        { x: -70, z: 45 }, { x: -43, z: 21 }, { x: -25, z: 0 },
+      ], 14),
+      road("port-roundabout", circularRoadPoints(-25, 0, 25, 0, Math.PI * 2, 48), 13),
+      road("market-arterial", [
+        { x: -203, z: -23 }, { x: -165, z: -18 }, { x: -121, z: -20 }, { x: -77, z: -27 },
+        { x: -35, z: -23 }, { x: 0, z: -22 }, { x: 55, z: -24 }, { x: 110, z: -25 },
+        { x: 160, z: -27 }, { x: 203, z: -32 },
       ], 12),
-      road("moskovskaya-street", [
-        { x: -198, z: 18 }, { x: -153, z: 16 }, { x: -111, z: 14 }, { x: -72, z: 11 }, { x: -42, z: 5 },
+      road("quay-road", [
+        { x: -200, z: 43 }, { x: -162, z: 48 }, { x: -122, z: 46 }, { x: -82, z: 41 },
+        { x: -42, z: 46 }, { x: 0, z: 43 }, { x: 40, z: 47 }, { x: 80, z: 44 }, { x: 105, z: 42 },
       ], 12),
-      road("8-marta-street", [
-        { x: 29, z: -30 }, { x: 67, z: -39 }, { x: 109, z: -51 }, { x: 151, z: -68 }, { x: 198, z: -91 },
+      road("freight-loop", [
+        { x: -172, z: -119 }, { x: -124, z: -127 }, { x: -68, z: -112 }, { x: -8, z: -122 },
+        { x: 52, z: -115 }, { x: 112, z: -124 }, { x: 162, z: -96 }, { x: 168, z: -58 },
+        { x: 144, z: -32 }, { x: 102, z: -35 }, { x: 48, z: -52 }, { x: 0, z: -45 },
+        { x: -47, z: -65 }, { x: -95, z: -86 }, { x: -142, z: -61 }, { x: -174, z: -36 },
+        { x: -182, z: -73 }, { x: -172, z: -119 },
+      ], 13),
+      road("dock-service-road", [
+        { x: 36, z: 46 }, { x: 48, z: 54 }, { x: 62, z: 57 }, { x: 75, z: 60 },
+      ], 10),
+      road("west-loading-road", [
+        { x: 12, z: 45 }, { x: 20, z: 53 }, { x: 29, z: 60 },
+      ], 10),
+      road("east-loading-road", [
+        { x: 80, z: 44 }, { x: 92, z: 52 }, { x: 103, z: 60 },
+      ], 10),
+      road("west-yard-road", [
+        { x: -202, z: 112 }, { x: -198, z: 80 }, { x: -188, z: 52 }, { x: -169, z: 37 },
+        { x: -133, z: 39 }, { x: -102, z: 46 }, { x: -78, z: 24 }, { x: -72, z: -8 },
       ], 11),
+      road("east-terminal-road", [
+        { x: 165, z: -129 }, { x: 161, z: -93 }, { x: 153, z: -63 }, { x: 145, z: -39 },
+        { x: 130, z: -5 }, { x: 121, z: 27 }, { x: 105, z: 42 },
+      ], 11),
+      road("west-terminal-loop", [
+        { x: -144, z: -42 }, { x: -126, z: -59 }, { x: -101, z: -68 }, { x: -84, z: -55 },
+        { x: -91, z: -33 }, { x: -112, z: -24 }, { x: -138, z: -26 }, { x: -144, z: -42 },
+      ], 9.5),
+      road("east-terminal-loop", [
+        { x: 55, z: -21 }, { x: 72, z: -40 }, { x: 101, z: -44 }, { x: 122, z: -25 },
+        { x: 112, z: -2 }, { x: 86, z: 7 }, { x: 62, z: 2 }, { x: 55, z: -21 },
+      ], 9.5),
+      road("south-service-road", [
+        { x: -72, z: -8 }, { x: -72, z: -36 }, { x: -78, z: -67 }, { x: -72, z: -96 }, { x: -68, z: -112 },
+      ], 10),
+      road("north-terminal-service", [
+        { x: -82, z: 41 }, { x: -89, z: 21 }, { x: -95, z: -5 }, { x: -92, z: -28 },
+      ], 9),
+      road("east-yard-road", [
+        { x: 145, z: -39 }, { x: 158, z: -61 }, { x: 180, z: -71 }, { x: 190, z: -53 },
+        { x: 191, z: -19 }, { x: 177, z: 10 }, { x: 169, z: 41 },
+      ], 10),
     ],
     trafficRoutes: [],
     signalJunctions: [
-      { x: 0, z: -42 }, { x: 0, z: 42 },
+      { x: 0, z: -23 }, { x: 0, z: 43 },
     ],
     parcels: [],
+    waterAreas: [{
+      id: "north-harbor-inlet",
+      points: [
+        { x: -210, z: 140 }, { x: -150, z: 140 }, { x: -98, z: 140 }, { x: -53, z: 140 },
+        { x: -8, z: 140 }, { x: 39, z: 140 }, { x: 88, z: 140 }, { x: 128, z: 140 },
+        { x: 165, z: 140 }, { x: 210, z: 140 }, { x: 210, z: 98 }, { x: 183, z: 100 },
+        { x: 158, z: 111 }, { x: 138, z: 100 }, { x: 120, z: 80 }, { x: 102, z: 61 },
+        { x: 82, z: 57 }, { x: 60, z: 61 }, { x: 39, z: 73 }, { x: 15, z: 81 },
+        { x: -10, z: 82 }, { x: -35, z: 77 }, { x: -60, z: 69 }, { x: -90, z: 66 },
+        { x: -120, z: 72 }, { x: -150, z: 82 }, { x: -178, z: 79 }, { x: -205, z: 72 },
+      ],
+    }],
+    portSites: [
+      { id: "west-gate-warehouse", kind: "warehouse", x: -157, z: 7, width: 34, depth: 24, rotation: 0.08 },
+      { id: "west-inland-warehouse", kind: "warehouse", x: -145, z: -95, width: 40, depth: 22, rotation: 0.12 },
+      { id: "south-terminal-warehouse", kind: "warehouse", x: -30, z: -90, width: 38, depth: 22, rotation: 0 },
+      { id: "east-terminal-warehouse", kind: "warehouse", x: 74, z: -83, width: 38, depth: 24, rotation: -0.08 },
+      { id: "west-gate-container-yard", kind: "container-yard", x: -191, z: 5, width: 24, depth: 16, rotation: 0 },
+      { id: "south-container-yard", kind: "container-yard", x: 60, z: -90, width: 40, depth: 22, rotation: -0.04 },
+      { id: "east-container-yard", kind: "container-yard", x: 187, z: 60, width: 28, depth: 18, rotation: 0 },
+      { id: "east-tank-farm", kind: "tank-farm", x: 190, z: -112, width: 22, depth: 18, rotation: 0 },
+      { id: "west-gantry-crane", kind: "gantry-crane", x: 29, z: 85, width: 30, depth: 20, rotation: 0 },
+      { id: "east-gantry-crane", kind: "gantry-crane", x: 103, z: 85, width: 30, depth: 20, rotation: 0 },
+      { id: "west-loading-pier", kind: "pier", x: 29, z: 85, width: 30, depth: 50, rotation: 0 },
+      { id: "cargo-pier", kind: "pier", x: 73, z: 87, width: 16, depth: 50, rotation: 0 },
+      { id: "east-loading-pier", kind: "pier", x: 103, z: 85, width: 30, depth: 50, rotation: 0 },
+      { id: "moored-cargo-ship", kind: "cargo-ship", x: 90, z: 125, width: 60, depth: 17, rotation: 0 },
+    ],
   },
 };
 
@@ -110,7 +196,8 @@ CITY_LAYOUTS.tokyo.trafficRoutes = [
   route("tokyo-downtown-traffic", CITY_LAYOUTS.tokyo.roads.find((item) => item.id === "drift-ring")!),
 ];
 CITY_LAYOUTS.yokohama.trafficRoutes = [
-  route("yokohama-market-traffic", CITY_LAYOUTS.yokohama.roads.find((item) => item.id === "central-market-ring")!),
+  route("yokohama-freight-traffic", CITY_LAYOUTS.yokohama.roads.find((item) => item.id === "freight-loop")!),
+  route("yokohama-port-traffic", CITY_LAYOUTS.yokohama.roads.find((item) => item.id === "port-roundabout")!),
 ];
 
 const pointSegmentDistance = (px: number, pz: number, a: CityPoint, b: CityPoint): number => {

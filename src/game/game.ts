@@ -271,10 +271,23 @@ export class Game {
       setDeliveriesForTest: (deliveries: number) => { this.profile.deliveries = deliveries; saveProfile(this.profile); },
       weeklyEventSeen: (date?: string) => weeklyEventSeen(date ? new Date(date) : new Date()),
       markWeeklyEventSeen: (date?: string) => markWeeklyEventSeen(date ? new Date(date) : new Date()),
-      portVisuals: () => Boolean(
-        this.world.group.getObjectByName("port-warehouses-and-containers") &&
-        this.world.group.getObjectByName("port-gantry-cranes")
-      ),
+      portVisuals: () => {
+        if (this.world.mapId !== "yokohama") return null;
+        const port = this.world.group.getObjectByName("port-warehouses-and-containers");
+        const water = this.world.group.getObjectByName("harbor-water");
+        const cranes = this.world.group.getObjectByName("port-gantry-cranes");
+        const stats = port?.userData.portStats ?? {};
+        return {
+          interiorWater: water?.userData.interiorWater ?? 0,
+          warehouses: stats.warehouses ?? 0,
+          containerStacks: stats.containerStacks ?? 0,
+          containerInstances: stats.containerInstances ?? 0,
+          gantryCranes: cranes?.userData.gantryCranes ?? 0,
+          piers: stats.piers ?? 0,
+          cargoShips: stats.cargoShips ?? 0,
+          tankFarms: stats.tankFarms ?? 0,
+        };
+      },
       scene: this.scene,
       teleport: (x: number, z: number, heading?: number) => {
         this.car.pos.set(x, 0, z);
@@ -1089,6 +1102,34 @@ export class Game {
     const v = (z: number) => S / 2 + (z - (bounds.minZ + bounds.maxZ) / 2) * scale;
     g.fillStyle = this.world.mapId === "yokohama" ? "#102d39" : "rgba(10,14,28,0.75)";
     g.fillRect(0, 0, S, S);
+    for (const area of this.world.layout.waterAreas) {
+      g.beginPath();
+      area.points.forEach((point, i) => i === 0 ? g.moveTo(u(point.x), v(point.z)) : g.lineTo(u(point.x), v(point.z)));
+      g.closePath();
+      g.fillStyle = "#0b3444";
+      g.fill();
+      g.strokeStyle = "rgba(115,174,184,.62)";
+      g.lineWidth = 0.75;
+      g.stroke();
+    }
+    const siteColors: Record<string, string> = {
+      warehouse: "#7b8c8d",
+      "container-yard": "#c48242",
+      "gantry-crane": "#ffd273",
+      pier: "#889295",
+      "cargo-ship": "#b7d4d3",
+      "tank-farm": "#83a4a6",
+    };
+    for (const site of this.world.layout.portSites) {
+      g.save();
+      g.translate(u(site.x), v(site.z));
+      g.rotate(site.rotation);
+      g.fillStyle = siteColors[site.kind] ?? "#89949a";
+      const width = Math.max(1.3, site.width * scale * 0.65);
+      const depth = Math.max(1.2, site.depth * scale * 0.65);
+      g.fillRect(-width / 2, -depth / 2, width, depth);
+      g.restore();
+    }
     g.lineCap = "round";
     g.lineJoin = "round";
     for (const road of this.world.layout.roads) {

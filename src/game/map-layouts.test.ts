@@ -30,17 +30,62 @@ describe("hand-authored city layouts", () => {
     for (const sweeper of sweepers) expect(sweeper.points.length).toBeGreaterThanOrEqual(9);
   });
 
-  it("keeps Yokohama as a compact Lipetsk market district inside landscape bounds", () => {
+  it("rebuilds Yokohama as a dense harbor network based on the supplied road layout", () => {
     const yokohama = cityLayoutFor("yokohama");
-    expect(yokohama.roads.length).toBeLessThanOrEqual(8);
+    expect(yokohama.roads.length).toBeGreaterThanOrEqual(12);
     expect(yokohama.bounds.maxX - yokohama.bounds.minX).toBeGreaterThan(yokohama.bounds.maxZ - yokohama.bounds.minZ);
     expect(yokohama.roads.map(({ id }) => id)).toEqual(expect.arrayContaining([
-      "central-market-ring", "papina-street", "pobedy-avenue", "nedelina-street", "moskovskaya-street", "8-marta-street",
+      "port-spine", "west-approach", "port-roundabout", "quay-road", "freight-loop", "dock-service-road",
     ]));
-    const ring = yokohama.roads.find(({ id }) => id === "central-market-ring");
+    const ring = yokohama.roads.find(({ id }) => id === "port-roundabout");
     expect(ring).toBeDefined();
     expect(ring!.points[0]).toEqual(ring!.points[ring!.points.length - 1]);
-    expect(distanceToRoadPath(ring!, 42, 0)).toBeLessThan(0.1);
+    expect(distanceToRoadPath(ring!, 0, 0)).toBeLessThan(0.1);
+    expect(Math.min(...yokohama.roads.flatMap((item) => item.points.map((point) => point.x)))).toBeLessThanOrEqual(-180);
+    expect(Math.max(...yokohama.roads.flatMap((item) => item.points.map((point) => point.x)))).toBeGreaterThanOrEqual(180);
+  });
+
+  it("gives Yokohama an interior harbor and explicitly placed port facilities", () => {
+    const yokohama = cityLayoutFor("yokohama");
+    expect(yokohama.waterAreas.map(({ id }) => id)).toContain("north-harbor-inlet");
+    expect(yokohama.waterAreas[0].points.length).toBeGreaterThanOrEqual(12);
+    expect(yokohama.portSites.map(({ kind }) => kind)).toEqual(expect.arrayContaining([
+      "warehouse", "container-yard", "gantry-crane", "pier", "cargo-ship", "tank-farm",
+    ]));
+    expect(yokohama.portSites.length).toBeGreaterThanOrEqual(10);
+    expect(yokohama.waterAreas.some((area) => {
+      const ship = yokohama.portSites.find((site) => site.kind === "cargo-ship")!;
+      let inside = false;
+      for (let i = 0, j = area.points.length - 1; i < area.points.length; j = i++) {
+        const a = area.points[i];
+        const b = area.points[j];
+        const crosses = (a.z > ship.z) !== (b.z > ship.z) && ship.x < ((b.x - a.x) * (ship.z - a.z)) / (b.z - a.z) + a.x;
+        if (crosses) inside = !inside;
+      }
+      return inside;
+    })).toBe(true);
+  });
+
+  it("keeps land-based port facilities inside bounds and clear of roads", () => {
+    const yokohama = cityLayoutFor("yokohama");
+    for (const site of yokohama.portSites.filter(({ kind }) => kind !== "pier" && kind !== "cargo-ship")) {
+      const c = Math.cos(site.rotation);
+      const s = Math.sin(site.rotation);
+      const halfWidth = Math.abs(c) * site.width / 2 + Math.abs(s) * site.depth / 2;
+      const halfDepth = Math.abs(s) * site.width / 2 + Math.abs(c) * site.depth / 2;
+      expect(site.x - halfWidth).toBeGreaterThanOrEqual(yokohama.bounds.minX);
+      expect(site.x + halfWidth).toBeLessThanOrEqual(yokohama.bounds.maxX);
+      expect(site.z - halfDepth).toBeGreaterThanOrEqual(yokohama.bounds.minZ);
+      expect(site.z + halfDepth).toBeLessThanOrEqual(yokohama.bounds.maxZ);
+      expect(parcelClearOfRoads(yokohama, {
+        x: site.x,
+        z: site.z,
+        width: site.width,
+        depth: site.depth,
+        rotation: site.rotation,
+        zone: "port",
+      }, 3), `${site.id} overlaps a road`).toBe(true);
+    }
   });
 
   it("connects every Yokohama street to the same drivable network", () => {

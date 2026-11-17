@@ -167,7 +167,18 @@ await page.locator('[data-a="activity:delivery"]').click();
 await page.locator('[data-a="map:yokohama"]').click();
 const selectedMap = await page.evaluate(() => window.__gameDebug?.mapId?.());
 if (selectedMap !== "yokohama") fail("Selecting Yokohama did not switch the active map");
-if (!(await page.evaluate(() => window.__gameDebug?.portVisuals?.()))) fail("Yokohama map props were not built");
+const yokohamaPortScene = await page.evaluate(() => window.__gameDebug?.portVisuals?.());
+if (
+  !yokohamaPortScene || typeof yokohamaPortScene !== "object" ||
+  yokohamaPortScene.interiorWater < 1 ||
+  yokohamaPortScene.warehouses < 3 ||
+  yokohamaPortScene.containerStacks < 3 ||
+  yokohamaPortScene.containerInstances < 24 ||
+  yokohamaPortScene.gantryCranes < 2 ||
+  yokohamaPortScene.piers < 1 ||
+  yokohamaPortScene.cargoShips < 1 ||
+  yokohamaPortScene.tankFarms < 1
+) fail(`Yokohama's harbor water or port facilities were not rendered: ${JSON.stringify(yokohamaPortScene)}`);
 const yokohamaTraffic = await page.evaluate(() => window.__gameDebug.trafficPos());
 if (!yokohamaTraffic.length || (await page.evaluate((cars) => cars.some((car) => !window.__gameDebug.roadProbe(car.x, car.z).onRoad), yokohamaTraffic))) fail("Yokohama NPC traffic left its authored roads");
 const yokohamaLayout = await page.evaluate(() => window.__gameDebug.layoutSnapshot());
@@ -176,6 +187,10 @@ const layoutSignature = (layout) => JSON.stringify(layout.roads.map(({ id, point
 if (layoutSignature(tokyoLayout) === layoutSignature(yokohamaLayout)) fail("Tokyo and Yokohama minimap road topologies are identical");
 await page.waitForTimeout(700);
 await page.screenshot({ path: join(SHOTS, "07-yokohama-network.png") });
+// Inspect the port props from a normal approach road, at the same following-camera height as play.
+await page.evaluate(() => window.__gameDebug.teleport(45, 47, 0));
+await page.waitForTimeout(900);
+await page.screenshot({ path: join(SHOTS, "08-yokohama-quay.png") });
 const savedMap = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").mapId);
 if (savedMap !== "yokohama") fail("The selected map was not saved to the player profile");
 await page.evaluate(() => window.__gameDebug?.exitMode?.());
