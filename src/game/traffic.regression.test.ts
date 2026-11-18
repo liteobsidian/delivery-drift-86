@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { cityLayoutFor } from "./map-layouts";
-import { Traffic, trafficLanePosition } from "./traffic";
+import { Traffic, trafficLanePosition, smoothedRouteTangent, type RouteData } from "./traffic";
 import type { World } from "./world";
 
 interface TrafficDebugCar {
@@ -65,6 +65,83 @@ describe("NPC traffic regressions", () => {
       const gap = Math.min(delta, a.routeLength - delta);
       expect(gap, `same-lane NPC gap ${gap.toFixed(1)}m`).toBeGreaterThanOrEqual(16);
     }
+    traffic.dispose();
+  });
+
+  it("spawns every initial NPC outside the player's immediate camera area", () => {
+    const traffic = makeTraffic();
+    for (const car of traffic.debugPositions()) {
+      expect(Math.hypot(car.x, car.z), `NPC ${car.id} spawned near the player`).toBeGreaterThanOrEqual(100);
+    }
+    traffic.dispose();
+  });
+
+  it("rechecks spawn clearance when switching maps and player positions", () => {
+    const traffic = makeTraffic();
+    const player = new THREE.Vector3(40, 0, 30);
+    traffic.setWorld({ layout: cityLayoutFor("yokohama"), lights: [] } as unknown as World, player);
+    const cars = traffic.debugPositions();
+    expect(cars.length).toBeGreaterThan(0);
+    for (const car of cars) {
+      expect(Math.hypot(car.x - player.x, car.z - player.z)).toBeGreaterThanOrEqual(100);
+    }
+    traffic.dispose();
+  });
+
+  it("keeps lane position and heading continuous across a sharp corner", () => {
+    const route: RouteData = {
+      points: [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 }, { x: 0, z: 0 }],
+      cumulative: [0, 10, 20, 30, 40],
+      tangents: [{ x: 1, z: 0 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 0, z: -1 }],
+      length: 40,
+    };
+    const before = smoothedRouteTangent(route, 0, 9.99, 1);
+    const after = smoothedRouteTangent(route, 1, 10.01, 1);
+    const beforePosition = trafficLanePosition({ x: 9.99, z: 0 }, before, 3.5);
+    const afterPosition = trafficLanePosition({ x: 10, z: 0.01 }, after, 3.5);
+    expect(Math.hypot(afterPosition.x - beforePosition.x, afterPosition.z - beforePosition.z)).toBeLessThan(0.1);
+    expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(0.01);
+    const reverseBefore = smoothedRouteTangent(route, 1, 10.01, -1);
+    const reverseAfter = smoothedRouteTangent(route, 0, 9.99, -1);
+    expect(Math.hypot(reverseAfter.x - reverseBefore.x, reverseAfter.z - reverseBefore.z)).toBeLessThan(0.01);
+  });
+
+  it("limits NPC speed changes to a small fixed-step acceleration", () => {
+    const traffic = makeTraffic();
+    const before = traffic.debugPositions();
+    traffic.update(0.05, new THREE.Vector3(500, 0, 500), new THREE.Vector3(), 0);
+    const after = traffic.debugPositions();
+    before.forEach((car, index) => {
+      expect(Math.abs(after[index].actualSpeed - car.actualSpeed)).toBeLessThanOrEqual(0.51);
+    });
+    traffic.dispose();
+  });
+
+  it("interpolates rendered transforms between fixed traffic steps", () => {
+    const traffic = makeTraffic();
+    const car = traffic.debugPositions()[0];
+    traffic.update(0.05, new THREE.Vector3(500, 0, 500), new THREE.Vector3(), 0);
+    const current = traffic.debugPositions().find((item) => item.id === car.id)!;
+    const mesh = traffic.group.children[car.id] as THREE.Group;
+    traffic.render(0);
+    expect(mesh.position.x).toBeCloseTo(car.x);
+    expect(mesh.position.z).toBeCloseTo(car.z);
+    traffic.render(1);
+    expect(mesh.position.x).toBeCloseTo(current.x);
+    expect(mesh.position.z).toBeCloseTo(current.z);
+    traffic.dispose();
+  });
+
+  it("keeps collision positions consistent with route progress", () => {
+    const traffic = makeTraffic();
+    const car = traffic.debugPositions()[0];
+    const player = new THREE.Vector3(car.x - car.dx * 1.8, 0, car.z - car.dz * 1.8);
+    const playerVelocity = new THREE.Vector3(car.dx * 22, 0, car.dz * 22);
+    traffic.update(0.05, player, playerVelocity, 22);
+    const afterContact = traffic.debugPositions().find((item) => item.id === car.id)!;
+    traffic.update(0, new THREE.Vector3(500, 0, 500), new THREE.Vector3(), 0);
+    const afterRepose = traffic.debugPositions().find((item) => item.id === car.id)!;
+    expect(Math.hypot(afterRepose.x - afterContact.x, afterRepose.z - afterContact.z)).toBeLessThan(0.001);
     traffic.dispose();
   });
 });

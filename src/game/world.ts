@@ -8,7 +8,8 @@ import {
   LIGHT_YELLOW,
 } from "./config";
 import type { MapId } from "./types";
-import { circleOrientedRectContact, cityBuildingMeshYaw, generateCityBuildingSites, type CityBuildingSite } from "./city-building-layout";
+import { cityBuildingMeshYaw, generateCityBuildingSites, type CityBuildingSite } from "./city-building-layout";
+import { BuildingSpatialIndex } from "./building-spatial-index";
 import { cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad, worldLengthToTexturePixels, worldToTextureCoordinate } from "./map-layouts";
 
 /** Central drift ring (radius) at map center. */
@@ -114,6 +115,7 @@ export class World {
   private chevronMats: THREE.Matrix4[] = [];
   /** building heights aligned with this.buildings (AABBs carry no height) */
   private buildingHeights: number[] = [];
+  private buildingIndex!: BuildingSpatialIndex;
   private flickerT = 0;
   private marker = new THREE.Group();
   private markerRing!: THREE.Mesh;
@@ -143,6 +145,7 @@ export class World {
     this.group.add(this.buildLights());
     this.buildMarker();
     this.group.add(this.marker);
+    this.buildingIndex = new BuildingSpatialIndex(this.buildings);
   }
 
   // ---------- queries ----------
@@ -244,26 +247,8 @@ export class World {
     radius: number,
     vel: THREE.Vector3
   ): number {
-    let impact = 0;
-    for (const b of this.buildings) {
-      const rect = b.collisionRect ?? {
-        x: (b.minX + b.maxX) / 2,
-        z: (b.minZ + b.maxZ) / 2,
-        width: b.maxX - b.minX,
-        depth: b.maxZ - b.minZ,
-        rotation: 0,
-      };
-      const contact = circleOrientedRectContact(pos.x, pos.z, radius, rect);
-      if (!contact) continue;
-      pos.x += contact.nx * contact.penetration;
-      pos.z += contact.nz * contact.penetration;
-      const vn = vel.x * contact.nx + vel.z * contact.nz;
-      if (vn < 0) {
-        impact = Math.max(impact, -vn);
-        vel.x -= vn * contact.nx * 1.4;
-        vel.z -= vn * contact.nz * 1.4;
-      }
-    }
+    const candidates = this.buildingIndex.query(pos.x, pos.z, radius);
+    let impact = this.buildingIndex.resolve(candidates, pos, radius, vel);
     // world bounds
     const { minX, maxX, minZ, maxZ } = this.layout.bounds;
     if (pos.x < minX || pos.x > maxX) {
@@ -2005,6 +1990,7 @@ export class World {
   }
 
   private buildMarker(): void {
+    this.marker.name = "destination-marker";
     const beamMat = new THREE.MeshBasicMaterial({
       color: 0x22ffcc,
       transparent: true,

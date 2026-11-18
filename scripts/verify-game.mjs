@@ -70,6 +70,7 @@ const CANDIDATES = [
   process.env.CHROMIUM_PATH,
   "/opt/gchrome/opt/google/chrome/chrome",
   "/usr/bin/chromium-browser",
+  "/usr/bin/chromium",
   "/usr/bin/google-chrome",
 ].filter(Boolean);
 let browser;
@@ -254,20 +255,55 @@ if (!(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("del
 await page.locator('[data-a="back"]').click();
 
 // Both short modes can start, complete, and be replayed without counting as deliveries.
+await page.evaluate(() => window.__gameDebug?.setDeliveriesForTest?.(0));
 for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TIME ATTACK"]]) {
-  const deliveries = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries);
+  const before = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}"));
   await page.locator('[data-a="play"]').click();
+  if (mode === "drift-trial") await page.screenshot({ path: join(SHOTS, "mode-picker.png") });
   await page.locator(`[data-a="activity:${mode}"]`).click();
   await page.locator('[data-a="map:tokyo"]').click();
   if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} did not start`);
-  await page.evaluate(() => window.__gameDebug?.finishMode?.());
+  const modeState = await page.evaluate(() => window.__gameDebug?.modeState?.());
+  if (await page.locator(".hud-cargo").isVisible()) fail(`${label} still shows irrelevant cargo damage`);
+  if ((await page.evaluate(() => window.__gameDebug.destinationVisible())) !== (mode === "time-attack")) fail(`${label} showed the wrong destination marker`);
+  const tutorial = await page.locator(".tutorial").textContent();
+  if (/груз|красн.{0,10}сигнал|штраф/i.test(tutorial ?? "")) fail(`${label} still shows delivery-only hints`);
+  if (mode === "time-attack") {
+    if (!modeState?.course || modeState.course.checkpoints.length !== 5 || modeState.checkpoint !== 0) fail("Time Attack did not start a fixed five-gate course");
+    const target = await page.evaluate(() => window.__gameDebug?.orderDest?.());
+    if (Math.hypot(target.x - modeState.course.checkpoints[0].x, target.z - modeState.course.checkpoints[0].z) > 0.01) fail("Time Attack did not display its first ordered checkpoint");
+    await page.evaluate(() => window.__gameDebug.advanceCheckpointForTest());
+    const nextState = await page.evaluate(() => window.__gameDebug?.modeState?.());
+    const nextTarget = await page.evaluate(() => window.__gameDebug?.orderDest?.());
+    if (nextState.checkpoint !== 1 || Math.hypot(nextTarget.x - nextState.course.checkpoints[1].x, nextTarget.z - nextState.course.checkpoints[1].z) > 0.01) fail("Time Attack did not advance to the next ordered gate");
+  }
+  await page.screenshot({ path: join(SHOTS, `mode-${mode}-hud.png`) });
+  await page.evaluate((mode) => {
+    if (mode === "drift-trial") window.__gameDebug.setDriftScoreForTest(500);
+    else window.__gameDebug.setElapsedForTest(window.__gameDebug.modeState().course.goldTime);
+    window.__gameDebug.finishMode();
+  }, mode);
   if (!(await page.getByText(label, { exact: true }).count())) fail(`${label} did not show its result`);
-  if (await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries) !== deliveries) fail(`${label} incorrectly counted as a delivery`);
+  const after = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}"));
+  const expectedReward = mode === "drift-trial" ? 450 : 1100;
+  if (after.deliveries !== before.deliveries) fail(`${label} incorrectly counted as a delivery`);
+  if (after.money < before.money + expectedReward) fail(`${label} did not pay its medal reward`);
+  if (after.totalEarn < (before.totalEarn ?? 0) + expectedReward) fail(`${label} reward was not added to career earnings`);
+  if (mode === "drift-trial" && !after.unlockedAch.includes("drifter-silver")) fail("Drift Trial silver achievement was not awarded");
+  if (mode === "time-attack" && !after.unlockedAch.includes("time-attack-gold")) fail("Time Attack gold achievement was not awarded");
+  await page.screenshot({ path: join(SHOTS, `mode-${mode}-result.png`) });
   if (!(await page.evaluate((mode) => Object.keys(JSON.parse(localStorage.getItem("delivery-drift-86-records-v1") ?? "{}")).some((key) => key.includes(`:${mode}:`)), mode))) fail(`${label} personal record was not saved`);
   await page.locator('[data-a="replay"]').click();
   if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} replay did not restart the same mode`);
   await page.evaluate(() => window.__gameDebug?.exitMode?.());
 }
+await page.locator('[data-a="cars"]').click();
+await page.screenshot({ path: join(SHOTS, "mode-unlocked-cars.png") });
+for (const [carId, name] of [["silvia", "Nissan Silvia S15"], ["evo", "Mitsubishi Lancer Evo IX"]]) {
+  const car = page.locator(".car-card").filter({ hasText: name });
+  if (await car.locator(`[data-a="buy:${carId}"]`).count() !== 1) fail(`${name} did not unlock from its mode medal`);
+}
+await page.locator('[data-a="back"]').click();
 const beforeUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries);
 for (let i = 0; i < 2; i++) {
   await page.locator('[data-a="play"]').click();

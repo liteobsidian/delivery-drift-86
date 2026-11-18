@@ -36,7 +36,7 @@ describe("generated city infill", () => {
     for (const id of ["tokyo", "yokohama"] as const) {
       const layout = cityLayoutFor(id);
       const first = generateCityBuildingSites(layout);
-      expect(first.length, `${id} building count`).toBeGreaterThanOrEqual(350);
+      expect(first.length, `${id} building count`).toBe(id === "tokyo" ? 663 : 366);
       expect(generateCityBuildingSites(layout)).toEqual(first);
     }
   });

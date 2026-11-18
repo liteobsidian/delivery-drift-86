@@ -19,13 +19,14 @@ import { AudioSystem } from "./audio";
 import { Input } from "./input";
 import { World } from "./world";
 import { Car } from "./car";
-import { Traffic } from "./traffic";
+import { trafficLanePosition, Traffic } from "./traffic";
 import { Police } from "./police";
 import { loadGameAssets } from "./assets";
 import type { HeroModelKey, LoadedModel } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { sampleRoadPoint } from "./map-layouts";
+import { canUnlockCar, driftMedal, driftMultiplierForSeconds, medalRank, modeReward, timeAttackCourse, timeAttackMedal, type TimeAttackCourse } from "./modes";
 import { carThumb, createShowroom } from "./showroom";
 import { completeWeeklyRoute, loadRecords, loadWeeklyProgress, mapAccessFor, markWeeklyEventSeen, saveRecord, utcWeekKey, weeklyEventSeen, weeklyRoutes } from "./retention";
 
@@ -89,6 +90,14 @@ export class Game {
   private greenCooldown = new Map<World["lights"][number], number>();
   private scrapeCooldown = 0;
   private driftBonusTimer = 0;
+  private driftBankedScore = 0;
+  private driftChainScore = 0;
+  private driftChainTime = 0;
+  private driftIdleTime = 0;
+  private driftMultiplier = 1;
+  private driftCrashThisStep = false;
+  private timeAttackCourse: TimeAttackCourse | null = null;
+  private timeAttackCheckpointIndex = 0;
   private debris: THREE.Mesh[] = [];
   private shake = 0;
   private wreckTimer = -1; // >=0 while the burning wreck is counting down to order fail
@@ -111,6 +120,7 @@ export class Game {
   private hTimer!: HTMLElement;
   private hCargoBar!: HTMLElement;
   private hCargoText!: HTMLElement;
+  private hCargo!: HTMLElement;
   private hSpeed!: HTMLElement;
   private hMoney!: HTMLElement;
   private hDrift!: HTMLElement;
@@ -149,11 +159,13 @@ export class Game {
     this.car = new Car(tunedSpec(this.currentCarSpec(), this.currentUpgrades()));
     this.car.onSmoke = (x, z, strong) => this.effects.spawnSmoke(x, z, strong);
     this.scene.add(this.car.group);
-    this.traffic = new Traffic(this.world);
+    this.traffic = new Traffic(this.world, this.car.pos);
     this.traffic.onNearMiss = () => {
       if (this.screen !== "playing") return;
-      this.addBonus(60, "Впритирку!");
-      this.audio.uiClick();
+      if (this.mode === "delivery") {
+        this.addBonus(60, "Впритирку!");
+        this.audio.uiClick();
+      }
     };
     this.scene.add(this.traffic.group);
     this.scene.add(this.police.group);
@@ -258,6 +270,30 @@ export class Game {
         return { x: pos.x, z: pos.z };
       },
       mode: () => this.mode,
+      modeState: () => ({
+        score: this.driftScore,
+        driftMultiplier: this.driftMultiplier,
+        driftChainScore: this.driftChainScore,
+        checkpoint: this.timeAttackCheckpointIndex,
+        course: this.timeAttackCourse,
+      }),
+      profile: () => ({
+        money: this.profile.money,
+        deliveries: this.profile.deliveries,
+        totalEarn: this.profile.totalEarn,
+        bestEarn: this.profile.bestEarn,
+        unlockedAch: [...this.profile.unlockedAch],
+        timeAttackMedal: this.profile.stats.timeAttackMedal,
+      }),
+      setDriftScoreForTest: (score: number) => {
+        this.driftBankedScore = score;
+        this.driftChainScore = 0;
+        this.driftScore = score;
+      },
+      setElapsedForTest: (elapsed: number) => {
+        if (this.order) this.timeLeft = Math.max(0, this.order.timeLimit - elapsed);
+      },
+      advanceCheckpointForTest: () => this.advanceTimeAttackCheckpoint(),
       nitroFuel: () => this.nitroFuel,
       cityBuildingCount: () => this.world.buildingCount(),
       finishMode: () => { if (this.mode !== "delivery") this.completeOrder(true, "Тестовый финиш"); },
@@ -299,6 +335,7 @@ export class Game {
       screen: () => this.screen,
       orderDest: () =>
         this.order ? { x: this.order.dest.x, z: this.order.dest.z } : null,
+      destinationVisible: () => this.world.group.getObjectByName("destination-marker")?.visible ?? false,
       // feature test hooks (verification only)
       damageTest: () => {
         this.car.damageCar(75);
@@ -428,8 +465,8 @@ export class Game {
       <p class="dim">Сначала выбери, как хочешь провести эту гонку.</p>
       <div class="activity-picker journey-activities">
         <button class="activity-card" data-a="activity:delivery"><b>ДОСТАВКА</b><span>Бесконечные заказы, деньги и развитие гаража</span><i>Выбрать →</i></button>
-        <button class="activity-card" data-a="activity:drift-trial"><b>DRIFT TRIAL</b><span>60 секунд · набери очки дрифтом</span><i>Выбрать →</i></button>
-        <button class="activity-card" data-a="activity:time-attack"><b>TIME ATTACK</b><span>Доберись до точки до истечения времени</span><i>Выбрать →</i></button>
+        <button class="activity-card" data-a="activity:drift-trial"><b>DRIFT TRIAL</b><span>60 секунд · комбо до ×5 · ₽ за очки · Silvia за серебро</span><i>Выбрать →</i></button>
+        <button class="activity-card" data-a="activity:time-attack"><b>TIME ATTACK</b><span>Фиксированный круг с контрольными точками · медали и Evo за золото</span><i>Выбрать →</i></button>
       </div>
       <button class="btn" data-a="back">← НАЗАД</button>
     </div>`;
@@ -466,12 +503,16 @@ export class Game {
       const owned = p.ownedCars.includes(c.id);
       const isCur = p.carId === c.id;
       const need = c.unlockDeliveries ?? 0;
-      const locked = p.deliveries < need;
+      const locked = !canUnlockCar(c, p);
+      const achievement = c.unlockAchievement ? ACHIEVEMENTS.find((item) => item.id === c.unlockAchievement) : undefined;
+      const unlockHint = c.unlockAchievement && achievement
+        ? `${need} доставок или ${achievement.tier === "silver" ? "серебро" : achievement.tier === "gold" ? "золото" : "медаль"} «${achievement.name}»`
+        : `${need} доставок`;
       let btn;
       if (isCur) btn = `<button class="btn small" disabled>ТЕКУЩАЯ</button>`;
       else if (owned) btn = `<button class="btn small" data-a="select:${c.id}">ВЫБРАТЬ</button>`;
       else if (locked)
-        btn = `<button class="btn small" disabled>🔒 ${p.deliveries}/${need} доставок</button>`;
+        btn = `<button class="btn small" disabled>🔒 ${p.deliveries}/${need} · ${unlockHint}</button>`;
       else
         btn = `<button class="btn small ${p.money >= c.price ? "primary" : ""}" data-a="buy:${c.id}">КУПИТЬ ₽${c.price}</button>`;
       return `<div class="car-card ${isCur ? "current" : ""}">
@@ -810,7 +851,7 @@ export class Game {
       }
       this.world = nextWorld;
       this.scene.add(this.world.group);
-      this.traffic.setWorld(this.world);
+      this.traffic.setWorld(this.world, this.car.pos);
       this.redFinedX.clear();
       this.greenCooldown.clear();
       this.world.hideDestination();
@@ -849,7 +890,7 @@ export class Game {
   private buyCar(id: string): void {
     const car = CARS.find((c) => c.id === id);
     if (!car || this.profile.ownedCars.includes(id)) return;
-    if (this.profile.deliveries < (car.unlockDeliveries ?? 0)) return;
+    if (!canUnlockCar(car, this.profile)) return;
     if (this.profile.money < car.price) return;
     this.profile.money -= car.price;
     this.profile.ownedCars.push(id);
@@ -935,18 +976,20 @@ export class Game {
   }
 
   private startMode(mode: "drift-trial" | "time-attack"): void {
-    this.genOrders();
-    const order = { ...this.orders[0] };
     if (mode === "drift-trial") {
-      order.title = "Drift Trial";
-      order.timeLimit = 60;
-      order.dest = { x: 0, z: 0 };
-    } else {
-      order.title = "Time Attack";
-      order.fragility = 99; // the race has no cargo damage condition
-      order.reward = 0;
+      this.timeAttackCourse = null;
+      this.startOrder({
+        id: this.orderId++, title: "Drift Trial", dest: { x: 0, z: 0 },
+        reward: 0, timeLimit: 60, fragility: 0, distance: 0,
+      }, mode);
+      return;
     }
-    this.startOrder(order, mode);
+    const course = timeAttackCourse(this.profile.mapId);
+    this.timeAttackCourse = course;
+    this.startOrder({
+      id: this.orderId++, title: `Time Attack · ${course.name}`, dest: course.checkpoints[0],
+      reward: 0, timeLimit: course.timeLimit, fragility: 0, distance: course.length,
+    }, mode);
   }
 
   private gotoOrders(): void {
@@ -957,15 +1000,29 @@ export class Game {
   private startOrder(o: Order, mode: "delivery" | "drift-trial" | "time-attack" = "delivery"): void {
     this.mode = mode;
     this.order = o;
+    if (mode !== "time-attack") this.timeAttackCourse = null;
+    this.timeAttackCheckpointIndex = 0;
     this.orders = this.orders.filter((x) => x.id !== o.id);
     this.car.pos.set(0, 0, 0);
     this.car.vel.set(0, 0, 0);
     this.car.heading = Math.PI;
+    if (mode === "time-attack" && this.timeAttackCourse) {
+      const tangent = { x: Math.sin(this.timeAttackCourse.heading), z: Math.cos(this.timeAttackCourse.heading) };
+      const start = trafficLanePosition(this.timeAttackCourse.start, tangent, ROAD_W / 4);
+      this.car.pos.set(start.x, 0, start.z);
+      this.car.heading = this.timeAttackCourse.heading;
+    }
     this.car.cargo = 100;
     this.car.airY = 0;
     this.car.airV = 0;
     this.timeLeft = o.timeLimit;
     this.driftScore = 0;
+    this.driftBankedScore = 0;
+    this.driftChainScore = 0;
+    this.driftChainTime = 0;
+    this.driftIdleTime = 0;
+    this.driftMultiplier = 1;
+    this.driftCrashThisStep = false;
     this.orderFines = 0;
     this.bonusMoney = 0;
     this.trafficHits = 0;
@@ -981,11 +1038,18 @@ export class Game {
     this.wasInPuddle = false;
     this.wreckTimer = -1;
     this.redFinedX.clear();
-    this.world.setDestination(o.dest.x, o.dest.z);
+    if (mode === "drift-trial") this.world.hideDestination();
+    else this.world.setDestination(o.dest.x, o.dest.z);
+    this.setTutorialContent(mode);
+    this.hCargo.style.display = mode === "delivery" ? "flex" : "none";
     this.audio.ensure();
     this.audio.startMusic();
     this.showScreen("playing");
-    this.toast(mode === "drift-trial" ? "Drift Trial: 60 секунд, цель — 800 очков дрифта" : mode === "time-attack" ? "Time Attack: достигните точки на карте" : `Заказ: доставьте за ${o.timeLimit} с. Берегите груз!`);
+    this.toast(mode === "drift-trial"
+      ? "Drift Trial: 60 секунд · удерживай занос, чтобы поднять множитель"
+      : mode === "time-attack"
+        ? `Time Attack: один круг · контрольная точка 1/${this.timeAttackCourse?.checkpoints.length ?? 5}`
+        : `Заказ: доставьте за ${o.timeLimit} с. Берегите груз!`);
     if (this.input.isTouch && !this.profile.seenTutorial) {
       this.showTutorial(true);
     }
@@ -1010,6 +1074,7 @@ export class Game {
     this.hOrder = el("span", "hud-order");
     this.hTimer = el("span", "hud-timer");
     const cargoWrap = el("div", "hud-cargo");
+    this.hCargo = cargoWrap;
     this.hCargoBar = el("div", "hud-cargo-bar");
     cargoWrap.appendChild(this.hCargoBar);
     this.hCargoText = el("span", "hud-cargo-text");
@@ -1052,19 +1117,10 @@ export class Game {
     this.hudEl.appendChild(pauseBtn);
 
     this.tutorialEl = el("div", "tutorial");
-    this.tutorialEl.innerHTML = `
-      <div class="tutorial-box">
-        <h3>КАК ИГРАТЬ</h3>
-        <div class="tut-row"><span class="tut-ico wheel">🕹</span><span><b>Джойстик слева</b> — вперёд: газ, назад: задний ход, в стороны: руль</span></div>
-        <div class="tut-row"><span class="tut-ico gas">■</span><span><b>ТОРМОЗ</b> — педаль справа внизу</span></div>
-        <div class="tut-row"><span class="tut-ico hb">★</span><span><b>ДРИФТ</b> — занос на поворотах, даёт бонусы</span></div>
-        <div class="tut-row"><span class="tut-ico">🚀</span><span><b>НИТРО</b> — Shift на клавиатуре или кнопка справа; заряд возвращается за дрифт и проезды впритирку</span></div>
-        <div class="tut-row"><span class="tut-ico">⚠</span><span>Брусчатка, лужи и удары бьют по <b>грузу</b>. На красный — штраф!</span></div>
-        <div class="tut-row"><span class="tut-ico">🚀</span><span>Трамплины, впритирку, зелёный на скорости — всё это <b>₽ бонусы</b></span></div>
-        <button class="btn primary" data-a="tut-ok">ПОНЯТНО!</button>
-      </div>`;
+    this.setTutorialContent("delivery");
     this.tutorialEl.style.display = "none";
-    this.tutorialEl.querySelector("[data-a='tut-ok']")!.addEventListener("click", () => {
+    this.tutorialEl.addEventListener("click", (event) => {
+      if (!(event.target as HTMLElement).closest("[data-a='tut-ok']")) return;
       this.audio.uiClick();
       this.profile.seenTutorial = true;
       saveProfile(this.profile);
@@ -1084,8 +1140,27 @@ export class Game {
     this.tutorialEl.style.display = "flex";
   }
 
+  private setTutorialContent(mode: "delivery" | "drift-trial" | "time-attack"): void {
+    const activity = mode === "delivery"
+      ? `<div class="tut-row"><span class="tut-ico">⚠</span><span>Береги груз от ударов и луж; красный сигнал стоит ₽${RED_LIGHT_FINE}.</span></div>
+         <div class="tut-row"><span class="tut-ico">₽</span><span>Заказы, трюки и безопасные проезды дают деньги.</span></div>`
+      : mode === "drift-trial"
+        ? `<div class="tut-row"><span class="tut-ico">🔥</span><span>Держи занос: множитель растёт до ×5. Если отпустить руль, серия сохранится через 0,7 секунды.</span></div>
+           <div class="tut-row"><span class="tut-ico">⚠</span><span>Сильный удар сбрасывает незабранные очки серии. За итоговый счёт выдаются медали и ₽.</span></div>`
+        : `<div class="tut-row"><span class="tut-ico">🏁</span><span>Пройди контрольные точки строго по порядку и вернись на старт для финиша.</span></div>
+           <div class="tut-row"><span class="tut-ico">🥇</span><span>Время круга определяет медаль, выплату и лучший результат трассы.</span></div>`;
+    this.tutorialEl.innerHTML = `<div class="tutorial-box">
+      <h3>КАК ИГРАТЬ · ${mode === "delivery" ? "ДОСТАВКА" : mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK"}</h3>
+      <div class="tut-row"><span class="tut-ico wheel">🕹</span><span><b>УПРАВЛЕНИЕ</b> — газ и руль на джойстике; Shift или кнопка справа включает нитро.</span></div>
+      <div class="tut-row"><span class="tut-ico hb">★</span><span><b>ДРИФТ</b> — ручник и газ помогают начать занос; нитро пополняется за дрифт.</span></div>
+      ${activity}
+      <button class="btn primary" data-a="tut-ok">ПОНЯТНО!</button>
+    </div>`;
+  }
+
   /** Floating "+₽" bonus popup. */
   private addBonus(amount: number, label: string): void {
+    if (this.mode !== "delivery") return;
     this.bonusMoney += amount;
     const p = el("div", "bonus-pop", `${label} <b>+₽${amount}</b>`);
     p.style.left = `${42 + Math.random() * 16}%`;
@@ -1215,6 +1290,7 @@ export class Game {
       this.audio.updateEngine(0, 0, 0);
       return;
     }
+    this.driftCrashThisStep = false;
     const inp = this.input.update();
     inp.nitro = inp.nitro && inp.throttle > 0 && this.nitroFuel > 0;
     if (inp.nitro) this.nitroFuel = Math.max(0, this.nitroFuel - dt * 28);
@@ -1238,7 +1314,7 @@ export class Game {
     const res = this.car.step(dt, inp, this.world);
     if (res.drift > 5 && Math.abs(res.speed) > 8) this.nitroFuel = Math.min(100, this.nitroFuel + dt * 5);
     const spec = this.car.spec;
-    const frag = this.order.fragility;
+    const frag = this.mode === "delivery" ? this.order.fragility : 0;
     const protect = spec.cargoProtect;
 
     // lifetime stat: top speed
@@ -1257,19 +1333,21 @@ export class Game {
       const dmg = 14 * (1 - protect * 0.5);
       this.car.damage(dmg * frag);
       this.car.damageCar(tHit * 0.8);
+      this.driftCrashThisStep = true;
+      this.breakDriftChain();
       this.trafficHits += 1;
       this.car.vel.multiplyScalar(0.55);
       this.shake = Math.min(1, this.shake + 0.6);
       this.audio.thud(0.8);
       this.effects.spawnFlash(this.car.pos.x, this.car.pos.z, 0xffaa44);
-      this.toast("Авария с машиной! Груз пострадал", true);
+      this.toast(this.mode === "delivery" ? "Авария с машиной! Груз пострадал" : "Столкновение! Кузов повреждён", true);
       if (tHit > 20 && Math.abs(res.speed) > 12) {
         this.car.startRoll(Math.random() < 0.5 ? 1 : -1);
       }
     }
 
     // police pursuit
-    if (this.police.active) {
+    if (this.mode === "delivery" && this.police.active) {
       this.chaseTimedOut += dt;
       const caught = this.police.update(
         dt,
@@ -1300,7 +1378,7 @@ export class Game {
         this.grantAchievements();
         this.police.stop();
       }
-    } else if (!this.chaseTriggered && (this.redLightRuns >= 2 || this.trafficHits >= 2)) {
+    } else if (this.mode === "delivery" && !this.chaseTriggered && (this.redLightRuns >= 2 || this.trafficHits >= 2)) {
       this.chaseTriggered = true;
       this.police.start(this.car.pos.x, this.car.pos.z);
       this.chaseTimedOut = 0;
@@ -1340,7 +1418,11 @@ export class Game {
         this.shake = Math.min(1, this.shake + res.impact * 0.06);
         this.audio.thud(Math.min(1, res.impact / 25));
         this.effects.spawnFlash(this.car.pos.x, this.car.pos.z);
-        if (dmg > 3) this.toast(`Удар! Груз −${Math.round(dmg)}%`, true);
+        if (res.impact > 9) {
+          this.driftCrashThisStep = true;
+          this.breakDriftChain();
+        }
+        if (dmg > 3) this.toast(this.mode === "delivery" ? `Удар! Груз −${Math.round(dmg)}%` : "Удар! Кузов повреждён", true);
         if (res.impact < 9 && this.scrapeCooldown <= 0) {
           this.scrapeCooldown = 3;
           this.addBonus(15, "Задел!");
@@ -1364,7 +1446,7 @@ export class Game {
           this.car.damage(ldmg);
           this.shake = Math.min(1, this.shake + 0.5);
           this.audio.thud(0.7);
-          this.toast("Жёсткая посадка! Груз пострадал", true);
+          this.toast(this.mode === "delivery" ? "Жёсткая посадка! Груз пострадал" : "Жёсткая посадка!", true);
         }
       }
       if (res.rolled) {
@@ -1372,14 +1454,16 @@ export class Game {
         this.shake = 1;
         this.audio.thud(1);
         this.audio.crack();
-        this.toast("ПЕРЕВОРОТ! Груз сильно повреждён", true);
+        this.toast(this.mode === "delivery" ? "ПЕРЕВОРОТ! Груз сильно повреждён" : "ПЕРЕВОРОТ! Машина повреждена", true);
         this.profile.stats.rolls += 1;
         this.grantAchievements();
       }
     }
 
-    // drift score + trickle bonuses
-    if (res.drift > 5 && Math.abs(res.speed) > 8) {
+    // Delivery keeps its flat drift tips; Drift Trial uses a bankable combo chain.
+    if (this.mode === "drift-trial") {
+      this.updateDriftChain(res.drift, res.speed, dt);
+    } else if (this.mode === "delivery" && res.drift > 5 && Math.abs(res.speed) > 8) {
       this.driftScore += res.drift * Math.abs(res.speed) * dt * 0.09;
       this.driftBonusTimer -= dt;
       if (this.driftBonusTimer <= 0) {
@@ -1400,11 +1484,14 @@ export class Game {
           this.car.pos.z - this.order.dest.z
         )
       : 999;
-    if (this.mode !== "drift-trial" && dDest < 4.2) this.completeOrder(true, "Точка назначения достигнута");
+    if (this.mode === "delivery" && dDest < 4.2) this.completeOrder(true, "Точка назначения достигнута");
     else if (this.mode === "delivery" && this.car.cargo <= 0)
       this.completeOrder(false, "Груз разбит вдребезги");
-    else if (this.timeLeft <= 0)
-      this.completeOrder(this.mode === "drift-trial" && this.driftScore >= 800, this.mode === "drift-trial" ? "Заезд завершён" : "Время вышло — клиент ушёл");
+    else if (this.mode === "time-attack" && dDest < 8.5) this.advanceTimeAttackCheckpoint();
+    else if (this.timeLeft <= 0) {
+      if (this.mode === "drift-trial") this.completeOrder(true, "60 секунд истекли");
+      else this.completeOrder(false, this.mode === "time-attack" ? "Время вышло до финиша" : "Время вышло — клиент ушёл");
+    }
 
     // toast fade
     if (this.toastTimer > 0) {
@@ -1422,7 +1509,7 @@ export class Game {
   }
 
   private checkRedLight(prevX: number, prevZ: number): void {
-    if (!this.order || this.car.isFlipping) return;
+    if (this.mode !== "delivery" || !this.order || this.car.isFlipping) return;
     const x = this.car.pos.x;
     const z = this.car.pos.z;
     const spd = Math.abs(this.car.speed);
@@ -1473,6 +1560,56 @@ export class Game {
     this.shake = Math.min(1, this.shake + 0.25);
   }
 
+  private updateDriftChain(drift: number, speed: number, dt: number): void {
+    const active = !this.driftCrashThisStep && drift > 5 && Math.abs(speed) > 8;
+    if (active) {
+      this.driftIdleTime = 0;
+      this.driftChainTime += dt;
+      this.driftMultiplier = driftMultiplierForSeconds(this.driftChainTime);
+      this.driftChainScore += drift * Math.abs(speed) * dt * 0.09 * this.driftMultiplier;
+      this.driftScore = this.driftBankedScore + this.driftChainScore;
+      return;
+    }
+    if (this.driftChainScore <= 0) return;
+    this.driftIdleTime += dt;
+    if (this.driftIdleTime >= 0.7) this.bankDriftChain();
+  }
+
+  private bankDriftChain(): void {
+    if (this.driftChainScore > 0) this.driftBankedScore += this.driftChainScore;
+    this.driftChainScore = 0;
+    this.driftChainTime = 0;
+    this.driftIdleTime = 0;
+    this.driftMultiplier = 1;
+    this.driftScore = this.driftBankedScore;
+  }
+
+  private breakDriftChain(): void {
+    if (this.driftChainScore <= 0) return;
+    this.driftChainScore = 0;
+    this.driftChainTime = 0;
+    this.driftIdleTime = 0;
+    this.driftMultiplier = 1;
+    this.driftScore = this.driftBankedScore;
+  }
+
+  private advanceTimeAttackCheckpoint(): void {
+    const course = this.timeAttackCourse;
+    if (!course || !this.order) return;
+    this.timeAttackCheckpointIndex++;
+    if (this.timeAttackCheckpointIndex >= course.checkpoints.length) {
+      this.completeOrder(true, "Круг завершён");
+      return;
+    }
+    const point = course.checkpoints[this.timeAttackCheckpointIndex];
+    this.order.dest = point;
+    this.world.setDestination(point.x, point.z);
+    const gateCount = course.checkpoints.length - 1;
+    this.toast(this.timeAttackCheckpointIndex === gateCount
+      ? "Последняя контрольная точка · возвращайся на старт"
+      : `Контрольная точка ${this.timeAttackCheckpointIndex + 1}/${gateCount}`);
+  }
+
   private startWreck(): void {
     this.car.wrecked = true;
     this.wreckTimer = 1.6;
@@ -1509,24 +1646,41 @@ export class Game {
     this.audio.stopMusic();
     this.audio.updateEngine(0, 0, 0);
     const p = this.profile;
+    if (this.mode === "drift-trial") this.bankDriftChain();
     p.driftBest = Math.max(p.driftBest, Math.round(this.driftScore));
     if (this.mode !== "delivery") {
       const title = this.mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK";
+      const elapsed = Math.max(0, o.timeLimit - this.timeLeft);
+      const medal = this.mode === "drift-trial"
+        ? driftMedal(this.driftScore)
+        : ok && this.timeAttackCourse ? timeAttackMedal(this.timeAttackCourse, elapsed) : null;
       const record = this.mode === "drift-trial"
         ? saveRecord(this.profile.mapId, this.mode, this.profile.carId, this.driftScore)
-        : ok ? saveRecord(this.profile.mapId, this.mode, this.profile.carId, Math.max(0, o.timeLimit - this.timeLeft)) : null;
-      const lines = [
-        `${reason}.`,
-        this.mode === "drift-trial"
-          ? `Очки дрифта: ${Math.round(this.driftScore)} · цель: 800`
-          : `Время: ${Math.max(0, o.timeLimit - this.timeLeft).toFixed(1)} с`,
-      ];
-      if (record !== null) lines.push(this.mode === "drift-trial" ? `Личный рекорд: ${Math.round(record)}` : `Лучшее время: ${record.toFixed(1)} с`);
+        : ok ? saveRecord(this.profile.mapId, this.mode, this.profile.carId, elapsed) : null;
+      const reward = this.mode === "drift-trial"
+        ? modeReward(this.mode, medal, this.driftScore)
+        : ok ? modeReward(this.mode, medal, 0) : 0;
+      const medalLabel = medal ? `${medal === "gold" ? "🥇 золото" : medal === "silver" ? "🥈 серебро" : "🥉 бронза"}` : "без медали";
+      const lines = this.mode === "drift-trial"
+        ? [`${reason}.`, `Счёт: ${Math.round(this.driftScore)} · ${medalLabel}`]
+        : [`${reason}.`, `Время круга: ${elapsed.toFixed(1)} с · ${medalLabel}`];
+      if (this.mode === "time-attack" && this.timeAttackCourse) {
+        lines.push(`Трасса: ${this.timeAttackCourse.name} · контрольных точек: ${this.timeAttackCourse.checkpoints.length}`);
+      }
+      if (record !== null) lines.push(this.mode === "drift-trial" ? `Лучший счёт: ${Math.round(record)}` : `Лучшее время: ${record.toFixed(1)} с`);
+      if (this.mode === "time-attack" && medal) {
+        p.stats.timeAttackMedal = Math.max(p.stats.timeAttackMedal, medalRank(medal));
+      }
+      p.money += reward;
+      p.totalEarn += reward;
+      p.bestEarn = Math.max(p.bestEarn, reward);
+      lines.push(`<b class="gold">Выплата за заезд: ₽${reward}</b>`);
       this.grantAchievements();
       saveProfile(p);
-      this.lastResult = { ok, lines, mode: this.mode, title };
+      this.lastResult = { ok: this.mode === "drift-trial" || ok, lines, mode: this.mode, title };
       this.order = null;
       this.police.stop();
+      this.bonusMoney = 0;
       this.showScreen("result");
       return;
     }
@@ -1590,7 +1744,7 @@ export class Game {
     const o = this.order;
     this.hOrder.textContent = this.mode === "delivery"
       ? `📦 ${CARGO_NAMES[o.id % CARGO_NAMES.length]} · ₽${o.reward}`
-      : this.mode === "drift-trial" ? "DRIFT TRIAL · цель 800" : "TIME ATTACK · ФИНИШ";
+      : this.mode === "drift-trial" ? "DRIFT TRIAL · комбо до ×5" : `TIME ATTACK · КП ${Math.min(this.timeAttackCheckpointIndex + 1, this.timeAttackCourse?.checkpoints.length ?? 5)}/${this.timeAttackCourse?.checkpoints.length ?? 5}`;
     const t = Math.max(0, this.timeLeft);
     this.hTimer.textContent = `⏱ ${t.toFixed(0)}с`;
     this.hTimer.classList.toggle("low", t < 12);
@@ -1598,17 +1752,18 @@ export class Game {
     this.hCargoBar.style.transform = `scaleX(${cargo / 100})`;
     this.hCargoBar.classList.toggle("low", cargo < 35);
     this.hCargoText.textContent = `груз ${cargo.toFixed(0)}%`;
+    this.hCargo.style.display = this.mode === "delivery" ? "flex" : "none";
     this.hSpeed.innerHTML = `${Math.round(Math.abs(this.car.speed) * 3.2)}<small>км/ч</small>`;
     const speed = Math.abs(this.car.speed);
     this.hMoney.textContent = `₽${this.profile.money}${this.orderFines ? ` (−${this.orderFines})` : ""}`;
-    this.hDrift.textContent =
-      this.driftScore > 50 && speed > 8
+    this.hDrift.textContent = this.mode === "drift-trial"
+      ? `дрифт ${Math.round(this.driftScore)} · ×${this.driftMultiplier}${this.driftChainScore > 0 ? ` · серия ${Math.round(this.driftChainScore)}` : ""}`
+      : this.mode === "delivery" && this.driftScore > 50 && speed > 8
         ? `дрифт +${Math.round(this.driftScore)}`
         : "";
     this.hNitro.querySelector("i")!.setAttribute("style", `transform:scaleX(${this.nitroFuel / 100})`);
     this.hChase.style.display = this.police.active ? "inline" : "none";
     this.drawMinimap();
-    void speed;
   }
 
   // ================= render =================
@@ -1666,6 +1821,7 @@ export class Game {
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 5);
     this.camera.updateProjectionMatrix();
 
+    this.traffic.render(Math.min(1, this.acc / (1 / 60)));
     this.effects.update(dt, this.camera.quaternion);
     this.renderer.render(this.scene, this.camera);
   }

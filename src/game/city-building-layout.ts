@@ -1,5 +1,4 @@
 import type { CityLayout, CityParcel } from "./map-layouts";
-import { parcelClearOfRoads } from "./map-layouts";
 
 export interface CityBuildingSite extends CityParcel {
   height: number;
@@ -159,28 +158,123 @@ function overlapsWater(rect: Rect, polygon: { x: number; z: number }[]): boolean
   return false;
 }
 
-function roadFacing(layout: CityLayout, x: number, z: number): number {
-  let nearest = Number.POSITIVE_INFINITY;
-  let angle = 0;
-  for (const road of layout.roads) for (let i = 0; i < road.points.length - 1; i++) {
-    const a = road.points[i];
-    const b = road.points[i + 1];
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const length2 = dx * dx + dz * dz;
-    const t = length2 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / length2)) : 0;
-    const distance = Math.hypot(x - a.x - dx * t, z - a.z - dz * t);
-    if (distance < nearest) {
-      nearest = distance;
-      angle = Math.atan2(dz, dx);
+interface RoadSegment {
+  ax: number;
+  az: number;
+  dx: number;
+  dz: number;
+  length2: number;
+  width: number;
+  angle: number;
+  visited: number;
+}
+
+const ROAD_GRID_CELL = 32;
+
+function spatialKey(x: number, z: number): string {
+  return `${x},${z}`;
+}
+
+function distanceToSegment(segment: RoadSegment, x: number, z: number): number {
+  const t = segment.length2
+    ? Math.max(0, Math.min(1, ((x - segment.ax) * segment.dx + (z - segment.az) * segment.dz) / segment.length2))
+    : 0;
+  return Math.hypot(x - segment.ax - segment.dx * t, z - segment.az - segment.dz * t);
+}
+
+/** Small fixed road set, indexed once so each grid parcel only checks nearby segments. */
+class RoadSpatialIndex {
+  private cells = new Map<string, RoadSegment[]>();
+  private segments: RoadSegment[] = [];
+  private queryId = 0;
+  private padding: number;
+  private maxRadius: number;
+
+  constructor(layout: CityLayout) {
+    this.padding = Math.max(0, ...layout.roads.map((road) => road.width / 2 + 1));
+    this.maxRadius = Math.ceil(Math.max(
+      Math.abs(layout.bounds.minX), Math.abs(layout.bounds.maxX),
+      Math.abs(layout.bounds.minZ), Math.abs(layout.bounds.maxZ),
+    ) / ROAD_GRID_CELL) + 2;
+    for (const road of layout.roads) for (let i = 0; i < road.points.length - 1; i++) {
+      const a = road.points[i];
+      const b = road.points[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const segment: RoadSegment = {
+        ax: a.x, az: a.z, dx, dz, length2: dx * dx + dz * dz,
+        width: road.width, angle: Math.atan2(dz, dx), visited: 0,
+      };
+      this.segments.push(segment);
+      const minX = Math.floor((Math.min(a.x, b.x) - this.padding) / ROAD_GRID_CELL);
+      const maxX = Math.floor((Math.max(a.x, b.x) + this.padding) / ROAD_GRID_CELL);
+      const minZ = Math.floor((Math.min(a.z, b.z) - this.padding) / ROAD_GRID_CELL);
+      const maxZ = Math.floor((Math.max(a.z, b.z) + this.padding) / ROAD_GRID_CELL);
+      for (let x = minX; x <= maxX; x++) for (let z = minZ; z <= maxZ; z++) {
+        const key = spatialKey(x, z);
+        const bucket = this.cells.get(key);
+        if (bucket) bucket.push(segment);
+        else this.cells.set(key, [segment]);
+      }
     }
   }
-  return angle;
+
+  nearestAngle(x: number, z: number): number {
+    const cellX = Math.floor(x / ROAD_GRID_CELL);
+    const cellZ = Math.floor(z / ROAD_GRID_CELL);
+    const id = ++this.queryId;
+    let nearest = Number.POSITIVE_INFINITY;
+    let angle = 0;
+    for (let radius = 0; radius <= this.maxRadius; radius++) {
+      for (let dx = -radius; dx <= radius; dx++) for (let dz = -radius; dz <= radius; dz++) {
+        if (radius > 0 && Math.abs(dx) !== radius && Math.abs(dz) !== radius) continue;
+        const bucket = this.cells.get(spatialKey(cellX + dx, cellZ + dz));
+        if (!bucket) continue;
+        for (const segment of bucket) {
+          if (segment.visited === id) continue;
+          segment.visited = id;
+          const distance = distanceToSegment(segment, x, z);
+          if (distance < nearest) {
+            nearest = distance;
+            angle = segment.angle;
+          }
+        }
+      }
+      const left = (cellX - radius) * ROAD_GRID_CELL;
+      const right = (cellX + radius + 1) * ROAD_GRID_CELL;
+      const top = (cellZ - radius) * ROAD_GRID_CELL;
+      const bottom = (cellZ + radius + 1) * ROAD_GRID_CELL;
+      const outsideDistance = Math.max(0, Math.min(x - left, right - x, z - top, bottom - z));
+      if (nearest <= outsideDistance) break;
+    }
+    return angle;
+  }
+
+  clearOfRoads(rect: Rect, margin: number): boolean {
+    const c = Math.cos(rect.rotation);
+    const s = Math.sin(rect.rotation);
+    const nx = Math.max(2, Math.ceil(rect.width / 3));
+    const nz = Math.max(2, Math.ceil(rect.depth / 3));
+    for (let ix = 0; ix <= nx; ix++) for (let iz = 0; iz <= nz; iz++) {
+      const lx = -rect.width / 2 + rect.width * ix / nx;
+      const lz = -rect.depth / 2 + rect.depth * iz / nz;
+      const x = rect.x + lx * c - lz * s;
+      const z = rect.z + lx * s + lz * c;
+      const bucket = this.cells.get(spatialKey(Math.floor(x / ROAD_GRID_CELL), Math.floor(z / ROAD_GRID_CELL)));
+      if (!bucket) continue;
+      for (const segment of bucket) {
+        if (distanceToSegment(segment, x, z) <= segment.width / 2 + margin) return false;
+      }
+    }
+    return true;
+  }
 }
 
 /** Deterministic road-aware infill for both maps, kept clear of water and authored port assets. */
 export function generateCityBuildingSites(layout: CityLayout): CityBuildingSite[] {
   const sites: CityBuildingSite[] = [];
+  const roadIndex = new RoadSpatialIndex(layout);
+  const acceptedSites = new Map<string, CityBuildingSite[]>();
   const { minX, maxX, minZ, maxZ } = layout.bounds;
   const columns = Math.ceil((maxX - minX) / BUILDING_PITCH);
   const rows = Math.ceil((maxZ - minZ) / BUILDING_PITCH);
@@ -192,7 +286,7 @@ export function generateCityBuildingSites(layout: CityLayout): CityBuildingSite[
     const z = minZ + BUILDING_PITCH / 2 + row * BUILDING_PITCH;
     const width = 6.5 + hash(column, row, salt) * 0.6;
     const depth = 6.3 + hash(column, row, salt + 31) * 0.6;
-    const rotation = roadFacing(layout, x, z);
+    const rotation = roadIndex.nearestAngle(x, z);
     const rect: Rect = { x, z, width, depth, rotation };
     const footprint: CityBuildingSite = {
       ...rect,
@@ -201,11 +295,23 @@ export function generateCityBuildingSites(layout: CityLayout): CityBuildingSite[
     };
     const footprintCorners = corners(rect);
     if (footprintCorners.some((point) => point.x < minX || point.x > maxX || point.z < minZ || point.z > maxZ)) continue;
-    if (!parcelClearOfRoads(layout, footprint, 1)) continue;
+    if (!roadIndex.clearOfRoads(footprint, 1)) continue;
     if (layout.waterAreas.some((water) => overlapsWater(rect, water.points))) continue;
     if (portSites.some((site) => rectanglesOverlap(rect, site, 2))) continue;
-    if (sites.some((site) => rectanglesOverlap(rect, site, 0.35))) continue;
+    let overlapsAcceptedSite = false;
+    const cellX = Math.floor(x / 16);
+    const cellZ = Math.floor(z / 16);
+    for (let dx = -1; dx <= 1 && !overlapsAcceptedSite; dx++) for (let dz = -1; dz <= 1 && !overlapsAcceptedSite; dz++) {
+      for (const site of acceptedSites.get(spatialKey(cellX + dx, cellZ + dz)) ?? []) {
+        if (rectanglesOverlap(rect, site, 0.35)) { overlapsAcceptedSite = true; break; }
+      }
+    }
+    if (overlapsAcceptedSite) continue;
     sites.push(footprint);
+    const key = spatialKey(cellX, cellZ);
+    const bucket = acceptedSites.get(key);
+    if (bucket) bucket.push(footprint);
+    else acceptedSites.set(key, [footprint]);
   }
   return sites;
 }
