@@ -657,9 +657,10 @@ export class Game {
     const rows = ACHIEVEMENTS.map((a) => {
       const got = p.unlockedAch.includes(a.id);
       const prog = a.progress(p);
-      return `<div class="ach-row ${got ? "got" : ""}">
-        <div class="ach-ico">${got ? a.icon : "🔒"}</div>
-        <div class="ach-info"><b>${a.name}</b><span>${a.desc}</span></div>
+      const tierLabel = a.tier === "bronze" ? "БРОНЗА" : a.tier === "silver" ? "СЕРЕБРО" : a.tier === "gold" ? "ЗОЛОТО" : "";
+      return `<div class="ach-row ${got ? "got" : ""} ${a.tier ? `tier-${a.tier}` : ""}">
+        <div class="ach-ico ${a.tier ? `tier-${a.tier}` : ""}">${got ? a.icon : "🔒"}</div>
+        <div class="ach-info"><div class="ach-title"><b>${a.name}</b>${tierLabel ? `<small class="ach-tier ${a.tier}">${tierLabel}</small>` : ""}</div><span>${a.desc}</span></div>
         <div class="ach-prog">${prog ?? ""}</div>
       </div>`;
     }).join("");
@@ -1508,6 +1509,7 @@ export class Game {
     this.audio.stopMusic();
     this.audio.updateEngine(0, 0, 0);
     const p = this.profile;
+    p.driftBest = Math.max(p.driftBest, Math.round(this.driftScore));
     if (this.mode !== "delivery") {
       const title = this.mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK";
       const record = this.mode === "drift-trial"
@@ -1520,6 +1522,8 @@ export class Game {
           : `Время: ${Math.max(0, o.timeLimit - this.timeLeft).toFixed(1)} с`,
       ];
       if (record !== null) lines.push(this.mode === "drift-trial" ? `Личный рекорд: ${Math.round(record)}` : `Лучшее время: ${record.toFixed(1)} с`);
+      this.grantAchievements();
+      saveProfile(p);
       this.lastResult = { ok, lines, mode: this.mode, title };
       this.order = null;
       this.police.stop();
@@ -1552,7 +1556,6 @@ export class Game {
       p.deliveries += 1;
       p.totalEarn += total;
       p.bestEarn = Math.max(p.bestEarn, total);
-      p.driftBest = Math.max(p.driftBest, Math.round(this.driftScore));
       if (this.car.cargo >= 99.5) p.stats.perfectDeliveries += 1;
       const record = saveRecord(this.profile.mapId, "delivery", this.profile.carId, total);
       lines.push(`Личный рекорд доставки: ₽${Math.round(record)}`);
