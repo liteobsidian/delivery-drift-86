@@ -9,9 +9,33 @@ export interface AchievementDef {
   icon: string;
   name: string;
   desc: string;
+  tier?: "bronze" | "silver" | "gold";
   /** progress text like "3/10"; null when not started */
   progress: (p: Profile) => string | null;
   done: (p: Profile) => boolean;
+}
+
+type MedalTier = NonNullable<AchievementDef["tier"]>;
+
+function milestone(
+  id: string,
+  category: string,
+  tier: MedalTier,
+  icon: string,
+  current: (p: Profile) => number,
+  target: number,
+  description: string,
+  unit = "",
+): AchievementDef {
+  return {
+    id,
+    icon,
+    tier,
+    name: category,
+    desc: description,
+    progress: (p) => `${Math.min(current(p), target)}/${target}${unit}`,
+    done: (p) => current(p) >= target,
+  };
 }
 
 export const ACHIEVEMENTS: AchievementDef[] = [
@@ -23,21 +47,11 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     progress: (p) => `${Math.min(p.deliveries, 1)}/1`,
     done: (p) => p.deliveries >= 1,
   },
+  milestone("courier-10", "Курьер", "bronze", "🥉", (p) => p.deliveries, 10, "Выполни 10 доставок"),
+  milestone("courier-25", "Курьер", "silver", "🥈", (p) => p.deliveries, 25, "Выполни 25 доставок"),
   {
-    id: "courier-10",
-    icon: "🛵",
-    name: "Курьер",
-    desc: "Выполни 10 доставок",
-    progress: (p) => `${Math.min(p.deliveries, 10)}/10`,
-    done: (p) => p.deliveries >= 10,
-  },
-  {
-    id: "courier-50",
-    icon: "🏆",
+    ...milestone("courier-50", "Курьер", "gold", "🥇", (p) => p.deliveries, 50, "Выполни 50 доставок"),
     name: "Легенда ночи",
-    desc: "Выполни 50 доставок",
-    progress: (p) => `${Math.min(p.deliveries, 50)}/50`,
-    done: (p) => p.deliveries >= 50,
   },
   {
     id: "earner",
@@ -47,21 +61,17 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     progress: (p) => `₽${Math.min(p.totalEarn, 1000)}/₽1000`,
     done: (p) => p.totalEarn >= 1000,
   },
+  milestone("drifter-bronze", "Дрифтер", "bronze", "🥉", (p) => p.driftBest, 250, "Набери 250 очков дрифта за один заезд"),
+  milestone("drifter-silver", "Дрифтер", "silver", "🥈", (p) => p.driftBest, 500, "Набери 500 очков дрифта за один заезд"),
   {
-    id: "drifter",
-    icon: "💨",
-    name: "Дрифтер",
-    desc: "Набери 2000 очков дрифта за один заказ",
-    progress: (p) => `${Math.min(p.driftBest, 2000)}/2000`,
-    done: (p) => p.driftBest >= 2000,
+    ...milestone("drifter", "Дрифтер", "gold", "🥇", (p) => p.driftBest, 750, "Набери 750 очков дрифта за один заезд"),
+    progress: (p) => `${Math.min(p.driftBest, 750)}/750`,
   },
+  milestone("speeder-bronze", "Скорость", "bronze", "🥉", (p) => p.stats.maxSpeedKmh, 90, "Разгонись до 90 км/ч", " км/ч"),
+  milestone("speeder-silver", "Скорость", "silver", "🥈", (p) => p.stats.maxSpeedKmh, 120, "Разгонись до 120 км/ч", " км/ч"),
   {
-    id: "speeder",
-    icon: "⚡",
-    name: "Скорость",
-    desc: "Разгонись до 150 км/ч",
+    ...milestone("speeder", "Скорость", "gold", "🥇", (p) => p.stats.maxSpeedKmh, 150, "Разгонись до 150 км/ч", " км/ч"),
     progress: (p) => `${Math.min(p.stats.maxSpeedKmh, 150)}/150 км/ч`,
-    done: (p) => p.stats.maxSpeedKmh >= 150,
   },
   {
     id: "escapee",

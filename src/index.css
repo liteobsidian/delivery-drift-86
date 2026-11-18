@@ -769,6 +769,23 @@ html, body, #root {
 .ach-info { flex: 1; display: flex; flex-direction: column; gap: 1px; }
 .ach-info b { font-size: 13px; }
 .ach-info span { font-size: 11px; color: #8f9ac4; }
+.ach-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.ach-tier {
+  border-radius: 999px;
+  padding: 2px 5px;
+  font-size: 8px;
+  line-height: 1.2;
+  letter-spacing: .04em;
+}
+.ach-tier.bronze { color: #efb27e; background: rgba(166, 91, 38, .22); }
+.ach-tier.silver { color: #d5deeb; background: rgba(155, 174, 198, .2); }
+.ach-tier.gold { color: #ffdb70; background: rgba(214, 158, 28, .2); }
+.ach-ico.tier-bronze { color: #d99863; }
+.ach-ico.tier-silver { color: #d5deeb; }
+.ach-ico.tier-gold { color: #ffdb70; }
+.ach-row.got.tier-bronze { border-color: rgba(205, 127, 50, .65); box-shadow: 0 0 10px rgba(205, 127, 50, .12); }
+.ach-row.got.tier-silver { border-color: rgba(192, 205, 221, .65); box-shadow: 0 0 10px rgba(192, 205, 221, .12); }
+.ach-row.got.tier-gold { border-color: rgba(255, 210, 74, .65); box-shadow: 0 0 10px rgba(255, 210, 74, .16); }
 
 .ach-prog { font-size: 11px; color: #9fb0e8; white-space: nowrap; }
 
