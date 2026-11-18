@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { cityLayoutFor, parcelClearOfRoads } from "./map-layouts";
 import { circleOrientedRectContact, cityBuildingMeshYaw, generateCityBuildingSites } from "./city-building-layout";
 
+function siteSignature(sites: ReturnType<typeof generateCityBuildingSites>): string {
+  let hash = 2166136261;
+  const source = sites.map((site) => [site.x, site.z, site.width, site.depth, site.rotation, site.height]
+    .map((value) => Number(value.toFixed(6))).join(",")).join(";");
+  for (let i = 0; i < source.length; i++) hash = Math.imul(hash ^ source.charCodeAt(i), 16777619) >>> 0;
+  return hash.toString(16).padStart(8, "0");
+}
+
 function pointInPolygon(x: number, z: number, points: { x: number; z: number }[]): boolean {
   let inside = false;
   for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
@@ -36,7 +44,8 @@ describe("generated city infill", () => {
     for (const id of ["tokyo", "yokohama"] as const) {
       const layout = cityLayoutFor(id);
       const first = generateCityBuildingSites(layout);
-      expect(first.length, `${id} building count`).toBeGreaterThanOrEqual(350);
+      expect(first.length, `${id} building count`).toBe(id === "tokyo" ? 663 : 368);
+      expect(siteSignature(first), `${id} site transforms`).toBe(id === "tokyo" ? "b84c691e" : "18543cfa");
       expect(generateCityBuildingSites(layout)).toEqual(first);
     }
   });

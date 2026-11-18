@@ -1,4 +1,9 @@
-import type { Profile } from "./types";
+import type { Profile, Stats, UpgradeLevels } from "./types";
+
+export type ProfileMigrationInput = Partial<Omit<Profile, "stats" | "upgrades">> & {
+  stats?: Partial<Stats>;
+  upgrades?: Record<string, UpgradeLevels>;
+};
 
 const KEY = "delivery-drift-86-save-v1";
 
@@ -31,6 +36,7 @@ export function defaultProfile(): Profile {
       redLights: 0,
       maxSpeedKmh: 0,
       perfectDeliveries: 0,
+      timeAttackMedal: 0,
     },
     unlockedAch: [],
   };
@@ -58,14 +64,21 @@ export function loadProfile(): Profile {
     if (!isValid(parsed)) return defaultProfile();
     // merge over defaults so new fields never drown
     const d = defaultProfile();
-    return {
-      ...d,
-      ...parsed,
-      upgrades: { ...d.upgrades, ...(parsed.upgrades ?? {}) },
-    };
+    return mergeProfileData(parsed);
   } catch {
     return defaultProfile();
   }
+}
+
+/** Add newly introduced profile and nested-stat defaults to saves from older versions. */
+export function mergeProfileData(parsed: ProfileMigrationInput): Profile {
+  const d = defaultProfile();
+  return {
+    ...d,
+    ...parsed,
+    stats: { ...d.stats, ...(parsed.stats ?? {}) },
+    upgrades: { ...d.upgrades, ...(parsed.upgrades ?? {}) },
+  };
 }
 
 export function saveProfile(p: Profile): void {

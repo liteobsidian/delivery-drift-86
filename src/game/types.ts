@@ -38,6 +38,8 @@ export interface Stats {
   redLights: number; // red lights run (lifetime)
   maxSpeedKmh: number;
   perfectDeliveries: number; // delivered with 100% cargo
+  /** Highest Time Attack medal earned: 0 none, 1 bronze, 2 silver, 3 gold. */
+  timeAttackMedal: number;
 }
 
 export interface Profile {
@@ -71,6 +73,8 @@ export interface CarSpec {
   price: number;
   /** deliveries required before the car can be bought (0 = always) */
   unlockDeliveries?: number;
+  /** Achievement that can also unlock the car, as an alternative to deliveries. */
+  unlockAchievement?: string;
   color: number;
   accent: number;
   /** silhouette style for the procedural body */

@@ -67,6 +67,9 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     ...milestone("drifter", "Дрифтер", "gold", "🥇", (p) => p.driftBest, 750, "Набери 750 очков дрифта за один заезд"),
     progress: (p) => `${Math.min(p.driftBest, 750)}/750`,
   },
+  milestone("time-attack-bronze", "Time Attack", "bronze", "🥉", (p) => p.stats.timeAttackMedal, 1, "Получи бронзу в Time Attack"),
+  milestone("time-attack-silver", "Time Attack", "silver", "🥈", (p) => p.stats.timeAttackMedal, 2, "Получи серебро в Time Attack"),
+  milestone("time-attack-gold", "Time Attack", "gold", "🥇", (p) => p.stats.timeAttackMedal, 3, "Получи золото в Time Attack"),
   milestone("speeder-bronze", "Скорость", "bronze", "🥉", (p) => p.stats.maxSpeedKmh, 90, "Разгонись до 90 км/ч", " км/ч"),
   milestone("speeder-silver", "Скорость", "silver", "🥈", (p) => p.stats.maxSpeedKmh, 120, "Разгонись до 120 км/ч", " км/ч"),
   {
