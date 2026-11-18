@@ -268,22 +268,46 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
   if ((await page.evaluate(() => window.__gameDebug.destinationVisible())) !== (mode === "time-attack")) fail(`${label} showed the wrong destination marker`);
   const tutorial = await page.locator(".tutorial").textContent();
   if (/груз|красн.{0,10}сигнал|штраф/i.test(tutorial ?? "")) fail(`${label} still shows delivery-only hints`);
+  await page.screenshot({ path: join(SHOTS, `mode-${mode}-hud.png`) });
   if (mode === "time-attack") {
     if (!modeState?.course || modeState.course.checkpoints.length !== 5 || modeState.checkpoint !== 0) fail("Time Attack did not start a fixed five-gate course");
+    const trafficNearStart = await page.evaluate(() => {
+      const player = window.__gameProbe();
+      return window.__gameDebug.trafficPos().some((car) => Math.hypot(car.x - player.x, car.z - player.z) < 95);
+    });
+    if (trafficNearStart) fail("Time Attack spawned NPC traffic near its course start");
+    const lapTimer = await page.locator(".hud-timer").textContent();
+    const displayedLap = Number((lapTimer ?? "").match(/([\d.]+)с/)?.[1]);
+    const elapsedNow = await page.evaluate(() => window.__gameDebug.modeState().elapsed);
+    if (!Number.isFinite(displayedLap) || Math.abs(displayedLap - elapsedNow) > 1) fail("Time Attack HUD is not showing elapsed lap time");
     const target = await page.evaluate(() => window.__gameDebug?.orderDest?.());
     if (Math.hypot(target.x - modeState.course.checkpoints[0].x, target.z - modeState.course.checkpoints[0].z) > 0.01) fail("Time Attack did not display its first ordered checkpoint");
-    await page.evaluate(() => window.__gameDebug.advanceCheckpointForTest());
-    const nextState = await page.evaluate(() => window.__gameDebug?.modeState?.());
-    const nextTarget = await page.evaluate(() => window.__gameDebug?.orderDest?.());
-    if (nextState.checkpoint !== 1 || Math.hypot(nextTarget.x - nextState.course.checkpoints[1].x, nextTarget.z - nextState.course.checkpoints[1].z) > 0.01) fail("Time Attack did not advance to the next ordered gate");
+    await page.evaluate((point) => window.__gameDebug.teleport(point.x, point.z), modeState.course.checkpoints[1]);
+    await page.waitForTimeout(120);
+    if ((await page.evaluate(() => window.__gameDebug.modeState().checkpoint)) !== 0) fail("Time Attack accepted an out-of-order checkpoint");
+    for (let checkpoint = 0; checkpoint < 4; checkpoint++) {
+      await page.evaluate((point) => window.__gameDebug.teleport(point.x, point.z), modeState.course.checkpoints[checkpoint]);
+      await page.waitForTimeout(120);
+      const nextState = await page.evaluate(() => window.__gameDebug.modeState());
+      const nextTarget = await page.evaluate(() => window.__gameDebug.orderDest());
+      if (nextState.checkpoint !== checkpoint + 1 || Math.hypot(nextTarget.x - modeState.course.checkpoints[checkpoint + 1].x, nextTarget.z - modeState.course.checkpoints[checkpoint + 1].z) > 0.01) fail(`Time Attack did not advance from gate ${checkpoint + 1} in order`);
+      const checkpointToast = await page.locator(".toast").textContent();
+      if (!checkpointToast?.includes(`${checkpoint + 2}/5`)) fail("Time Attack checkpoint toast has an inconsistent total");
+    }
+    await page.evaluate((point) => {
+      window.__gameDebug.setElapsedForTest(window.__gameDebug.modeState().course.goldTime - 3);
+      window.__gameDebug.teleport(point.x, point.z);
+    }, modeState.course.checkpoints[4]);
+    await page.waitForTimeout(150);
+  } else {
+    await page.evaluate(() => {
+      window.__gameDebug.seedDriftChainForTest(260, 240);
+      window.__gameDebug.setElapsedForTest(59.95);
+    });
+    await page.waitForTimeout(150);
   }
-  await page.screenshot({ path: join(SHOTS, `mode-${mode}-hud.png`) });
-  await page.evaluate((mode) => {
-    if (mode === "drift-trial") window.__gameDebug.setDriftScoreForTest(500);
-    else window.__gameDebug.setElapsedForTest(window.__gameDebug.modeState().course.goldTime);
-    window.__gameDebug.finishMode();
-  }, mode);
   if (!(await page.getByText(label, { exact: true }).count())) fail(`${label} did not show its result`);
+  if (!(await page.locator(".result.ok").count())) fail(`${label} did not finish successfully`);
   const after = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}"));
   const expectedReward = mode === "drift-trial" ? 450 : 1100;
   if (after.deliveries !== before.deliveries) fail(`${label} incorrectly counted as a delivery`);
@@ -292,9 +316,15 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
   if (mode === "drift-trial" && !after.unlockedAch.includes("drifter-silver")) fail("Drift Trial silver achievement was not awarded");
   if (mode === "time-attack" && !after.unlockedAch.includes("time-attack-gold")) fail("Time Attack gold achievement was not awarded");
   await page.screenshot({ path: join(SHOTS, `mode-${mode}-result.png`) });
-  if (!(await page.evaluate((mode) => Object.keys(JSON.parse(localStorage.getItem("delivery-drift-86-records-v1") ?? "{}")).some((key) => key.includes(`:${mode}:`)), mode))) fail(`${label} personal record was not saved`);
-  await page.locator('[data-a="replay"]').click();
+  const hasRecord = await page.evaluate((mode) => Object.keys(JSON.parse(localStorage.getItem("delivery-drift-86-records-v1") ?? "{}")).some((key) => key.includes(mode === "time-attack" ? ":time-attack-course-v1:" : `:${mode}:`)), mode);
+  if (!hasRecord) fail(`${label} personal record was not saved`);
+  if (mode === "time-attack") await page.keyboard.press("Enter");
+  else await page.locator('[data-a="replay"]').click();
   if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} replay did not restart the same mode`);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-a="retry"]').click();
+  if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} paused retry did not restart the same mode`);
+  if (mode === "time-attack" && (await page.evaluate(() => window.__gameDebug.modeState().checkpoint)) !== 0) fail("Time Attack retry did not reset its checkpoint sequence");
   await page.evaluate(() => window.__gameDebug?.exitMode?.());
 }
 await page.locator('[data-a="cars"]').click();

@@ -159,6 +159,7 @@ function overlapsWater(rect: Rect, polygon: { x: number; z: number }[]): boolean
 }
 
 interface RoadSegment {
+  order: number;
   ax: number;
   az: number;
   dx: number;
@@ -202,6 +203,7 @@ class RoadSpatialIndex {
       const dx = b.x - a.x;
       const dz = b.z - a.z;
       const segment: RoadSegment = {
+        order: this.segments.length,
         ax: a.x, az: a.z, dx, dz, length2: dx * dx + dz * dz,
         width: road.width, angle: Math.atan2(dz, dx), visited: 0,
       };
@@ -224,6 +226,7 @@ class RoadSpatialIndex {
     const cellZ = Math.floor(z / ROAD_GRID_CELL);
     const id = ++this.queryId;
     let nearest = Number.POSITIVE_INFINITY;
+    let nearestOrder = Number.POSITIVE_INFINITY;
     let angle = 0;
     for (let radius = 0; radius <= this.maxRadius; radius++) {
       for (let dx = -radius; dx <= radius; dx++) for (let dz = -radius; dz <= radius; dz++) {
@@ -234,8 +237,9 @@ class RoadSpatialIndex {
           if (segment.visited === id) continue;
           segment.visited = id;
           const distance = distanceToSegment(segment, x, z);
-          if (distance < nearest) {
+          if (distance < nearest || (distance === nearest && segment.order < nearestOrder)) {
             nearest = distance;
+            nearestOrder = segment.order;
             angle = segment.angle;
           }
         }
@@ -245,7 +249,7 @@ class RoadSpatialIndex {
       const top = (cellZ - radius) * ROAD_GRID_CELL;
       const bottom = (cellZ + radius + 1) * ROAD_GRID_CELL;
       const outsideDistance = Math.max(0, Math.min(x - left, right - x, z - top, bottom - z));
-      if (nearest <= outsideDistance) break;
+      if (nearest < outsideDistance) break;
     }
     return angle;
   }

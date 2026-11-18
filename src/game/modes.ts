@@ -83,6 +83,11 @@ export function driftMedal(score: number): MedalTier | null {
   return null;
 }
 
+/** Keep medals, rewards, records, and the score shown to players on one point value. */
+export function finalDriftScore(score: number): number {
+  return Math.max(0, Math.round(score));
+}
+
 /** One multiplier level every two seconds of a held drift, capped at five. */
 export function driftMultiplierForSeconds(chainSeconds: number): number {
   return Math.min(5, 1 + Math.floor(Math.max(0, chainSeconds) / 2));

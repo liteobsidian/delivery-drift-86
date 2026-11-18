@@ -88,6 +88,16 @@ describe("NPC traffic regressions", () => {
     traffic.dispose();
   });
 
+  it("repositions traffic around the exact start point without rebuilding routes", () => {
+    const traffic = makeTraffic();
+    const player = new THREE.Vector3(72, 0, -48);
+    traffic.resetForPlayer(player);
+    for (const car of traffic.debugPositions()) {
+      expect(Math.hypot(car.x - player.x, car.z - player.z)).toBeGreaterThanOrEqual(100);
+    }
+    traffic.dispose();
+  });
+
   it("keeps lane position and heading continuous across a sharp corner", () => {
     const route: RouteData = {
       points: [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 }, { x: 0, z: 0 }],
@@ -104,6 +114,21 @@ describe("NPC traffic regressions", () => {
     const reverseBefore = smoothedRouteTangent(route, 1, 10.01, -1);
     const reverseAfter = smoothedRouteTangent(route, 0, 9.99, -1);
     expect(Math.hypot(reverseAfter.x - reverseBefore.x, reverseAfter.z - reverseBefore.z)).toBeLessThan(0.01);
+  });
+
+  it("keeps lane position continuous when adjacent route segments are short", () => {
+    const route: RouteData = {
+      points: [{ x: 0, z: 0 }, { x: 2, z: 0 }, { x: 2, z: 2 }, { x: 0, z: 2 }, { x: 0, z: 0 }],
+      cumulative: [0, 2, 4, 6, 8],
+      tangents: [{ x: 1, z: 0 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 0, z: -1 }],
+      length: 8,
+    };
+    const before = smoothedRouteTangent(route, 0, 1.999, 1);
+    const after = smoothedRouteTangent(route, 1, 2.001, 1);
+    const beforePosition = trafficLanePosition({ x: 1.999, z: 0 }, before, 3.5);
+    const afterPosition = trafficLanePosition({ x: 2, z: 0.001 }, after, 3.5);
+    expect(Math.hypot(afterPosition.x - beforePosition.x, afterPosition.z - beforePosition.z)).toBeLessThan(0.02);
+    expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(0.005);
   });
 
   it("limits NPC speed changes to a small fixed-step acceleration", () => {
@@ -142,6 +167,26 @@ describe("NPC traffic regressions", () => {
     traffic.update(0, new THREE.Vector3(500, 0, 500), new THREE.Vector3(), 0);
     const afterRepose = traffic.debugPositions().find((item) => item.id === car.id)!;
     expect(Math.hypot(afterRepose.x - afterContact.x, afterRepose.z - afterContact.z)).toBeLessThan(0.001);
+    traffic.dispose();
+  });
+
+  it("depenetrates low speed and cooldown contacts without moving NPCs off route", () => {
+    const traffic = makeTraffic();
+    const car = traffic.debugPositions()[0];
+    const routeState = { routeIndex: car.routeIndex, progress: car.progress };
+    const player = new THREE.Vector3(car.x, 0, car.z);
+    const playerVelocity = new THREE.Vector3();
+    const firstHit = traffic.update(0, player, playerVelocity, 0);
+    expect(firstHit).toBeGreaterThan(3);
+    expect(Math.hypot(player.x - car.x, player.z - car.z)).toBeGreaterThanOrEqual(3.4);
+
+    player.set(car.x, 0, car.z);
+    const cooldownHit = traffic.update(0, player, playerVelocity, 0);
+    expect(cooldownHit).toBe(0);
+    expect(Math.hypot(player.x - car.x, player.z - car.z)).toBeGreaterThanOrEqual(3.4);
+    const after = traffic.debugPositions().find((item) => item.id === car.id)!;
+    expect(after.routeIndex).toBe(routeState.routeIndex);
+    expect(after.progress).toBeCloseTo(routeState.progress);
     traffic.dispose();
   });
 });

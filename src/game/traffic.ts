@@ -57,30 +57,41 @@ export function smoothedRouteTangent(
   const count = route.tangents.length;
   const startDistance = route.cumulative[segment];
   const endDistance = route.cumulative[segment + 1];
+  const segmentLength = endDistance - startDistance;
+  const previousLength = segment > 0
+    ? route.cumulative[segment] - route.cumulative[segment - 1]
+    : route.length - route.cumulative[route.cumulative.length - 2];
+  const nextLength = segment + 2 < route.cumulative.length
+    ? route.cumulative[segment + 2] - route.cumulative[segment + 1]
+    : route.cumulative[1] - route.cumulative[0];
+  // Keep the corner windows inside short segments. Otherwise two neighboring
+  // blends overlap and the lane offset can jump at the segment midpoint.
+  const startBlend = Math.min(CORNER_BLEND_DISTANCE, previousLength * 0.9, segmentLength * 0.9);
+  const endBlend = Math.min(CORNER_BLEND_DISTANCE, segmentLength * 0.9, nextLength * 0.9);
   const fromStart = distance - startDistance;
   const fromEnd = endDistance - distance;
   let incoming: CityPoint | null = null;
   let outgoing: CityPoint | null = null;
   let blend = 0;
-  if (Math.min(fromStart, fromEnd) < CORNER_BLEND_DISTANCE / 2) {
+  if ((startBlend > 0 && fromStart < startBlend / 2) || (endBlend > 0 && fromEnd < endBlend / 2)) {
     if (fromStart <= fromEnd) {
       if (direction === 1) {
         incoming = route.tangents[(segment - 1 + count) % count];
         outgoing = route.tangents[segment];
-        blend = 0.5 + fromStart / CORNER_BLEND_DISTANCE;
+        blend = 0.5 + fromStart / startBlend;
       } else {
         incoming = route.tangents[segment];
         outgoing = route.tangents[(segment - 1 + count) % count];
-        blend = 0.5 - fromStart / CORNER_BLEND_DISTANCE;
+        blend = 0.5 - fromStart / startBlend;
       }
     } else if (direction === 1) {
       incoming = route.tangents[segment];
       outgoing = route.tangents[(segment + 1) % count];
-      blend = 0.5 - fromEnd / CORNER_BLEND_DISTANCE;
+      blend = 0.5 - fromEnd / endBlend;
     } else {
       incoming = route.tangents[(segment + 1) % count];
       outgoing = route.tangents[segment];
-      blend = 0.5 + fromEnd / CORNER_BLEND_DISTANCE;
+      blend = 0.5 + fromEnd / endBlend;
     }
   }
   if (!incoming || !outgoing) {
@@ -124,10 +135,15 @@ export class Traffic {
 
   setWorld(world: World, playerPosition = new THREE.Vector3(this.lastPlayerX, 0, this.lastPlayerZ)): void {
     this.world = world;
+    this.rebuildRoutes();
+    this.resetForPlayer(playerPosition);
+  }
+
+  /** Reposition traffic around a new race start without rebuilding unchanged route data. */
+  resetForPlayer(playerPosition: THREE.Vector3): void {
     this.lastPlayerX = playerPosition.x;
     this.lastPlayerZ = playerPosition.z;
     this.cars.forEach((car) => { car.active = false; car.mesh.visible = false; });
-    this.rebuildRoutes();
     this.spawnTimer = SPAWN_INTERVAL;
     for (let i = 0; i < INITIAL_CARS; i++) this.spawn();
   }
@@ -287,6 +303,7 @@ export class Traffic {
       this.spawnTimer = SPAWN_INTERVAL;
       this.spawn();
     }
+    const laneLeaders = this.buildLaneLeaders();
     let hit = 0;
     for (const c of this.cars) {
       if (!c.active) continue;
@@ -310,7 +327,7 @@ export class Traffic {
         }
       }
 
-      const leader = this.carAhead(c);
+      const leader = laneLeaders.get(c) ?? null;
       if (leader) {
         const safeGap = Math.max(0, leader.gap - FOLLOWING_GAP);
         const followingSpeed = Math.sqrt(leader.car.actualSpeed * leader.car.actualSpeed + 2 * MAX_BRAKING * safeGap);
@@ -345,21 +362,21 @@ export class Traffic {
       const cdz = playerPos.z - c.z;
       const cd = Math.hypot(cdx, cdz);
       const contactRadius = 3.4;
-      if (cd < contactRadius && c.hitCooldown === 0) {
+      if (cd < contactRadius) {
         const closing = Math.hypot(playerVel.x - cvx, playerVel.z - cvz);
-        if (closing > 3) {
+        const nx = cd > 0.001 ? cdx / cd : -c.dz;
+        const nz = cd > 0.001 ? cdz / cd : c.dx;
+        const push = contactRadius - cd + 0.04;
+        playerPos.x += nx * push;
+        playerPos.z += nz * push;
+        const relativeNormal = (playerVel.x - cvx) * nx + (playerVel.z - cvz) * nz;
+        if (relativeNormal < 0) {
+          playerVel.x -= relativeNormal * nx * 1.15;
+          playerVel.z -= relativeNormal * nz * 1.15;
+        }
+        if (c.hitCooldown === 0 && closing > 3) {
           c.hitCooldown = 0.9;
           hit = Math.max(hit, closing);
-          const nx = cd > 0.001 ? cdx / cd : 1;
-          const nz = cd > 0.001 ? cdz / cd : 0;
-          const push = contactRadius - cd + 0.04;
-          playerPos.x += nx * push;
-          playerPos.z += nz * push;
-          const relativeNormal = (playerVel.x - cvx) * nx + (playerVel.z - cvz) * nz;
-          if (relativeNormal < 0) {
-            playerVel.x -= relativeNormal * nx * 1.15;
-            playerVel.z -= relativeNormal * nz * 1.15;
-          }
         }
       }
     }
@@ -402,20 +419,33 @@ export class Traffic {
     return ((signed % routeLength) + routeLength) % routeLength;
   }
 
-  private carAhead(car: TrafficCar): { car: TrafficCar; gap: number } | null {
-    const length = this.routes[car.routeIndex]?.length ?? 0;
-    if (!length) return null;
-    let leader: TrafficCar | null = null;
-    let closest = Number.POSITIVE_INFINITY;
-    for (const other of this.cars) {
-      if (!other.active || other === car || other.routeIndex !== car.routeIndex || other.dir !== car.dir) continue;
-      const gap = this.forwardGap(car.progress, other.progress, car.dir, length);
-      if (gap > 0.1 && gap < closest) {
-        closest = gap;
-        leader = other;
+  /** Sort by lane once per tick instead of scanning the entire fleet for every car. */
+  private buildLaneLeaders(): Map<TrafficCar, { car: TrafficCar; gap: number }> {
+    const groups = new Map<number, TrafficCar[]>();
+    for (const car of this.cars) {
+      if (!car.active) continue;
+      const laneKey = car.routeIndex * 2 + (car.dir === 1 ? 0 : 1);
+      const group = groups.get(laneKey);
+      if (group) group.push(car);
+      else groups.set(laneKey, [car]);
+    }
+    const leaders = new Map<TrafficCar, { car: TrafficCar; gap: number }>();
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      group.sort((a, b) => a.progress - b.progress);
+      const routeLength = this.routes[group[0].routeIndex]?.length ?? 0;
+      if (!routeLength) continue;
+      for (let i = 0; i < group.length; i++) {
+        const car = group[i];
+        const leaderIndex = car.dir === 1
+          ? (i + 1) % group.length
+          : (i - 1 + group.length) % group.length;
+        const leader = group[leaderIndex];
+        const gap = this.forwardGap(car.progress, leader.progress, car.dir, routeLength);
+        if (gap > 0.1) leaders.set(car, { car: leader, gap });
       }
     }
-    return leader ? { car: leader, gap: closest } : null;
+    return leaders;
   }
 
   /** verification helper: active car positions, heading and route spacing */

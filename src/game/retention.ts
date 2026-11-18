@@ -4,6 +4,7 @@ import { cityLayoutFor, sampleRoadPoint } from "./map-layouts";
 const RECORD_KEY = "delivery-drift-86-records-v1";
 const WEEK_KEY = "delivery-drift-86-weekly-v1";
 const WEEKLY_EVENT_KEY = "delivery-drift-86-weekly-event-v1";
+const TIME_ATTACK_RECORD_KEY = "time-attack-course-v1";
 export type RecordMode = "delivery" | "drift-trial" | "time-attack";
 export interface WeeklyRoute {
   id: string;
@@ -51,12 +52,25 @@ export function weeklyRoutes(date = new Date(), mapId: MapId = "tokyo"): WeeklyR
 export function loadRecords(): Record<string, number> {
   try {
     const parsed = JSON.parse(localStorage.getItem(RECORD_KEY) ?? "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, number> : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const records = parsed as Record<string, number>;
+    let removedLegacyTimeAttack = false;
+    for (const key of Object.keys(records)) {
+      if (/^[^:]+:time-attack:[^:]+$/.test(key)) {
+        delete records[key];
+        removedLegacyTimeAttack = true;
+      }
+    }
+    if (removedLegacyTimeAttack) {
+      try { localStorage.setItem(RECORD_KEY, JSON.stringify(records)); } catch { /* private browsing */ }
+    }
+    return records;
   } catch { return {}; }
 }
 export function saveRecord(map: MapId, mode: RecordMode, carId: string, score: number): number {
   const records = loadRecords();
-  const key = `${map}:${mode}:${carId}`;
+  const recordMode = mode === "time-attack" ? TIME_ATTACK_RECORD_KEY : mode;
+  const key = `${map}:${recordMode}:${carId}`;
   records[key] = mode === "time-attack"
     ? Math.min(records[key] ?? Number.POSITIVE_INFINITY, score)
     : Math.max(records[key] ?? 0, score);

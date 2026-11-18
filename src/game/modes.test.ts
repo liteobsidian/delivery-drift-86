@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CARS } from "./config";
 import { defaultProfile, mergeProfileData } from "./storage";
-import { canUnlockCar, driftMedal, driftMultiplierForSeconds, modeReward, timeAttackCourse, timeAttackMedal } from "./modes";
+import { canUnlockCar, driftMedal, driftMultiplierForSeconds, finalDriftScore, modeReward, timeAttackCourse, timeAttackMedal } from "./modes";
 
 describe("mode rewards and progression", () => {
   it("awards drift medals at reachable bronze, silver, and gold thresholds", () => {
@@ -9,6 +9,13 @@ describe("mode rewards and progression", () => {
     expect(driftMedal(250)).toBe("bronze");
     expect(driftMedal(500)).toBe("silver");
     expect(driftMedal(750)).toBe("gold");
+  });
+
+  it("uses the displayed rounded score for drift medals and payouts", () => {
+    const score = finalDriftScore(499.6);
+    expect(score).toBe(500);
+    expect(driftMedal(score)).toBe("silver");
+    expect(modeReward("drift-trial", driftMedal(score), score)).toBe(450);
   });
 
   it("pays for drift score even below bronze and scales rewards by medal", () => {
