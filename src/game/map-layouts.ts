@@ -225,7 +225,7 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
     waterAreas: [{
       id: "neva-waterfront",
       points: [
-        { x: -218, z: 100 }, { x: 218, z: 100 }, { x: 218, z: 136 }, { x: -218, z: 136 },
+        { x: -218, z: 104 }, { x: 218, z: 104 }, { x: 218, z: 136 }, { x: -218, z: 136 },
       ],
     }],
     portSites: [],

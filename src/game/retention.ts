@@ -36,6 +36,9 @@ export function weeklyRoutes(date = new Date(), mapId: MapId = "tokyo"): WeeklyR
   const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
   const used = new Set<string>();
   const layout = cityLayoutFor(mapId);
+  const titles = mapId === "tokyo" || mapId === "yokohama"
+    ? ["Ночной экспресс", "Портовый рывок", "Неоновый маршрут"]
+    : ["Ночной экспресс", "Дальний вираж", "Городской маршрут"];
   return Array.from({ length: 3 }, (_, i) => {
     let dest = { x: 0, z: 0 };
     let distance = 0;
@@ -46,7 +49,7 @@ export function weeklyRoutes(date = new Date(), mapId: MapId = "tokyo"): WeeklyR
       if (distance > 60 && !used.has(key)) { used.add(key); break; }
     }
     const id = mapId === "tokyo" ? `${week}-${i + 1}` : `${week}-${mapId}-${i + 1}`;
-    return { id, title: ["Ночной экспресс", "Дальний вираж", "Городской маршрут"][i], dest, timeLimit: Math.round(distance / 13 + 45) };
+    return { id, title: titles[i], dest, timeLimit: Math.round(distance / 13 + 45) };
   });
 }
 
