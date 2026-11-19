@@ -481,12 +481,12 @@ export class Game {
     const cards = WORLD_MAPS.map((map) => {
       const access = mapAccessFor(map.id, this.profile.deliveries, this.profile.mapId);
       const locked = !access.unlocked;
-      const progress = Math.min(8, this.profile.deliveries);
+      const progress = Math.min(map.unlockDeliveries, this.profile.deliveries);
       return `<button class="map-card track-card ${this.profile.mapId === map.id ? "selected" : ""} ${locked ? "locked" : ""}" data-a="map:${map.id}" ${locked ? "disabled" : ""} aria-pressed="${this.profile.mapId === map.id}">
-        <span class="track-art track-${map.id}"><i>${map.id === "tokyo" ? "東京" : "横浜"}</i>${locked ? "<b class='track-lock'>🔒</b>" : ""}</span>
+        <span class="track-art track-${map.id}"><i>${map.badge}</i>${locked ? "<b class='track-lock'>🔒</b>" : ""}</span>
         <b>${map.name}</b>
-        <span>${locked ? `Откроется после ${8} доставок` : map.description}</span>
-        ${locked ? `<span class="track-progress">${progress} / 8 доставок</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
+        <span>${locked ? `Откроется после ${map.unlockDeliveries} доставок` : map.description}</span>
+        ${locked ? `<span class="track-progress">${progress} / ${map.unlockDeliveries} доставок</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
       </button>`;
     }).join("");
     const modeName = this.pendingMode === "delivery" ? "Доставка" : this.pendingMode === "drift-trial" ? "Drift Trial" : "Time Attack";
@@ -819,8 +819,8 @@ export class Game {
           this.buyUpgrade(arg as keyof Profile["upgrades"]["ae86"]);
           return;
         }
-        if (act === "map" && arg && (arg === "tokyo" || arg === "yokohama")) {
-          if (this.selectMap(arg)) {
+        if (act === "map" && arg && WORLD_MAPS.some((map) => map.id === arg)) {
+          if (this.selectMap(arg as MapId)) {
             if (this.pendingMode === "delivery") this.quickStart();
             else this.startMode(this.pendingMode);
           }
@@ -1183,7 +1183,7 @@ export class Game {
     const scale = S / Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
     const u = (x: number) => S / 2 + (x - (bounds.minX + bounds.maxX) / 2) * scale;
     const v = (z: number) => S / 2 + (z - (bounds.minZ + bounds.maxZ) / 2) * scale;
-    g.fillStyle = this.world.mapId === "yokohama" ? "#102d39" : "rgba(10,14,28,0.75)";
+    g.fillStyle = this.world.layout.waterAreas.length ? "#102d39" : "rgba(10,14,28,0.75)";
     g.fillRect(0, 0, S, S);
     for (const area of this.world.layout.waterAreas) {
       g.beginPath();

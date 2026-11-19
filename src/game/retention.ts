@@ -1,5 +1,6 @@
 import type { MapId } from "./types";
 import { cityLayoutFor, sampleRoadPoint } from "./map-layouts";
+import { WORLD_MAPS } from "./config";
 
 const RECORD_KEY = "delivery-drift-86-records-v1";
 const WEEK_KEY = "delivery-drift-86-weekly-v1";
@@ -16,7 +17,7 @@ export interface WeeklyProgress { week: string; completed: string[] }
 export interface MapAccess { unlocked: boolean; deliveriesRemaining: number }
 
 export function mapAccessFor(mapId: MapId, deliveries: number, selectedMap: MapId): MapAccess {
-  const threshold = mapId === "tokyo" ? 0 : 8;
+  const threshold = WORLD_MAPS.find((map) => map.id === mapId)?.unlockDeliveries ?? 0;
   const unlocked = deliveries >= threshold || selectedMap === mapId;
   return { unlocked, deliveriesRemaining: unlocked ? 0 : threshold - Math.max(0, deliveries) };
 }
@@ -45,7 +46,7 @@ export function weeklyRoutes(date = new Date(), mapId: MapId = "tokyo"): WeeklyR
       if (distance > 60 && !used.has(key)) { used.add(key); break; }
     }
     const id = mapId === "tokyo" ? `${week}-${i + 1}` : `${week}-${mapId}-${i + 1}`;
-    return { id, title: ["Ночной экспресс", "Портовый рывок", "Неоновый маршрут"][i], dest, timeLimit: Math.round(distance / 13 + 45) };
+    return { id, title: ["Ночной экспресс", "Дальний вираж", "Городской маршрут"][i], dest, timeLimit: Math.round(distance / 13 + 45) };
   });
 }
 

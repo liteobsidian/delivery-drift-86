@@ -6,9 +6,12 @@ export const ROAD_W = 14; // road width
 export const GRID_N = 7; // road lines per axis (GRID_N-1 blocks)
 export const WORLD_HALF = ((GRID_N - 1) * CELL) / 2; // 174
 
-export const WORLD_MAPS: { id: MapId; name: string; description: string }[] = [
-  { id: "tokyo", name: "Неоновый Токио", description: "Дрифт-кольцо и ночные улицы" },
-  { id: "yokohama", name: "Порт Ёкохама", description: "Контейнеры, краны и вода у дорог" },
+export const WORLD_MAPS: { id: MapId; name: string; description: string; badge: string; unlockDeliveries: number }[] = [
+  { id: "tokyo", name: "Неоновый Токио", description: "Дрифт-кольцо и ночные улицы", badge: "東京", unlockDeliveries: 0 },
+  { id: "yokohama", name: "Порт Ёкохама", description: "Контейнеры, краны и вода у дорог", badge: "横浜", unlockDeliveries: 8 },
+  { id: "spb", name: "Белые ночи · Петербург", description: "Набережные, мосты и длинный проспект", badge: "СПБ", unlockDeliveries: 16 },
+  { id: "kazan", name: "Кремлёвский вираж · Казань", description: "Широкие улицы, кольцо и речной берег", badge: "КЗН", unlockDeliveries: 24 },
+  { id: "sochi", name: "Черноморский серпантин · Сочи", description: "Береговая петля и горные связки", badge: "СОЧ", unlockDeliveries: 32 },
 ];
 export const SIDEWALK_W = 3.2;
 
@@ -175,6 +178,25 @@ export const CARS: CarSpec[] = [
     body: "sedan",
     glb: "evo",
     spoiler: "wing",
+  },
+  {
+    id: "vaz2107turbo",
+    name: "LADA 2107 Turbo «Боевая классика»",
+    topSpeed: 63,
+    accel: 30,
+    grip: 7.8,
+    steerRate: 2.7,
+    brake: 32,
+    massFeel: 1.08,
+    cargoProtect: 0.08,
+    stability: 1.05,
+    price: 90000,
+    unlockDeliveries: 70,
+    unlockAchievement: "drifter",
+    color: 0xd7c9ac,
+    accent: 0x9d292d,
+    body: "sedan",
+    spoiler: "duck",
   },
 ];
 

@@ -939,7 +939,7 @@ html, body, #root {
 .journey-activities .activity-card[data-a="activity:drift-trial"] { background-image: linear-gradient(0deg, rgba(7,12,22,.98), rgba(7,12,22,.2)), radial-gradient(ellipse at 45% 20%, #853a77, #17152d 70%); }
 .journey-activities .activity-card[data-a="activity:time-attack"] { background-image: linear-gradient(0deg, rgba(7,12,22,.98), rgba(7,12,22,.2)), radial-gradient(ellipse at 55% 20%, #1c6979, #11192e 70%); }
 
-.track-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 18px; max-width: 660px; }
+.track-picker { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 18px; max-width: 700px; }
 .track-card { position: relative; min-height: 300px; padding: 10px; overflow: hidden; border-color: #3e4b67; text-align: left; }
 .track-card > b { margin: 8px 8px 0; font-size: 18px; }
 .track-card > span:not(.track-art) { margin: 0 8px; color: #aab4d8; font-size: 12px; }
@@ -947,6 +947,9 @@ html, body, #root {
 .track-art i { color: rgba(255,255,255,.8); font-size: 34px; font-style: normal; font-weight: 900; text-shadow: 0 2px 12px #000; }
 .track-tokyo { background: linear-gradient(180deg, transparent 30%, rgba(10,13,28,.72)), radial-gradient(ellipse at 54% 85%, #e33a90, transparent 48%), linear-gradient(135deg, #233959, #101523 58%, #473360); }
 .track-yokohama { background: linear-gradient(180deg, transparent 30%, rgba(10,18,27,.75)), linear-gradient(160deg, #4a7890 0 35%, #344859 36% 59%, #a75448 60% 70%, #194354 71%); }
+.track-spb { background: linear-gradient(180deg, transparent 20%, rgba(8,12,24,.82)), linear-gradient(0deg, transparent 0 44%, rgba(39,116,142,.92) 45% 57%, transparent 58%), radial-gradient(ellipse at 53% 45%, #d1aa65 0 3%, transparent 4%), linear-gradient(135deg, #77717e, #26354a 62%, #131c2d); }
+.track-kazan { background: linear-gradient(180deg, transparent 22%, rgba(8,13,22,.84)), radial-gradient(ellipse at 67% 47%, #2eacb5 0 8%, transparent 9%), linear-gradient(135deg, #51674f, #35435a 44%, #7a4e49 45% 61%, #182536 62%); }
+.track-sochi { background: linear-gradient(180deg, transparent 24%, rgba(5,15,24,.84)), linear-gradient(0deg, #115168 0 25%, #548a83 26% 32%, transparent 33%), radial-gradient(ellipse at 58% 34%, #27453e 0 18%, transparent 19%), linear-gradient(135deg, #476b69, #253d4e 64%, #102435); }
 .track-card.selected { border-color: #00e5ff; box-shadow: 0 0 20px rgba(0,229,255,.2), inset 0 0 18px rgba(0,229,255,.1); }
 .track-card.locked { filter: saturate(.35); cursor: not-allowed; }
 .track-lock { position: absolute; top: 12px; left: 12px; padding: 8px 10px; border-radius: 18px; background: rgba(6,10,19,.8); }
@@ -960,6 +963,7 @@ html, body, #root {
   .journey-activities { grid-template-columns: 1fr; }
   .journey-activities .activity-card { min-height: 125px; }
   .track-picker { grid-template-columns: 1fr; }
+  .track-picker { max-height: 58vh; overflow-y: auto; padding-right: 4px; }
   .track-card { min-height: 250px; }
   .track-art { height: 145px; }
 }
