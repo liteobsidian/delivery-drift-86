@@ -1,4 +1,4 @@
-import type { Profile, Stats, UpgradeLevels } from "./types";
+import { MAP_IDS, type Profile, type Stats, type UpgradeLevels } from "./types";
 
 export type ProfileMigrationInput = Partial<Omit<Profile, "stats" | "upgrades">> & {
   stats?: Partial<Stats>;
@@ -22,6 +22,7 @@ export function defaultProfile(): Profile {
       r34: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
       nsx: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
       evo: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
+      vaz2107turbo: { engine: 0, tires: 0, suspension: 0, turbo: 0 },
     },
     bestEarn: 0,
     totalEarn: 0,
@@ -49,7 +50,7 @@ function isValid(p: unknown): p is Profile {
     typeof o.money === "number" &&
     typeof o.deliveries === "number" &&
     typeof o.carId === "string" &&
-    (o.mapId === undefined || o.mapId === "tokyo" || o.mapId === "yokohama") &&
+    (o.mapId === undefined || MAP_IDS.includes(o.mapId)) &&
     Array.isArray(o.ownedCars) &&
     typeof o.upgrades === "object" &&
     o.upgrades !== null

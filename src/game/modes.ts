@@ -19,9 +19,12 @@ export interface TimeAttackCourse {
   timeLimit: number;
 }
 
-const COURSE_ROUTE: Record<MapId, string> = {
-  tokyo: "tokyo-outer-traffic",
-  yokohama: "yokohama-freight-traffic",
+const COURSE_CONFIG: Record<MapId, { routeId: string; name: string }> = {
+  tokyo: { routeId: "tokyo-outer-traffic", name: "Внешнее кольцо Токио" },
+  yokohama: { routeId: "yokohama-freight-traffic", name: "Грузовая петля Ёкохамы" },
+  spb: { routeId: "spb-embankment-loop", name: "Петербургская набережная" },
+  kazan: { routeId: "kazan-kremlin-loop", name: "Кремлёвское кольцо Казани" },
+  sochi: { routeId: "sochi-coast-loop", name: "Черноморская петля Сочи" },
 };
 
 function routeMetrics(route: TrafficRoute): { cumulative: number[]; length: number } {
@@ -47,7 +50,7 @@ function pointAtDistance(route: TrafficRoute, cumulative: number[], length: numb
 
 /** One fixed lap on an authored traffic loop, so best times compare the same course. */
 export function timeAttackCourse(mapId: MapId): TimeAttackCourse {
-  const routeId = COURSE_ROUTE[mapId];
+  const { routeId, name } = COURSE_CONFIG[mapId];
   const route = cityLayoutFor(mapId).trafficRoutes.find((item) => item.id === routeId);
   if (!route) throw new Error(`Missing Time Attack route ${routeId} for ${mapId}`);
   const { cumulative, length } = routeMetrics(route);
@@ -64,7 +67,7 @@ export function timeAttackCourse(mapId: MapId): TimeAttackCourse {
   return {
     mapId,
     routeId,
-    name: mapId === "tokyo" ? "Внешнее кольцо Токио" : "Грузовая петля Ёкохамы",
+    name,
     start,
     heading,
     checkpoints,

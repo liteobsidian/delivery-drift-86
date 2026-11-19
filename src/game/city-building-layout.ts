@@ -274,7 +274,7 @@ class RoadSpatialIndex {
   }
 }
 
-/** Deterministic road-aware infill for both maps, kept clear of water and authored port assets. */
+/** Deterministic road-aware infill, kept clear of water and authored landmark/port footprints. */
 export function generateCityBuildingSites(layout: CityLayout): CityBuildingSite[] {
   const sites: CityBuildingSite[] = [];
   const roadIndex = new RoadSpatialIndex(layout);
@@ -282,7 +282,8 @@ export function generateCityBuildingSites(layout: CityLayout): CityBuildingSite[
   const { minX, maxX, minZ, maxZ } = layout.bounds;
   const columns = Math.ceil((maxX - minX) / BUILDING_PITCH);
   const rows = Math.ceil((maxZ - minZ) / BUILDING_PITCH);
-  const salt = layout.id === "tokyo" ? 0x32a17 : 0x7c931;
+  const saltByMap = { tokyo: 0x32a17, yokohama: 0x7c931, spb: 0x32b19, kazan: 0x67ca3, sochi: 0x48d21 } as const;
+  const salt = saltByMap[layout.id];
   const portSites = layout.portSites;
 
   for (let row = 0; row < rows; row++) for (let column = 0; column < columns; column++) {
@@ -302,6 +303,7 @@ export function generateCityBuildingSites(layout: CityLayout): CityBuildingSite[
     if (!roadIndex.clearOfRoads(footprint, 1)) continue;
     if (layout.waterAreas.some((water) => overlapsWater(rect, water.points))) continue;
     if (portSites.some((site) => rectanglesOverlap(rect, site, 2))) continue;
+    if (layout.landmarks.some((site) => rectanglesOverlap(rect, site, site.kind === "palm-row" || site.kind === "bridge" ? 14 : 22))) continue;
     let overlapsAcceptedSite = false;
     const cellX = Math.floor(x / 16);
     const cellZ = Math.floor(z / 16);

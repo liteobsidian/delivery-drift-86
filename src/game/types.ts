@@ -20,7 +20,8 @@ export type GameScreen =
   | "settings"
   | "achievements";
 
-export type MapId = "tokyo" | "yokohama";
+export const MAP_IDS = ["tokyo", "yokohama", "spb", "kazan", "sochi"] as const;
+export type MapId = (typeof MAP_IDS)[number];
 
 export interface UpgradeLevels {
   engine: number; // 0..3
