@@ -22,6 +22,8 @@ export type GameScreen =
 
 export const MAP_IDS = ["tokyo", "yokohama", "spb", "kazan", "sochi"] as const;
 export type MapId = (typeof MAP_IDS)[number];
+export const ACTIVITY_MODES = ["delivery", "drift-trial", "time-attack"] as const;
+export type ActivityMode = (typeof ACTIVITY_MODES)[number];
 
 export interface UpgradeLevels {
   engine: number; // 0..3
@@ -46,7 +48,7 @@ export interface Stats {
 export interface Profile {
   money: number;
   deliveries: number;
-  carId: string; // "ae86" | "supra"
+  carId: string;
   mapId: MapId;
   ownedCars: string[];
   upgrades: Record<string, UpgradeLevels>;
@@ -57,7 +59,10 @@ export interface Profile {
   volume: number; // 0..1 master volume
   stats: Stats;
   unlockedAch: string[];
-  seenTutorial?: boolean;
+  seenTutorials: Partial<Record<ActivityMode, true>>;
+  records: Record<string, number>;
+  weeklyCompletions: Record<string, string[]>;
+  weeklyEventWeek: string | null;
 }
 
 export interface CarSpec {
@@ -93,7 +98,7 @@ export interface Order {
   timeLimit: number; // seconds
   fragility: number; // damage multiplier
   distance: number;
-  weeklyId?: string;
+  weekly?: { id: string; week: string };
 }
 
 export interface TrafficLight {

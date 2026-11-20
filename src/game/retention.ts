@@ -1,25 +1,23 @@
-import type { MapId } from "./types";
-import { cityLayoutFor, sampleRoadPoint } from "./map-layouts";
-import { WORLD_MAPS } from "./config";
+import { CARS, WORLD_MAPS } from "./config";
+import { sampleDeliveryDestination } from "./delivery-routing";
+import { cityLayoutFor } from "./map-layouts";
+import { driftMedal, medalRank, timeAttackCourse, timeAttackMedal } from "./modes";
+import { MAP_IDS, type ActivityMode, type MapId } from "./types";
 
-const RECORD_KEY = "delivery-drift-86-records-v1";
-const WEEK_KEY = "delivery-drift-86-weekly-v1";
-const WEEKLY_EVENT_KEY = "delivery-drift-86-weekly-event-v1";
 const TIME_ATTACK_RECORD_KEY = "time-attack-course-v1";
-export type RecordMode = "delivery" | "drift-trial" | "time-attack";
 export interface WeeklyRoute {
   id: string;
+  week: string;
   title: string;
   dest: { x: number; z: number };
+  distance: number;
   timeLimit: number;
 }
-export interface WeeklyProgress { week: string; completed: string[] }
-export interface MapAccess { unlocked: boolean; deliveriesRemaining: number }
 
-export function mapAccessFor(mapId: MapId, deliveries: number, selectedMap: MapId): MapAccess {
-  const threshold = WORLD_MAPS.find((map) => map.id === mapId)?.unlockDeliveries ?? 0;
-  const unlocked = deliveries >= threshold || selectedMap === mapId;
-  return { unlocked, deliveriesRemaining: unlocked ? 0 : threshold - Math.max(0, deliveries) };
+export function mapAccessFor(mapId: MapId, deliveries: number, selectedMap: MapId, medalPoints = 0) {
+  const map = WORLD_MAPS.find((entry) => entry.id === mapId)!;
+  const unlocked = deliveries >= map.unlockDeliveries || medalPoints >= map.unlockMedalPoints || selectedMap === mapId;
+  return { unlocked, deliveriesRemaining: unlocked ? 0 : map.unlockDeliveries - Math.max(0, deliveries) };
 }
 
 export function utcWeekKey(date = new Date()): string {
@@ -39,68 +37,60 @@ export function weeklyRoutes(date = new Date(), mapId: MapId = "tokyo"): WeeklyR
   const titles = mapId === "tokyo" || mapId === "yokohama"
     ? ["Ночной экспресс", "Портовый рывок", "Неоновый маршрут"]
     : ["Ночной экспресс", "Дальний вираж", "Городской маршрут"];
-  return Array.from({ length: 3 }, (_, i) => {
-    let dest = { x: 0, z: 0 };
-    let distance = 0;
-    for (let attempt = 0; attempt < 40; attempt++) {
-      dest = sampleRoadPoint(layout, random);
-      distance = Math.hypot(dest.x, dest.z);
-      const key = `${Math.round(dest.x / 10)},${Math.round(dest.z / 10)}`;
-      if (distance > 60 && !used.has(key)) { used.add(key); break; }
-    }
+  return titles.flatMap((title, i) => {
+    const route = sampleDeliveryDestination(layout, random, used, 60);
+    if (!route) return [];
     const id = mapId === "tokyo" ? `${week}-${i + 1}` : `${week}-${mapId}-${i + 1}`;
-    return { id, title: titles[i], dest, timeLimit: Math.round(distance / 13 + 45) };
+    return [{ ...route, id, week, title, timeLimit: Math.round(route.distance / 13 + 45) }];
   });
 }
 
-export function loadRecords(): Record<string, number> {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(RECORD_KEY) ?? "{}");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const records = parsed as Record<string, number>;
-    let removedLegacyTimeAttack = false;
-    for (const key of Object.keys(records)) {
-      if (/^[^:]+:time-attack:[^:]+$/.test(key)) {
-        delete records[key];
-        removedLegacyTimeAttack = true;
-      }
-    }
-    if (removedLegacyTimeAttack) {
-      try { localStorage.setItem(RECORD_KEY, JSON.stringify(records)); } catch { /* private browsing */ }
-    }
-    return records;
-  } catch { return {}; }
+export function recordDetails(key: string) {
+  const [map, kind, carId, extra] = key.split(":");
+  if (extra !== undefined) return;
+  const mapId = MAP_IDS.find((id) => id === map);
+  const car = CARS.find((item) => item.id === carId);
+  if (!mapId || !car) return;
+  const mode = kind === TIME_ATTACK_RECORD_KEY ? "time-attack" : kind === "drift-trial" || kind === "delivery" ? kind : undefined;
+  if (mode) return { mapId, mode, car };
 }
-export function saveRecord(map: MapId, mode: RecordMode, carId: string, score: number): number {
-  const records = loadRecords();
+
+export function saveRecord(
+  records: Record<string, number>, map: MapId, mode: ActivityMode, carId: string, score: number,
+): number {
   const recordMode = mode === "time-attack" ? TIME_ATTACK_RECORD_KEY : mode;
   const key = `${map}:${recordMode}:${carId}`;
   records[key] = mode === "time-attack"
-    ? Math.min(records[key] ?? Number.POSITIVE_INFINITY, score)
+    ? Math.min(records[key] ?? Infinity, score)
     : Math.max(records[key] ?? 0, score);
-  try { localStorage.setItem(RECORD_KEY, JSON.stringify(records)); } catch { /* private browsing */ }
   return records[key];
 }
-export function loadWeeklyProgress(date = new Date()): WeeklyProgress {
-  const week = utcWeekKey(date);
-  try {
-    const p = JSON.parse(localStorage.getItem(WEEK_KEY) ?? "null") as WeeklyProgress | null;
-    return p?.week === week && Array.isArray(p.completed) ? p : { week, completed: [] };
-  } catch { return { week, completed: [] }; }
-}
-export function completeWeeklyRoute(id: string, date = new Date()): WeeklyProgress {
-  const progress = loadWeeklyProgress(date);
-  if (!progress.completed.includes(id)) progress.completed.push(id);
-  try { localStorage.setItem(WEEK_KEY, JSON.stringify(progress)); } catch { /* private browsing */ }
-  return progress;
+
+/** Only the best medal in each city and mode counts, across all cars. */
+export function careerMedalPoints(records: Readonly<Record<string, number>>): number {
+  const best = new Map<string, number>();
+  for (const [key, value] of Object.entries(records)) {
+    const entry = recordDetails(key);
+    if (!entry || entry.mode === "delivery") continue;
+    const { mapId, mode } = entry;
+    const group = `${mapId}:${mode}`;
+    const medal = mode === "drift-trial" ? driftMedal(value) : timeAttackMedal(timeAttackCourse(mapId), value);
+    best.set(group, Math.max(best.get(group) ?? 0, medalRank(medal)));
+  }
+  return [...best.values()].reduce((total, rank) => total + rank, 0);
 }
 
-export function weeklyEventSeen(date = new Date()): boolean {
-  try { return localStorage.getItem(WEEKLY_EVENT_KEY) === utcWeekKey(date); }
-  catch { return false; }
+export function weeklyRouteIds(week: string, mapId: MapId): string[] {
+  const prefix = mapId === "tokyo" ? week : `${week}-${mapId}`;
+  return [1, 2, 3].map((i) => `${prefix}-${i}`);
 }
 
-export function markWeeklyEventSeen(date = new Date()): void {
-  try { localStorage.setItem(WEEKLY_EVENT_KEY, utcWeekKey(date)); }
-  catch { /* private browsing */ }
+export function completeWeeklyRoute(
+  completions: Record<string, string[]>, route: Pick<WeeklyRoute, "id" | "week">,
+): string[] {
+  const completed = completions[route.week] ??= [];
+  if (!completed.includes(route.id)) completed.push(route.id);
+  // Keep recent weeks so a Sunday run can finish after Monday's routes have appeared.
+  for (const week of Object.keys(completions).sort().slice(0, -3)) delete completions[week];
+  return completed;
 }

@@ -3,8 +3,7 @@
  * **direction-mapping assertions** (directly targets the most frequent playtest defect). When changing the input
  * mapping you must sync the assertions here.
  *
- * Usage: npm run build && node scripts/verify-game.mjs
- * Serves dist/public when a backend has been grafted on, otherwise dist/.
+ * Usage: npm run verify. Serves a temporary build with diagnostic hooks.
  *
  * Notes:
  * - The canvas is looked up by id — CANVAS_ID below must match the <canvas id="..."> that
@@ -19,7 +18,8 @@
 import { chromium } from "playwright";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { buildForVerification } from "./verification-build.mjs";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,15 +27,7 @@ import { fileURLToPath } from "node:url";
 // path with a space (or any non-ASCII character) would yield ".../My%20Games/app" and every
 // existsSync() below would miss, reporting "no build output" for a build that is right there.
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-// Build output location depends on whether a backend has been grafted on:
-// plain game template -> dist/ ; after backend-building -> dist/public/ (dist/boot.js is the server bundle).
-const DIST = existsSync(join(ROOT, "dist/public/index.html"))
-  ? join(ROOT, "dist/public")
-  : join(ROOT, "dist");
-if (!existsSync(join(DIST, "index.html"))) {
-  console.error(`VERIFY FAIL: no build output at ${DIST} — run \`npm run build\` first`);
-  process.exit(1);
-}
+const DIST = buildForVerification();
 const SHOTS = join(ROOT, "verification-shots");
 mkdirSync(SHOTS, { recursive: true });
 
@@ -107,14 +99,17 @@ await eventPage.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
 await eventPage.locator('[data-a="event-start"]').waitFor({ state: "visible" });
 await eventPage.screenshot({ path: join(SHOTS, "02-weekly-event.png") });
 await eventPage.locator('[data-a="event-start"]').click();
+await eventPage.locator('[data-a="tut-ok"]').click();
 if (await eventPage.evaluate(() => window.__gameDebug?.screen?.()) !== "playing") fail("Weekly event start action did not start its route");
 if (!(await eventPage.evaluate(() => window.__gameDebug?.weeklyEventSeen?.()))) fail("Starting the weekly event did not record it as seen");
 await eventPage.evaluate(() => {
-  const ids = window.__gameDebug.weekly();
-  localStorage.setItem("delivery-drift-86-weekly-v1", JSON.stringify({ week: window.__gameDebug.weekKey(), completed: ids }));
-  localStorage.removeItem("delivery-drift-86-weekly-event-v1");
-  window.__gameDebug.exitMode();
+  const key = "delivery-drift-86-save-v2";
+  const profile = JSON.parse(localStorage.getItem(key));
+  profile.weeklyCompletions[window.__gameDebug.weekKey()] = window.__gameDebug.weekly();
+  profile.weeklyEventWeek = null;
+  localStorage.setItem(key, JSON.stringify(profile));
 });
+await eventPage.reload({ waitUntil: "networkidle" });
 if (await eventPage.locator('[data-a="event-start"]').count()) fail("Weekly event offered a replay after all routes were completed");
 await eventPage.close();
 // The page boots through a React shell (src/main.tsx -> src/App.tsx -> src/pages/Home.tsx),
@@ -151,7 +146,10 @@ if (await lockedPortMap.count() !== 1) fail("Yokohama Port is missing from the t
 if (!(await lockedPortMap.isDisabled())) fail("Yokohama opened before the delivery threshold");
 if (!(await page.getByText(/8 доставок/).count())) fail("Locked Yokohama does not show its delivery requirement");
 await page.screenshot({ path: join(SHOTS, "04-tracks-locked.png") });
-await page.locator('[data-a="map:tokyo"]').click();
+await page.locator('[data-a="map:tokyo"]').press("Space");
+const firstTutorial = page.locator("dialog.tutorial[open]");
+if (!(await firstTutorial.getByText(/WASD/).isVisible())) fail("Desktop tutorial did not show keyboard controls");
+await firstTutorial.locator('[data-a="tut-ok"]').press("Space");
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("Neon Tokyo could not be selected");
 if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port-only props leaked into Neon Tokyo");
 if (await page.evaluate(() => window.__gameDebug?.screen?.()) !== "playing") fail("Choosing a map did not start the selected delivery");
@@ -206,7 +204,7 @@ await page.screenshot({ path: join(SHOTS, "07-yokohama-network.png") });
 await page.evaluate(() => window.__gameDebug.teleport(45, 47, 0));
 await page.waitForTimeout(900);
 await page.screenshot({ path: join(SHOTS, "08-yokohama-quay.png") });
-const savedMap = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").mapId);
+const savedMap = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}").mapId);
 if (savedMap !== "yokohama") fail("The selected map was not saved to the player profile");
 await page.evaluate(() => window.__gameDebug?.exitMode?.());
 await page.locator('[data-a="play"]').click();
@@ -251,13 +249,13 @@ await page.evaluate(() => window.__gameDebug?.finishWeekly?.());
 if ((await page.evaluate(() => window.__gameDebug?.weeklyProgress?.()?.completed?.length)) !== 1) fail("Replaying a weekly route changed completed route progress");
 await page.locator('[data-a="menu"]').click();
 await page.locator('[data-a="profile"]').click();
-if (!(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("delivery-drift-86-records-v1") ?? "{}")).some((key) => key.includes(":delivery:"))))) fail("Delivery personal records were not saved");
+if (!(await page.evaluate(() => Object.keys((JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}").records ?? {})).some((key) => key.includes(":delivery:"))))) fail("Delivery personal records were not saved");
 await page.locator('[data-a="back"]').click();
 
 // Both short modes can start, complete, and be replayed without counting as deliveries.
 await page.evaluate(() => window.__gameDebug?.setDeliveriesForTest?.(0));
 for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TIME ATTACK"]]) {
-  const before = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}"));
+  const before = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}"));
   await page.locator('[data-a="play"]').click();
   if (mode === "drift-trial") await page.screenshot({ path: join(SHOTS, "mode-picker.png") });
   await page.locator(`[data-a="activity:${mode}"]`).click();
@@ -266,8 +264,11 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
   const modeState = await page.evaluate(() => window.__gameDebug?.modeState?.());
   if (await page.locator(".hud-cargo").isVisible()) fail(`${label} still shows irrelevant cargo damage`);
   if ((await page.evaluate(() => window.__gameDebug.destinationVisible())) !== (mode === "time-attack")) fail(`${label} showed the wrong destination marker`);
-  const tutorial = await page.locator(".tutorial").textContent();
-  if (/груз|красн.{0,10}сигнал|штраф/i.test(tutorial ?? "")) fail(`${label} still shows delivery-only hints`);
+  const tutorial = page.locator("dialog.tutorial[open]");
+  if (!(await tutorial.isVisible())) fail(`${label} did not show its own tutorial`);
+  if (/груз|красн.{0,10}сигнал|штраф/i.test(await tutorial.textContent() ?? "")) fail(`${label} still shows delivery-only hints`);
+  if (modeState.elapsed !== 0) fail(`${label} timer advanced while the tutorial was open`);
+  await tutorial.locator('[data-a="tut-ok"]').click();
   await page.screenshot({ path: join(SHOTS, `mode-${mode}-hud.png`) });
   if (mode === "time-attack") {
     if (!modeState?.course || modeState.course.checkpoints.length !== 5 || modeState.checkpoint !== 0) fail("Time Attack did not start a fixed five-gate course");
@@ -298,17 +299,17 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
       window.__gameDebug.setElapsedForTest(window.__gameDebug.modeState().course.goldTime - 3);
       window.__gameDebug.teleport(point.x, point.z);
     }, modeState.course.checkpoints[4]);
-    await page.waitForTimeout(150);
+    await page.locator(".result").waitFor();
   } else {
     await page.evaluate(() => {
       window.__gameDebug.seedDriftChainForTest(260, 240);
       window.__gameDebug.setElapsedForTest(59.95);
     });
-    await page.waitForTimeout(150);
+    await page.locator(".result").waitFor();
   }
   if (!(await page.getByText(label, { exact: true }).count())) fail(`${label} did not show its result`);
   if (!(await page.locator(".result.ok").count())) fail(`${label} did not finish successfully`);
-  const after = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}"));
+  const after = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}"));
   const expectedReward = mode === "drift-trial" ? 450 : 1100;
   if (after.deliveries !== before.deliveries) fail(`${label} incorrectly counted as a delivery`);
   if (after.money < before.money + expectedReward) fail(`${label} did not pay its medal reward`);
@@ -316,9 +317,11 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
   if (mode === "drift-trial" && !after.unlockedAch.includes("drifter-silver")) fail("Drift Trial silver achievement was not awarded");
   if (mode === "time-attack" && !after.unlockedAch.includes("time-attack-gold")) fail("Time Attack gold achievement was not awarded");
   await page.screenshot({ path: join(SHOTS, `mode-${mode}-result.png`) });
-  const hasRecord = await page.evaluate((mode) => Object.keys(JSON.parse(localStorage.getItem("delivery-drift-86-records-v1") ?? "{}")).some((key) => key.includes(mode === "time-attack" ? ":time-attack-course-v1:" : `:${mode}:`)), mode);
+  const hasRecord = await page.evaluate((mode) => Object.keys((JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}").records ?? {})).some((key) => key.includes(mode === "time-attack" ? ":time-attack-course-v1:" : `:${mode}:`)), mode);
   if (!hasRecord) fail(`${label} personal record was not saved`);
-  if (mode === "time-attack") await page.keyboard.press("Enter");
+  if (mode === "time-attack") {
+    await page.locator('[data-a="replay"]').press("Enter");
+  }
   else await page.locator('[data-a="replay"]').click();
   if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} replay did not restart the same mode`);
   await page.keyboard.press("Escape");
@@ -334,7 +337,7 @@ for (const [carId, name] of [["silvia", "Nissan Silvia S15"], ["evo", "Mitsubish
   if (await car.locator(`[data-a="buy:${carId}"]`).count() !== 1) fail(`${name} did not unlock from its mode medal`);
 }
 await page.locator('[data-a="back"]').click();
-const beforeUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries);
+const beforeUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}").deliveries);
 for (let i = 0; i < 2; i++) {
   await page.locator('[data-a="play"]').click();
   await page.locator('[data-a="activity:delivery"]').click();
@@ -344,13 +347,13 @@ for (let i = 0; i < 2; i++) {
   await page.evaluate(() => window.__gameDebug?.finishDelivery?.());
   await page.locator('[data-a="menu"]').click();
 }
-const afterUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v1") ?? "{}").deliveries);
+const afterUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}").deliveries);
 if (afterUnlimited !== beforeUnlimited + 2) fail("Ordinary deliveries were not available repeatedly");
 
 // 1) The canvas must actually render content (not a black screen). Judge by reading the drawing
 //    buffer, not the screenshot — on headless/swiftshader the compositor may show the canvas as
 //    black while the drawing buffer holds the real frame. WebGL needs preserveDrawingBuffer for
-//    that read (the template's src/game/boot.ts enables it); 2D canvases go through getImageData.
+//    that read (the verification build enables it); 2D canvases go through getImageData.
 const shot = await page.evaluate((id) => {
   const SAMPLES = [[0.5, 0.5], [0.25, 0.5], [0.75, 0.5], [0.5, 0.25], [0.5, 0.75]];
   const el = document.getElementById(id);
@@ -478,6 +481,115 @@ await page.screenshot({ path: join(SHOTS, "02-gameplay.png") });
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
 await page.screenshot({ path: join(SHOTS, "03-paused.png") });
+
+console.log("Gameplay smoke passed; checking audit regressions across maps and tabs.");
+// Audit regressions across maps, mobile input, and shared saves.
+await page.evaluate(() => {
+  window.__gameDebug.exitMode();
+  window.__gameDebug.setDeliveriesForTest(0);
+});
+await page.locator('[data-a="play"]').click();
+await page.locator('[data-a="activity:drift-trial"]').click();
+if (await page.locator('[data-a="map:yokohama"]').isDisabled()) fail("Medals did not unlock new maps without delivery progress");
+await page.evaluate(() => {
+  window.__gameDebug.exitMode();
+  window.__gameDebug.setDeliveriesForTest(32);
+});
+for (const city of ["spb", "kazan", "sochi", "tokyo"]) {
+  await page.locator('[data-a="play"]').click();
+  await page.locator('[data-a="activity:delivery"]').click();
+  await page.locator(`[data-a="map:${city}"]`).click();
+  const state = await page.evaluate(() => {
+    const debug = window.__gameDebug;
+    return { city: debug.mapId(), cache: debug.worldCacheSize(), buildings: debug.cityBuildingCount(), traffic: debug.trafficPos().length };
+  });
+  if (state.city !== city || state.cache > 2 || state.buildings < 400 || state.traffic < 5) {
+    fail(`Unexpected world after switching to ${city}: ${JSON.stringify(state)}`);
+  }
+  await page.evaluate(() => window.__gameDebug.exitMode());
+}
+
+await page.locator('[data-a="play"]').click();
+await page.locator('[data-a="activity:delivery"]').click();
+await page.locator('[data-a="map:tokyo"]').click();
+const deliveriesBefore = await page.evaluate(() => window.__gameDebug.profile().deliveries);
+await page.evaluate(() => {
+  const debug = window.__gameDebug;
+  const dest = debug.orderDest();
+  debug.setCargoForTest(0);
+  debug.teleport(dest.x, dest.z);
+});
+await page.locator(".result.bad").waitFor();
+if (await page.evaluate(() => window.__gameDebug.profile().deliveries) !== deliveriesBefore) fail("Destroyed cargo counted as delivered");
+
+await page.locator('[data-a="menu"]').click();
+await page.locator('[data-a="play"]').click();
+await page.locator('[data-a="activity:time-attack"]').click();
+await page.locator('[data-a="map:tokyo"]').click();
+await page.evaluate(() => window.__gameDebug.setElapsedForTest(9999));
+await page.locator(".result.bad").waitFor();
+if (!(await page.getByText("Время до схода", { exact: false }).isVisible())) fail("Failed Time Attack was presented as a finished lap");
+await page.close();
+
+const mobileContext = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 844, height: 390 } });
+const mobile = await mobileContext.newPage();
+mobile.on("pageerror", (e) => consoleErrors.push(String(e)));
+await mobile.clock.setFixedTime(new Date("2026-11-22T23:59:54Z"));
+await mobile.addInitScript(() => {
+  const raw = JSON.stringify({ money: 21000, deliveries: 7, carId: "ae86", ownedCars: ["ae86"], mapId: "old-map", upgrades: {}, unlockedAch: null });
+  localStorage.setItem("delivery-drift-86-save-v1", raw);
+  localStorage.setItem("delivery-drift-86-records-v1", JSON.stringify({
+    "tokyo:time-attack-course-v1:ae86": "invalid",
+    "tokyo:drift-trial:ae86": 260,
+  }));
+  const set = Storage.prototype.setItem;
+  Storage.prototype.setItem = function (key, value) {
+    if (key === "delivery-drift-86-save-v2" && window.denyProfileWrite) {
+      throw new DOMException("Temporarily blocked", "QuotaExceededError");
+    }
+    return set.call(this, key, value);
+  };
+});
+await mobile.goto(`http://127.0.0.1:${port}/`);
+await mobile.locator('[data-a="event-start"]').tap();
+const touchTutorial = mobile.locator("dialog.tutorial[open]");
+if (!(await touchTutorial.getByText(/джойстике/).isVisible())) fail("Touch tutorial did not show the joystick");
+const tickBefore = await mobile.evaluate(() => window.__gameDebug.ticks());
+await mobile.waitForFunction((start) => window.__gameDebug.ticks() > start + 8, tickBefore);
+if (await mobile.evaluate(() => window.__gameDebug.modeState().elapsed) !== 0) fail("Mobile tutorial consumed race time");
+await touchTutorial.locator('[data-a="tut-ok"]').tap();
+if (!(await mobile.locator("#touch-controls").isVisible())) fail("Touch controls were not enabled after the tutorial");
+await mobile.clock.setFixedTime(new Date("2026-11-23T00:00:02Z"));
+await mobile.evaluate(() => {
+  window.denyProfileWrite = true;
+  window.__gameDebug.finishWeekly();
+});
+await mobile.locator(".result.ok").waitFor();
+if (!(await mobile.getByText("Маршруты недели от 2026-11-16: 1/3", { exact: true }).isVisible())) fail("Weekly finish was credited to the wrong week");
+const notice = mobile.locator(".save-notice");
+if (!(await notice.isVisible())) fail("Write failure did not show the persistent save warning");
+await mobile.evaluate(() => { window.denyProfileWrite = false; });
+await notice.getByRole("button").tap();
+if (await notice.isVisible()) fail("Save warning remained after a successful retry");
+const saved = await mobile.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2")));
+if (saved.money <= 21000 || saved.deliveries !== 8 || saved.weeklyCompletions["2026-11-16"]?.length !== 1 ||
+    saved.weeklyCompletions["2026-11-23"]?.length || saved.mapId !== "tokyo") fail("Retry failed to retain the career and old weekly result");
+
+const secondTab = await mobileContext.newPage();
+await secondTab.goto(`http://127.0.0.1:${port}/`);
+await secondTab.getByRole("heading", { name: "Игра открыта в другой вкладке" }).waitFor();
+await secondTab.getByRole("button", { name: "Ждать освобождения" }).click();
+await mobile.close();
+await secondTab.locator(".home-career").waitFor();
+if (!(await secondTab.locator(".home-career").textContent()).includes(`₽ ${saved.money}`)) fail("The next tab did not load the latest progress");
+if (await secondTab.locator('[data-a="event-dismiss"]').isVisible()) await secondTab.locator('[data-a="event-dismiss"]').tap();
+await secondTab.locator('[data-a="profile"]').tap();
+const row = secondTab.locator(".record-row").filter({ hasText: "Drift Trial" });
+if (!(await row.getByText(/Toyota AE86 Sprinter/).isVisible()) || !(await row.getByText("260 очк.").isVisible())) {
+  fail("Migrated records did not show the car name and score unit");
+}
+if (await secondTab.locator(".record-row").filter({ hasText: "Time Attack" }).count()) fail("Malformed time record reached the UI");
+await mobileContext.close();
 
 // 5) Zero console errors
 if (consoleErrors.length) fail(`${consoleErrors.length} console error(s): ${consoleErrors[0]}`);

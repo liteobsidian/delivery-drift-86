@@ -4,17 +4,18 @@
  * Mobile (iPhone-sized, touch): title → quick start → gameplay with touch
  * controls → teleport to destination → result screen. Screenshots for every
  * state; zero console errors is a hard gate.
- * Run: npm run build && xvfb-run -a node scripts/verify-local.mjs
+ * Run: xvfb-run -a node scripts/verify-local.mjs
  */
 import { chromium } from "playwright";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { buildForVerification } from "./verification-build.mjs";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const DIST = join(ROOT, "dist");
+const DIST = buildForVerification();
 const SHOTS = join(ROOT, "verification-shots");
 mkdirSync(SHOTS, { recursive: true });
 const MIME = {

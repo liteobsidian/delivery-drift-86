@@ -9,7 +9,7 @@
     "check": "tsc -b",
     "test:maps": "vitest run src/game/map-layouts.test.ts",
     "preview": "vite preview",
-    "verify": "node scripts/verify-game.mjs"
+    "verify": "vitest run && node scripts/verify-game.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.17.3",

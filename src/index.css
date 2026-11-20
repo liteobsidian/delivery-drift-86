@@ -522,24 +522,48 @@ html, body, #root {
   100% { opacity: 0; transform: translateY(-46px) scale(1); }
 }
 
-/* tutorial overlay */
-.tutorial {
+/* Save errors stay visible through screen changes. */
+.save-notice {
   position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(5, 6, 16, 0.72);
-  pointer-events: auto;
-  z-index: 8;
+  top: 4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  box-sizing: border-box;
+  width: min(420px, calc(100% - 24px));
+  padding: 12px 16px;
+  color: #f5e6bf;
+  background: #292318;
+  border: 1px solid #9c7539;
+  border-radius: 12px;
+  text-align: center;
+  font-size: 14px;
 }
+.save-notice .btn { margin: 9px auto 0; display: block; }
+.save-conflict {
+  top: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 150vmax rgba(5, 6, 16, .85);
+}
+
+/* A modal keeps the keyboard and touch controls focused on the tutorial. */
+.tutorial {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 24px);
+  border-radius: 16px;
+}
+.tutorial::backdrop { background: rgba(5, 6, 16, .72); }
 
 .tutorial-box {
   background: rgba(13, 17, 34, 0.96);
   border: 1px solid #2c3552;
   border-radius: 16px;
   padding: 20px 22px;
-  width: min(420px, 90vw);
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 24px));
   color: #e6ebff;
 }
 

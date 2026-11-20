@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CARS } from "./config";
+import { MAP_IDS } from "./types";
+import { isOnLayoutRoad, cityLayoutFor } from "./map-layouts";
 import { defaultProfile, mergeProfileData } from "./storage";
 import { canUnlockCar, driftMedal, driftMultiplierForSeconds, finalDriftScore, modeReward, timeAttackCourse, timeAttackMedal } from "./modes";
 
@@ -19,7 +21,9 @@ describe("mode rewards and progression", () => {
   });
 
   it("pays for drift score even below bronze and scales rewards by medal", () => {
-    expect(modeReward("drift-trial", null, 0)).toBe(40);
+    expect(modeReward("drift-trial", null, 0)).toBe(0);
+    expect(modeReward("drift-trial", null, 20)).toBeGreaterThan(0);
+    expect(modeReward("drift-trial", null, 800, false)).toBe(0);
     expect(modeReward("drift-trial", null, 800)).toBe(200);
     expect(modeReward("drift-trial", "bronze", 250)).toBe(180);
     expect(modeReward("drift-trial", "silver", 500)).toBe(450);
@@ -34,10 +38,12 @@ describe("mode rewards and progression", () => {
     expect(driftMultiplierForSeconds(40)).toBe(5);
   });
 
-  it("builds fixed ordered Time Attack courses on both authored maps", () => {
-    for (const mapId of ["tokyo", "yokohama"] as const) {
+  it("builds fixed ordered Time Attack courses on all five maps", () => {
+    expect(timeAttackCourse("tokyo").routeId).toBe("tokyo-outer-traffic");
+    expect(timeAttackCourse("yokohama").routeId).toBe("yokohama-freight-traffic");
+    for (const mapId of MAP_IDS) {
       const course = timeAttackCourse(mapId);
-      expect(course.routeId).toBe(mapId === "tokyo" ? "tokyo-outer-traffic" : "yokohama-freight-traffic");
+      expect(course.checkpoints.every(({ x, z }) => isOnLayoutRoad(cityLayoutFor(mapId), x, z))).toBe(true);
       expect(course.length).toBeGreaterThan(500);
       expect(course.checkpoints).toHaveLength(5);
       expect(course.checkpoints.at(-1)).toEqual(course.start);
