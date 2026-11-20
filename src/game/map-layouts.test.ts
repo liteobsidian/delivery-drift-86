@@ -1,6 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { ROAD_W } from "./config";
-import { CITY_LAYOUTS, cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad, parcelClearOfRoads, sampleRoadPoint, worldLengthToTexturePixels, worldToTextureCoordinate } from "./map-layouts";
+import { CITY_LAYOUTS, cityLayoutFor, distanceToRoad, distanceToRoadPath, gantrySupports, isOnLayoutRoad, parcelClearOfRoads, sampleRoadPoint, worldLengthToTexturePixels, worldToTextureCoordinate, type CityLayout, type CityParcel, type CityPoint } from "./map-layouts";
+
+function inPolygon({ x, z }: CityPoint, points: readonly CityPoint[]): boolean {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const a = points[i];
+    const b = points[j];
+    if ((a.z > z) !== (b.z > z) && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+function onDeck(layout: CityLayout, point: CityPoint): boolean {
+  const decks = [
+    ...layout.landmarks.filter((site) => site.kind === "bridge"),
+    ...layout.portSites.filter((site) => site.kind === "pier"),
+  ];
+  return decks.some((deck) => {
+    const dx = point.x - deck.x;
+    const dz = point.z - deck.z;
+    const c = Math.cos(deck.rotation);
+    const s = Math.sin(deck.rotation);
+    return Math.abs(c * dx + s * dz) <= deck.width / 2 && Math.abs(c * dz - s * dx) <= deck.depth / 2;
+  });
+}
 
 describe("hand-authored city layouts", () => {
   it("maps world geometry into the same ground-plane scale used by road queries", () => {
@@ -53,17 +77,8 @@ describe("hand-authored city layouts", () => {
       "warehouse", "container-yard", "gantry-crane", "pier", "cargo-ship", "tank-farm",
     ]));
     expect(yokohama.portSites.length).toBeGreaterThanOrEqual(10);
-    expect(yokohama.waterAreas.some((area) => {
-      const ship = yokohama.portSites.find((site) => site.kind === "cargo-ship")!;
-      let inside = false;
-      for (let i = 0, j = area.points.length - 1; i < area.points.length; j = i++) {
-        const a = area.points[i];
-        const b = area.points[j];
-        const crosses = (a.z > ship.z) !== (b.z > ship.z) && ship.x < ((b.x - a.x) * (ship.z - a.z)) / (b.z - a.z) + a.x;
-        if (crosses) inside = !inside;
-      }
-      return inside;
-    })).toBe(true);
+    const ship = yokohama.portSites.find((site) => site.kind === "cargo-ship")!;
+    expect(yokohama.waterAreas.some((area) => inPolygon(ship, area.points))).toBe(true);
   });
 
   it("keeps land-based port facilities inside bounds and clear of roads", () => {
@@ -77,14 +92,11 @@ describe("hand-authored city layouts", () => {
       expect(site.x + halfWidth).toBeLessThanOrEqual(yokohama.bounds.maxX);
       expect(site.z - halfDepth).toBeGreaterThanOrEqual(yokohama.bounds.minZ);
       expect(site.z + halfDepth).toBeLessThanOrEqual(yokohama.bounds.maxZ);
-      expect(parcelClearOfRoads(yokohama, {
-        x: site.x,
-        z: site.z,
-        width: site.width,
-        depth: site.depth,
-        rotation: site.rotation,
-        zone: "port",
-      }, 3), `${site.id} overlaps a road`).toBe(true);
+      const footprints = site.kind === "gantry-crane" ? gantrySupports(site) : [site];
+      for (const footprint of footprints) {
+        const parcel: CityParcel = { ...footprint, zone: "port" };
+        expect(parcelClearOfRoads(yokohama, parcel, 3), `${site.id} overlaps a road`).toBe(true);
+      }
     }
   });
 
@@ -119,6 +131,57 @@ describe("hand-authored city layouts", () => {
         expect(isOnLayoutRoad(layout, landmark.x, landmark.z), landmark.id).toBe(true);
       } else {
         expect(parcelClearOfRoads(layout, { ...landmark, zone: "downtown" }, 0.3), landmark.id).toBe(true);
+      }
+    }
+  });
+
+  it("keeps bridge rails off the intersecting streets", () => {
+    const layout = cityLayoutFor("spb");
+    for (const bridge of layout.landmarks.filter((site) => site.kind === "bridge")) {
+      for (const side of [-1, 1]) {
+        const rail: CityParcel = { ...bridge, x: bridge.x + side * (bridge.width / 2 - 0.26), width: 0.69, zone: "downtown" };
+        expect(parcelClearOfRoads(layout, rail, 0.25), bridge.id).toBe(true);
+      }
+    }
+  });
+
+  it("connects each open street end to a street or a dock", () => {
+    for (const layout of Object.values(CITY_LAYOUTS)) for (const road of layout.roads) {
+      const first = road.points[0];
+      const last = road.points.at(-1)!;
+      if (first.x === last.x && first.z === last.z) continue;
+      for (const end of [first, last]) {
+        const connected = layout.roads.some((other) => other !== road && distanceToRoadPath(other, end.x, end.z) <= other.width / 2);
+        expect(connected || onDeck(layout, end), `${layout.id}/${road.id} ends at ${end.x},${end.z}`).toBe(true);
+      }
+    }
+  });
+
+  it("puts a deck under every segment of roadway crossing water", () => {
+    for (const layout of Object.values(CITY_LAYOUTS)) {
+      if (!layout.waterAreas.length) continue;
+      for (const road of layout.roads) {
+        const unsupported = (point: CityPoint) => layout.waterAreas.some((water) => inPolygon(point, water.points)) && !onDeck(layout, point);
+        const radius = road.width / 2;
+        for (const [index, a] of road.points.entries()) {
+          // Round joins and caps can touch a bank even when the straight sides are clear.
+          for (let i = 0; i < 12; i++) {
+            const angle = (Math.PI / 6) * i;
+            expect(unsupported({ x: a.x + Math.cos(angle) * radius, z: a.z + Math.sin(angle) * radius }), `${road.id} at ${a.x},${a.z}`).toBe(false);
+          }
+          const b = road.points[index + 1];
+          if (!b) continue;
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const length = Math.hypot(dx, dz);
+          if (!length) continue;
+          const steps = Math.ceil(length / 1.5);
+          for (let i = 0; i <= steps; i++) for (const side of [-1, 0, 1]) {
+            const x = a.x + dx * i / steps - dz * radius * side / length;
+            const z = a.z + dz * i / steps + dx * radius * side / length;
+            expect(unsupported({ x, z }), `${road.id} at ${x.toFixed(1)},${z.toFixed(1)}`).toBe(false);
+          }
+        }
       }
     }
   });

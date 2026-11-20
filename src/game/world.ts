@@ -11,9 +11,11 @@ import type { MapId } from "./types";
 import { CITY_STYLE } from "./city-style";
 import { createBuildingGeometry, createCityFacade, TOKYO_TOWER_WIDTH } from "./city-architecture";
 import { buildCityLandmarks, palmOffsets, PALM_BASE_RADIUS } from "./city-landmarks";
-import { cityBuildingMeshYaw, generateCityBuildingSites, type CityBuildingSite } from "./city-building-layout";
+import { circleOrientedRectContact, cityBuildingMeshYaw, generateCityBuildingSites, type CityBuildingSite } from "./city-building-layout";
 import { BuildingSpatialIndex } from "./building-spatial-index";
-import { cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad, worldLengthToTexturePixels, worldToTextureCoordinate } from "./map-layouts";
+import { cityLayoutFor, distanceToRoad, distanceToRoadPath, gantrySupports, worldLengthToTexturePixels, worldToTextureCoordinate, type CityParcel } from "./map-layouts";
+import { RoadSpatialIndex } from "./road-spatial-index";
+import { paintRoadSurface, transverseMarking } from "./road-surface";
 
 /** Central drift ring (radius) at map center. */
 export const RING_R = 44;
@@ -69,9 +71,8 @@ export interface Cobble {
 export interface Ramp {
   x: number;
   z: number;
-  w: number;
-  h: number;
-  angle: number;
+  width: number;
+  length: number;
   /** world-space direction of travel that goes UP the slope (launch direction) */
   dx: number;
   dz: number;
@@ -92,6 +93,9 @@ export interface LightVisual {
 }
 
 const GS = WORLD_HALF * 2 + ROAD_W * 2 + 60; // ground plane size
+const ROAD_DECK_Y = 0.09;
+const RAMP_LENGTH = 7;
+const RAMP_MODEL_WIDTH = 6.4;
 export class World {
   readonly mapId: MapId;
   readonly layout;
@@ -118,6 +122,9 @@ export class World {
   private flickerMats: THREE.MeshBasicMaterial[] = [];
   private chevronMats: THREE.Matrix4[] = [];
   private buildingIndex!: BuildingSpatialIndex;
+  private readonly roadIndex: RoadSpatialIndex;
+  private readonly groundMaterial: THREE.MeshStandardMaterial;
+  private readonly deckSites: readonly Pick<CityParcel, "x" | "z" | "width" | "depth" | "rotation">[];
   private flickerT = 0;
   private marker = new THREE.Group();
   private markerRing!: THREE.Mesh;
@@ -126,10 +133,17 @@ export class World {
   constructor(mapId: MapId = "tokyo") {
     this.mapId = mapId;
     this.layout = cityLayoutFor(mapId);
-    this.buildingSites = generateCityBuildingSites(this.layout);
+    this.roadIndex = new RoadSpatialIndex(this.layout);
+    this.deckSites = [
+      ...this.layout.landmarks.filter((site) => site.kind === "bridge"),
+      ...this.layout.portSites.filter((site) => site.kind === "pier"),
+    ];
+    this.buildingSites = generateCityBuildingSites(this.layout, this.roadIndex);
     this.group.name = `world-${mapId}`;
     this.group.add(this.buildSky());
-    this.group.add(this.buildGround());
+    const ground = this.buildGround();
+    this.groundMaterial = ground.material;
+    this.group.add(ground);
     if (this.layout.waterAreas.length) this.group.add(this.buildWater());
     this.group.add(this.buildBuildings());
     this.group.add(this.buildStreetProps());
@@ -143,6 +157,9 @@ export class World {
     }
     const landmarks = buildCityLandmarks(this.layout.landmarks);
     landmarks.name = `landmarks-${mapId}`;
+    for (const site of this.layout.landmarks) {
+      if (site.kind === "bridge") landmarks.getObjectByName(site.id)!.add(this.buildRoadDeck(site));
+    }
     this.group.add(landmarks);
     if (mapId === "tokyo") this.group.add(this.buildRoadSigns());
     this.group.add(this.buildPuddles());
@@ -161,7 +178,7 @@ export class World {
 
   /** true when the point is over a road surface (not inside a block) */
   isOnRoad(x: number, z: number): boolean {
-    return isOnLayoutRoad(this.layout, x, z);
+    return this.roadIndex.covers(x, z);
   }
 
   nearestRoadDist(x: number, z: number): number {
@@ -213,13 +230,10 @@ export class World {
 
   rampAt(x: number, z: number): Ramp | null {
     for (const r of this.ramps) {
-      if (
-        x >= r.x - r.w / 2 &&
-        x <= r.x + r.w / 2 &&
-        z >= r.z - r.h / 2 &&
-        z <= r.z + r.h / 2
-      )
-        return r;
+      const dx = x - r.x;
+      const dz = z - r.z;
+      if (Math.abs(dx * r.dx + dz * r.dz) <= r.length / 2
+        && Math.abs(dx * r.dz - dz * r.dx) <= r.width / 2) return r;
     }
     return null;
   }
@@ -517,7 +531,7 @@ export class World {
     return g;
   }
 
-  private buildGround(): THREE.Mesh {
+  private buildGround(): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial> {
     const tex = this.makeGroundTexture();
     const geo = new THREE.PlaneGeometry(GS, GS);
     const mat = new THREE.MeshStandardMaterial({
@@ -526,9 +540,30 @@ export class World {
       metalness: this.mapId === "yokohama" ? 0.14 : this.mapId === "sochi" ? 0.1 : 0.08,
     });
     const mesh = new THREE.Mesh(geo, mat);
+    mesh.name = "city-ground";
     mesh.rotation.x = -Math.PI / 2;
     mesh.receiveShadow = true;
     return mesh;
+  }
+
+  private buildRoadDeck(site: Pick<CityParcel, "x" | "z" | "width" | "depth" | "rotation">): THREE.Mesh {
+    const geometry = new THREE.PlaneGeometry(site.width, site.depth).rotateX(-Math.PI / 2);
+    const uv = geometry.getAttribute("uv");
+    const positions = geometry.getAttribute("position");
+    const c = Math.cos(site.rotation);
+    const s = Math.sin(site.rotation);
+    for (let i = 0; i < positions.count; i++) {
+      const x = positions.getX(i);
+      const z = positions.getZ(i);
+      const worldX = site.x + c * x - s * z;
+      const worldZ = site.z + s * x + c * z;
+      uv.setXY(i, worldX / GS + 0.5, 0.5 - worldZ / GS);
+    }
+    const deck = new THREE.Mesh(geometry, this.groundMaterial);
+    deck.name = "road-deck";
+    deck.position.y = ROAD_DECK_Y;
+    deck.receiveShadow = true;
+    return deck;
   }
 
   private buildWater(): THREE.Group {
@@ -652,11 +687,11 @@ export class World {
       g.restore();
     }
     for (const site of this.layout.portSites) {
-      if (site.kind === "pier" || site.kind === "cargo-ship" || site.kind === "gantry-crane") continue;
+      if (site.kind === "cargo-ship" || site.kind === "gantry-crane") continue;
       g.save();
       g.translate(u(site.x), v(site.z));
       g.rotate(site.rotation);
-      g.fillStyle = site.kind === "container-yard" ? "#3c4a50" : site.kind === "tank-farm" ? "#454d4c" : "#4a5559";
+      g.fillStyle = site.kind === "pier" ? "#59676b" : site.kind === "container-yard" ? "#3c4a50" : site.kind === "tank-farm" ? "#454d4c" : "#4a5559";
       g.fillRect(-w(site.width / 2), -w(site.depth / 2), w(site.width), w(site.depth));
       g.strokeStyle = site.kind === "container-yard" ? "rgba(237,181,81,.74)" : "rgba(157,180,178,.48)";
       g.lineWidth = w(0.65);
@@ -677,51 +712,7 @@ export class World {
       g.restore();
     }
 
-    g.lineCap = "round";
-    g.lineJoin = "round";
-    const strokeRoads = (color: string, width: (road: number) => number) => {
-      g.strokeStyle = color;
-      for (const road of this.layout.roads) {
-        g.beginPath();
-        road.points.forEach((p, i) => i === 0 ? g.moveTo(u(p.x), v(p.z)) : g.lineTo(u(p.x), v(p.z)));
-        g.lineWidth = w(width(road.width));
-        g.stroke();
-      }
-    };
-    strokeRoads(theme.paving, (width) => width + (this.mapId === "spb" ? 4.2 : 2.6));
-    strokeRoads(theme.asphalt, (width) => width);
-    g.globalAlpha = this.mapId === "tokyo" ? 0.60 : 0.79;
-    g.setLineDash([w(this.mapId === "yokohama" ? 5 : 3.1), w(4.8)]);
-    strokeRoads(theme.lane, () => this.mapId === "yokohama" ? 0.34 : 0.27);
-    g.setLineDash([]);
-    g.globalAlpha = 1;
-    if (theme.line === "edge") {
-      g.strokeStyle = theme.lane;
-      g.lineWidth = w(0.22);
-      for (const road of this.layout.roads) for (const side of [-1, 1]) {
-        g.beginPath();
-        road.points.forEach((point, index, points) => {
-          const a = points[Math.max(0, index - 1)], b = points[Math.min(points.length - 1, index + 1)];
-          const dx = b.x - a.x, dz = b.z - a.z;
-          const offset = side * (road.width / 2 - 0.65) / (Math.hypot(dx, dz) || 1);
-          const x = u(point.x - dz * offset), z = v(point.z + dx * offset);
-          if (index) g.lineTo(x, z);
-          else g.moveTo(x, z);
-        });
-        g.stroke();
-      }
-    }
-
-    // Crosswalks only mark the major authored intersections.
-    g.fillStyle = "rgba(193,202,217,.72)";
-    for (const junction of this.layout.signalJunctions) {
-      for (let i = -3; i <= 3; i++) {
-        g.fillRect(u(junction.x + i * 1.8 - 0.55), v(junction.z - 9), w(1.1), w(1.25));
-        g.fillRect(u(junction.x + i * 1.8 - 0.55), v(junction.z + 7.8), w(1.1), w(1.25));
-        g.fillRect(u(junction.x - 9), v(junction.z + i * 1.8 - 0.55), w(1.25), w(1.1));
-        g.fillRect(u(junction.x + 7.8), v(junction.z + i * 1.8 - 0.55), w(1.25), w(1.1));
-      }
-    }
+    paintRoadSurface(g, this.layout, this.roadIndex, GS, S);
 
     // Deterministic asphalt wear sampled along the same centerlines as driving.
     const rng = mulberry32(CITY_STYLE[this.mapId].seed);
@@ -964,26 +955,27 @@ export class World {
       if (site.kind === "pier") {
         const place = addSite(site, "cargo-pier");
         const deckMat = new THREE.MeshStandardMaterial({ color: 0x59676b, roughness: 0.88, metalness: 0.12 });
-        addBox(place, deckMat, 0, 0.18, 0, site.width, 0.85, site.depth);
+        addBox(place, deckMat, 0, -0.37, 0, site.width, 0.85, site.depth);
+        place.add(this.buildRoadDeck(site));
         const pylonGeo = new THREE.CylinderGeometry(0.5, 0.7, 5.8, 8);
         const pylons = Math.max(3, Math.floor(site.depth / 12));
         for (let i = 0; i <= pylons; i++) {
           const z = -site.depth / 2 + 2 + (site.depth - 4) * i / pylons;
           for (const x of [-site.width * 0.38, site.width * 0.38]) {
             const pylon = new THREE.Mesh(pylonGeo, steelMat);
-            pylon.position.set(x, -2.5, z);
+            pylon.position.set(x, -2.9, z);
             place.add(pylon);
           }
           if (i === 0 || i === pylons) {
             for (const side of [-1, 1]) {
               const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.42, 0.9, 8), trimMat);
-              bollard.position.set(side * (site.width * 0.38), 0.95, z);
+              bollard.position.set(side * (site.width * 0.38), ROAD_DECK_Y + 0.45, z);
               place.add(bollard);
             }
           }
         }
         for (const x of [-site.width / 2 + 0.5, site.width / 2 - 0.5]) {
-          addBox(place, trimMat, x, 0.72, 0, 0.24, 0.14, site.depth * 0.92);
+          addBox(place, trimMat, x, ROAD_DECK_Y + 0.015, 0, 0.24, 0.03, site.depth * 0.92);
         }
         stats.piers++;
         continue;
@@ -1057,12 +1049,10 @@ export class World {
         crane.add(mesh);
         return mesh;
       };
-      for (const x of [-w * 0.42, w * 0.42]) for (const z of [-d * 0.38, d * 0.38]) {
-        addBeam(x, h / 2, z, 1.25, h, 1.1);
-        addBeam(x, 1.1, z, 2.2, 0.7, 2.0, braceMat);
-        const worldX = site.x + x * Math.cos(site.rotation) - z * Math.sin(site.rotation);
-        const worldZ = site.z + x * Math.sin(site.rotation) + z * Math.cos(site.rotation);
-        this.buildings.push({ minX: worldX - 0.8, maxX: worldX + 0.8, minZ: worldZ - 0.8, maxZ: worldZ + 0.8 });
+      for (const support of gantrySupports(site)) {
+        addBeam(support.localX, h / 2, support.localZ, 1.25, h, 1.1);
+        addBeam(support.localX, 1.1, support.localZ, support.width, 0.7, support.depth, braceMat);
+        this.addBuildingCollider(support.x, support.z, support.width, support.depth, support.rotation);
       }
       for (const z of [-d * 0.38, d * 0.38]) {
         addBeam(0, h, z, w + 3.2, 1.4, 1.5);
@@ -1228,7 +1218,7 @@ export class World {
         const offset = road.width / 2 + 1.6;
         const x = a.x + dx * t - dz / length * offset * side;
         const z = a.z + dz * t + dx / length * offset * side;
-        if (this.isOnRoad(x, z)) continue;
+        if (this.roadIndex.covers(x, z, 0.28)) continue;
         positions.push(new THREE.Vector3(x, height, z));
       }
     }
@@ -1864,6 +1854,7 @@ export class World {
       const x = a.x + dx * t - dz / length * off;
       const z = a.z + dz * t + dx / length * off;
       const r = 2.2 + rng() * 1.8;
+      if (this.deckSites.some((site) => circleOrientedRectContact(x, z, r * 1.05, site))) continue;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.set(x, 0.03, z);
@@ -1880,12 +1871,12 @@ export class World {
     const rng = mulberry32(9090);
     // wedge profile: low edge -> high edge, extruded across the width
     const shape = new THREE.Shape();
-    shape.moveTo(-3.5, 0);
-    shape.lineTo(3.5, 1.5);
-    shape.lineTo(3.5, 0);
-    shape.lineTo(-3.5, 0);
+    shape.moveTo(-RAMP_LENGTH / 2, 0);
+    shape.lineTo(RAMP_LENGTH / 2, 1.5);
+    shape.lineTo(RAMP_LENGTH / 2, 0);
+    shape.closePath();
     const geo = new THREE.ExtrudeGeometry(shape, {
-      depth: 6.4,
+      depth: RAMP_MODEL_WIDTH,
       bevelEnabled: false,
     });
     geo.rotateY(Math.PI / 2); // slope rises toward local -z (car enters from +z going -z)
@@ -1919,37 +1910,43 @@ export class World {
       emissive: 0x552200,
       emissiveIntensity: 0.25,
     });
-    const placed = new Set<string>();
     let guard = 0;
-    // traffic keeps right: dir=+1 rides at -LANE, dir=-1 at +LANE; the ramp
-    // sits IN a lane and its slope follows that lane's travel direction
-    const LANE = ROAD_W / 4;
-    while (this.ramps.length < 6 && guard++ < 120) {
+    while (this.ramps.length < 6 && guard++ < 180) {
       const road = this.layout.roads[Math.floor(rng() * this.layout.roads.length)];
       const segment = Math.floor(rng() * (road.points.length - 1));
       const a = road.points[segment];
       const b = road.points[segment + 1];
       const segX = b.x - a.x;
       const segZ = b.z - a.z;
-      const segLength = Math.hypot(segX, segZ) || 1;
+      const segLength = Math.hypot(segX, segZ);
       const along = 0.2 + rng() * 0.6;
       const side = rng() < 0.5 ? -1 : 1;
-      const x = a.x + segX * along - segZ / segLength * side * LANE;
-      const z = a.z + segZ * along + segX / segLength * side * LANE;
-      const key = `${road.id},${segment},${Math.round(along * 5)}`;
-      if (placed.has(key)) continue;
-      placed.add(key);
-      const direction = side === -1 ? 1 : -1;
-      const dx = segX / segLength * direction;
-      const dz = segZ / segLength * direction;
+      const footprintLength = RAMP_LENGTH / 2 + 0.6;
+      if (Math.min(along, 1 - along) * segLength < footprintLength) continue;
+      const lane = road.width / 4;
+      const width = Math.min(RAMP_MODEL_WIDTH, road.width / 2 - 0.9);
+      const x = a.x + segX * along - segZ / segLength * side * lane;
+      const z = a.z + segZ * along + segX / segLength * side * lane;
+      if (this.ramps.some((ramp) => Math.hypot(ramp.x - x, ramp.z - z) < RAMP_LENGTH + 2)) continue;
+      if (this.deckSites.some((site) => circleOrientedRectContact(x, z, footprintLength + 0.8, site))) continue;
+      const dx = -side * segX / segLength;
+      const dz = -side * segZ / segLength;
+      const footprintWidth = width / 2 + 0.18;
+      const { minX, maxX, minZ, maxZ } = this.layout.bounds;
+      const obstructsRoad = [-footprintLength, 0, footprintLength].some((length) =>
+        [-footprintWidth, 0, footprintWidth].some((lateral) => {
+          const px = x + dx * length - dz * lateral;
+          const pz = z + dz * length + dx * lateral;
+          return px < minX || px > maxX || pz < minZ || pz > maxZ || this.roadIndex.covers(px, pz, 0.8, road);
+        }));
+      if (obstructsRoad) continue;
       const rotY = Math.atan2(-dx, -dz);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, 0.02, z);
       mesh.rotation.y = rotY;
+      mesh.scale.x = width / RAMP_MODEL_WIDTH;
       g.add(mesh);
-      const extentX = Math.abs(Math.cos(rotY)) * 3.3 + Math.abs(Math.sin(rotY)) * 3.5;
-      const extentZ = Math.abs(Math.sin(rotY)) * 3.3 + Math.abs(Math.cos(rotY)) * 3.5;
-      this.ramps.push({ x, z, w: extentX * 2, h: extentZ * 2, angle: rotY, dx, dz });
+      this.ramps.push({ x, z, width, length: RAMP_LENGTH, dx, dz });
     }
     return g;
   }
@@ -2006,29 +2003,30 @@ export class World {
   private buildLights(): THREE.Group {
     const g = new THREE.Group();
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x39404f });
+    const stripThickness = 0.42;
+    const stripGeo = new THREE.PlaneGeometry(1, stripThickness);
     this.layout.signalJunctions.forEach(({ x: cx, z: cz }, index) => {
+      const corner = this.signalCorner(cx, cz);
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 6.4, 6), poleMat);
-      pole.position.set(cx + ROAD_W / 2 + 1.2, 3.2, cz + ROAD_W / 2 + 1.2);
-      g.add(pole);
+      pole.position.set(corner.x, 3.2, corner.z);
       const headX = this.makeLightHead("x");
-      headX.group.position.set(cx + ROAD_W / 2 + 1.2, 6.7, cz + ROAD_W / 2 + 0.4);
-      g.add(headX.group);
+      headX.group.position.set(corner.x, 6.7, corner.z - Math.sign(corner.z - cz) * 0.8);
       const headZ = this.makeLightHead("z");
-      headZ.group.position.set(cx + ROAD_W / 2 + 0.4, 6.7, cz + ROAD_W / 2 + 1.2);
-      g.add(headZ.group);
+      headZ.group.position.set(corner.x - Math.sign(corner.x - cx) * 0.8, 6.7, corner.z);
+      g.add(pole, headX.group, headZ.group);
       const stop = ROAD_W / 2 + 1.6;
-      const stripGeo = new THREE.PlaneGeometry(ROAD_W - 2, 1.5);
       const strips: THREE.MeshBasicMaterial[] = [];
-      const stripDefs: [number, number, number][] = [
-        [cx + stop, cz, Math.PI / 2], [cx - stop, cz, Math.PI / 2],
-        [cx, cz + stop, 0], [cx, cz - stop, 0],
-      ];
-      for (const [sx, sz, rot] of stripDefs) {
+      for (const alongX of [true, false]) for (const sign of [1, -1]) {
+        const x = cx + (alongX ? stop * sign : 0);
+        const z = cz + (alongX ? 0 : stop * sign);
+        const fit = transverseMarking(this.roadIndex, x, z, alongX, stripThickness);
         const sm = new THREE.MeshBasicMaterial({ color: 0xff2a2a, transparent: true, opacity: 0, depthWrite: false });
         const strip = new THREE.Mesh(stripGeo, sm);
         strip.rotation.x = -Math.PI / 2;
-        strip.rotation.z = rot;
-        strip.position.set(sx, 0.04, sz);
+        strip.rotation.z = alongX ? Math.PI / 2 : 0;
+        strip.position.set(fit?.x ?? x, 0.04, fit?.z ?? z);
+        strip.scale.x = fit?.width ?? 1;
+        strip.visible = fit !== null;
         g.add(strip);
         strips.push(sm);
       }
@@ -2041,6 +2039,18 @@ export class World {
       this.lightGrid.set(`${index}`, light);
     });
     return g;
+  }
+
+  private signalCorner(cx: number, cz: number): { x: number; z: number } {
+    const base = ROAD_W / 2 + 1.2;
+    for (const offset of [base, base + 1.6, base + 3.2]) {
+      for (const [sx, sz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+        const x = cx + sx * offset;
+        const z = cz + sz * offset;
+        if (!this.roadIndex.covers(x, z, 0.4)) return { x, z };
+      }
+    }
+    return { x: cx + base, z: cz + base };
   }
 
   private buildMarker(): void {

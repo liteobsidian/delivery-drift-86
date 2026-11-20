@@ -104,22 +104,24 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
     bounds: { minX: -210, maxX: 210, minZ: -140, maxZ: 140 },
     roads: [
       road("port-spine", [
-        { x: 0, z: -130 }, { x: 5, z: -95 }, { x: -3, z: -54 }, { x: 0, z: -20 },
-        { x: 0, z: 17 }, { x: 2, z: 43 }, { x: 4, z: 55 },
+        { x: 0, z: -121 }, { x: 5, z: -95 }, { x: -3, z: -54 }, { x: 0, z: -20 },
+        { x: 0, z: 17 }, { x: 0, z: 43 },
       ], 14),
       road("west-approach", [
-        { x: -200, z: 120 }, { x: -169, z: 111 }, { x: -135, z: 91 }, { x: -103, z: 68 },
-        { x: -70, z: 45 }, { x: -43, z: 21 }, { x: -25, z: 0 },
+        { x: -200, z: 43 }, { x: -200, z: 54 }, { x: -194, z: 60 }, { x: -169, z: 64 },
+        { x: -135, z: 62 }, { x: -103, z: 58 }, { x: -93, z: 54 }, { x: -82, z: 41 },
+        { x: -59, z: 31 }, { x: -41, z: 19.2 },
       ], 14),
       road("port-roundabout", circularRoadPoints(-25, 0, 25, 0, Math.PI * 2, 48), 13),
       road("market-arterial", [
         { x: -203, z: -23 }, { x: -165, z: -18 }, { x: -121, z: -20 }, { x: -77, z: -27 },
         { x: -35, z: -23 }, { x: 0, z: -22 }, { x: 55, z: -24 }, { x: 110, z: -25 },
-        { x: 160, z: -27 }, { x: 203, z: -32 },
+        { x: 160, z: -27 }, { x: 190.7, z: -31 },
       ], 12),
       road("quay-road", [
         { x: -200, z: 43 }, { x: -162, z: 48 }, { x: -122, z: 46 }, { x: -82, z: 41 },
         { x: -42, z: 46 }, { x: 0, z: 43 }, { x: 40, z: 47 }, { x: 80, z: 44 }, { x: 105, z: 42 },
+        { x: 127, z: 37 }, { x: 150, z: 36 }, { x: 169, z: 41 },
       ], 12),
       road("freight-loop", [
         { x: -172, z: -119 }, { x: -124, z: -127 }, { x: -68, z: -112 }, { x: -8, z: -122 },
@@ -129,20 +131,19 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
         { x: -182, z: -73 }, { x: -172, z: -119 },
       ], 13),
       road("dock-service-road", [
-        { x: 36, z: 46 }, { x: 48, z: 54 }, { x: 62, z: 57 }, { x: 75, z: 60 },
+        { x: 36, z: 46 }, { x: 51, z: 52 }, { x: 66, z: 53 }, { x: 73, z: 58 }, { x: 73, z: 98 },
       ], 10),
       road("west-loading-road", [
-        { x: 12, z: 45 }, { x: 20, z: 53 }, { x: 29, z: 60 },
+        { x: 12, z: 45 }, { x: 20, z: 53 }, { x: 29, z: 60 }, { x: 29, z: 98 },
       ], 10),
       road("east-loading-road", [
-        { x: 80, z: 44 }, { x: 92, z: 52 }, { x: 103, z: 60 },
+        { x: 80, z: 44 }, { x: 92, z: 52 }, { x: 103, z: 60 }, { x: 103, z: 98 },
       ], 10),
       road("west-yard-road", [
-        { x: -202, z: 112 }, { x: -198, z: 80 }, { x: -188, z: 52 }, { x: -169, z: 37 },
-        { x: -133, z: 39 }, { x: -102, z: 46 }, { x: -78, z: 24 }, { x: -72, z: -8 },
+        { x: -102, z: 43.5 }, { x: -78, z: 24 }, { x: -72, z: -8 },
       ], 11),
       road("east-terminal-road", [
-        { x: 165, z: -129 }, { x: 161, z: -93 }, { x: 153, z: -63 }, { x: 145, z: -39 },
+        { x: 162, z: -96 }, { x: 155, z: -65 }, { x: 145, z: -39 },
         { x: 130, z: -5 }, { x: 121, z: 27 }, { x: 105, z: 42 },
       ], 11),
       road("west-terminal-loop", [
@@ -163,6 +164,7 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
         { x: 145, z: -39 }, { x: 158, z: -61 }, { x: 180, z: -71 }, { x: 190, z: -53 },
         { x: 191, z: -19 }, { x: 177, z: 10 }, { x: 169, z: 41 },
       ], 10),
+      road("west-freight-link", [{ x: -203, z: -23 }, { x: -203, z: -50 }, { x: -182, z: -73 }], 10),
     ],
     trafficRoutes: [],
     signalJunctions: [
@@ -193,8 +195,8 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
       { id: "west-gantry-crane", kind: "gantry-crane", x: 29, z: 85, width: 30, depth: 20, rotation: 0 },
       { id: "east-gantry-crane", kind: "gantry-crane", x: 103, z: 85, width: 30, depth: 20, rotation: 0 },
       { id: "west-loading-pier", kind: "pier", x: 29, z: 85, width: 30, depth: 50, rotation: 0 },
-      { id: "cargo-pier", kind: "pier", x: 73, z: 87, width: 16, depth: 50, rotation: 0 },
-      { id: "east-loading-pier", kind: "pier", x: 103, z: 85, width: 30, depth: 50, rotation: 0 },
+      { id: "cargo-pier", kind: "pier", x: 73, z: 85, width: 18, depth: 58, rotation: 0 },
+      { id: "east-loading-pier", kind: "pier", x: 103, z: 83, width: 30, depth: 54, rotation: 0 },
       { id: "moored-cargo-ship", kind: "cargo-ship", x: 90, z: 125, width: 60, depth: 17, rotation: 0 },
     ],
     landmarks: [
@@ -227,7 +229,7 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
       road("spb-south-embankment", [{ x: -145, z: -58 }, { x: 145, z: -58 }], 11),
       road("spb-sadovaya-street", [{ x: -145, z: 0 }, { x: 145, z: 0 }], 11),
       road("spb-palace-street", [{ x: -145, z: 58 }, { x: 145, z: 58 }], 11),
-      road("spb-riverfront-road", [{ x: -145, z: 145 }, { x: 145, z: 145 }], 12),
+      road("spb-riverfront-road", [{ x: -116, z: 145 }, { x: 116, z: 145 }], 12),
       road("spb-palace-ring", circularRoadPoints(0, 0, 38, 0, Math.PI * 2, 48), 12),
       road("spb-backstreets", [
         { x: -145, z: -83 }, { x: -116, z: -80 }, { x: -96, z: -75 },
@@ -247,9 +249,9 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
     landmarks: [
       { id: "admiralty-spire", kind: "spire", x: 29, z: 78, width: 34, depth: 16, rotation: 0 },
       { id: "palace-embankment", kind: "palace", x: -29, z: 78, width: 37, depth: 18, rotation: 0 },
-      { id: "west-neva-bridge", kind: "bridge", x: -116, z: 118, width: 13, depth: 54, rotation: 0 },
-      { id: "central-neva-bridge", kind: "bridge", x: 0, z: 118, width: 15, depth: 54, rotation: 0 },
-      { id: "east-neva-bridge", kind: "bridge", x: 116, z: 118, width: 13, depth: 54, rotation: 0 },
+      { id: "west-neva-bridge", kind: "bridge", x: -116, z: 120, width: 13, depth: 34, rotation: 0 },
+      { id: "central-neva-bridge", kind: "bridge", x: 0, z: 120, width: 15, depth: 34, rotation: 0 },
+      { id: "east-neva-bridge", kind: "bridge", x: 116, z: 120, width: 13, depth: 34, rotation: 0 },
     ],
   },
   kazan: {
@@ -328,10 +330,10 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
         { x: -48, z: -61 }, { x: -45, z: -139 },
       ], 12),
       road("sochi-resort-avenue", [{ x: 0, z: -132 }, { x: 0, z: 0 }, { x: 0, z: 135 }], 13),
-      road("sochi-midtown-boulevard", [{ x: -112, z: 0 }, { x: 112, z: 0 }], 12),
+      road("sochi-midtown-boulevard", [{ x: -135, z: 0 }, { x: 112, z: 0 }], 12),
       road("sochi-north-ridge-road", [
         { x: -110, z: 80 }, { x: -70, z: 84 }, { x: -30, z: 75 }, { x: 0, z: 70 },
-        { x: 40, z: 80 }, { x: 75, z: 92 }, { x: 110, z: 95 },
+        { x: 40, z: 80 }, { x: 75, z: 92 }, { x: 84, z: 100 },
       ], 11),
       road("sochi-olympic-ring", circularRoadPoints(62, -60, 38, 0, Math.PI * 2, 40), 12),
       road("sochi-seaside-promenade", [
@@ -395,6 +397,20 @@ const pointSegmentDistance = (px: number, pz: number, a: CityPoint, b: CityPoint
 };
 
 export function cityLayoutFor(id: MapId): CityLayout { return CITY_LAYOUTS[id]; }
+
+export function gantrySupports(site: PortSite) {
+  const c = Math.cos(site.rotation);
+  const s = Math.sin(site.rotation);
+  return [-1, 1].flatMap((side) => [-1, 1].map((end) => {
+    const localX = side * site.width * 0.42;
+    const localZ = end * site.depth * 0.38;
+    return {
+      localX, localZ, width: 2.2, depth: 2, rotation: site.rotation,
+      x: site.x + localX * c - localZ * s,
+      z: site.z + localX * s + localZ * c,
+    };
+  }));
+}
 
 export function worldToTextureCoordinate(value: number, planeSize: number, textureSize: number): number {
   return ((value + planeSize / 2) / planeSize) * textureSize;
