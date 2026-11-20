@@ -88,7 +88,28 @@ const consoleErrors = [];
 page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
 page.on("pageerror", (e) => consoleErrors.push(String(e)));
 
-await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
+let releaseBundle;
+const bundleGate = new Promise((resolve) => { releaseBundle = resolve; });
+await page.route("**/assets/index-*.js", async (route) => { await bundleGate; await route.continue(); });
+let releasePolice;
+const policeGate = new Promise((resolve) => { releasePolice = resolve; });
+await page.route("**/assets/police-*.glb", async (route) => { await policeGate; await route.continue(); });
+await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "commit" });
+const loadingScreen = page.locator("#startup-loading");
+await loadingScreen.waitFor();
+if (await page.locator("#startup-progress").getAttribute("value") !== null) fail("The startup screen invented progress before the game bundle loaded");
+releaseBundle();
+await page.waitForFunction(() => {
+  const progress = document.querySelector("#startup-progress");
+  return progress.value > 0 && progress.value === progress.max - 1;
+});
+if (!(await loadingScreen.isVisible()) || !(await page.locator("#game-root").evaluate((root) => root.inert)) ||
+    await page.evaluate(() => window.__GAME_READY__ === true)) fail("The title screen opened before all startup models were ready");
+await page.screenshot({ path: join(SHOTS, "01-loading.png") });
+releasePolice();
+await loadingScreen.waitFor({ state: "hidden" });
+await page.waitForLoadState("networkidle");
+if (!(await page.evaluate(() => window.__GAME_READY__ && window.__gameDebug.showroom().detailed))) fail("The loader closed before the detailed title frame was rendered");
 if (!(await page.locator('[data-a="event-dismiss"]').isVisible())) fail("Weekly event was not promoted on startup");
 if (!(await page.locator('[data-a="event-start"]').isVisible())) fail("Weekly event popup has no start action");
 await page.locator('[data-a="event-dismiss"]').click();

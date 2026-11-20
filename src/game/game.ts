@@ -28,7 +28,7 @@ import { CITY_STYLE } from "./city-style";
 import { Car, disposeCarVisual } from "./car";
 import { trafficLanePosition, Traffic } from "./traffic";
 import { Police } from "./police";
-import { loadGameAssets, loadHeroModel, type LoadedModel } from "./assets";
+import { loadGameAssets, loadHeroModel, WORLD_MODEL_COUNT, type LoadedModel } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { NEVA_CONTRACT, NEVA_SECTORS, NevaRun, nevaChallengeLink, nevaChallengeTarget, nevaResult } from "./neva-contract";
@@ -155,6 +155,7 @@ export class Game {
   private debris: THREE.Mesh[] = [];
   private shake = 0;
   private wreckTimer = -1; // >=0 while the burning wreck is counting down to order fail
+  readonly initialModels: Promise<void>;
   assetsReady = false; // downloaded models swapped in
   private camPos = new THREE.Vector3(0, 5, 55);
   private camForward = new THREE.Vector3();
@@ -186,7 +187,7 @@ export class Game {
   private tutorialEl!: HTMLDialogElement;
   private saveNotice: HTMLElement;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, onLoadingProgress: (finished: number, total: number) => void) {
     this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -222,20 +223,34 @@ export class Game {
     this.scene.add(this.traffic.group);
     this.scene.add(this.police.group);
     this.scene.add(this.effects.group);
-    // free downloaded models replace placeholders when they finish loading
-    this.requestHero(this.currentCarSpec().glb);
-    loadGameAssets()
+    const initialScreen = this.nevaTarget === null ? "title" : "neva-contract";
+    const initialCars = new Set([this.currentCarSpec().glb]);
+    if (initialScreen === "neva-contract") initialCars.add(NEVA_CAR.glb);
+    const totalModels = WORLD_MODEL_COUNT + initialCars.size;
+    let finishedModels = 0;
+    const reportModel = () => onLoadingProgress(++finishedModels, totalModels);
+    onLoadingProgress(0, totalModels);
+    const carsReady = Array.from(initialCars, (key) => this.requestHero(key)?.then(reportModel));
+    const worldReady = loadGameAssets(reportModel)
       .then((assets) => {
-        if (this.disposed) return;
-        this.traffic.setCarModels(assets.traffic.map((m) => m.root));
-        this.police.setModel(assets.police.root, assets.police.size.y + 0.05);
-        this.midriseAsset = { root: assets.midrise.root, size: assets.midrise.size };
-        for (const world of this.worldCache.values()) {
-          world.setHeroBuildings(assets.midrise.root, assets.midrise.size);
+        if (this.disposed) {
+          for (const model of [...assets.traffic, assets.police, assets.midrise]) {
+            if (model) disposeCarVisual(model.root);
+          }
+          return;
         }
-        this.assetsReady = true;
-      })
-      .catch((err) => console.warn("asset load failed, placeholders stay:", err));
+        this.traffic.setCarModels(assets.traffic.map((m) => m.root));
+        if (assets.police) this.police.setModel(assets.police.root, assets.police.size.y + 0.05);
+        if (assets.midrise) {
+          this.midriseAsset = assets.midrise;
+          for (const world of this.worldCache.values()) {
+            world.setHeroBuildings(assets.midrise.root, assets.midrise.size);
+          }
+        }
+      });
+    this.initialModels = Promise.all([...carsReady, worldReady]).then(() => {
+      if (!this.disposed) this.assetsReady = true;
+    });
     // --- UI ---
     this.overlay = document.getElementById("ui-overlay")!;
     this.screenEl = el("div", "screen-wrap");
@@ -254,9 +269,9 @@ export class Game {
     this.input = new Input();
     this.buildHud();
     this.input.onPause = () => this.togglePause();
-    this.input.onMute = () => this.toggleMute();
+    this.input.onMute = () => { if (this.tickCount > 0) this.toggleMute(); };
     this.input.onConfirm = () => {
-      if (this.tutorialEl.open || this.saveStatus === "conflict") return;
+      if (this.tickCount === 0 || this.tutorialEl.open || this.saveStatus === "conflict") return;
       if (this.screen === "title" && !this.screenEl.querySelector(".weekly-event-shade")) this.showScreen("play");
       else if (this.screen === "neva-contract") this.startNevaContract();
       else if (this.screen === "result") {
@@ -268,7 +283,7 @@ export class Game {
     this.audio.muted = this.profile.muted;
     this.audio.volume = this.profile.volume;
 
-    this.showScreen(this.nevaTarget === null ? "title" : "neva-contract");
+    this.showScreen(initialScreen);
     if (!this.profileStore.readable) this.showSaveStatus("unavailable");
     if (VERIFICATION) {
       (window as unknown as { __gameProbe: () => { x: number; y: number; z: number } }).__gameProbe =
@@ -1243,10 +1258,10 @@ export class Game {
     return typeof model === "object" ? model : undefined;
   }
 
-  private requestHero(key: HeroModelKey): void {
+  private requestHero(key: HeroModelKey): Promise<void> | undefined {
     if (this.heroModels.has(key)) return;
     this.heroModels.set(key, "loading");
-    void loadHeroModel(key).then((model) => {
+    return loadHeroModel(key).then((model) => {
       if (this.disposed) {
         disposeCarVisual(model.root);
         return;
@@ -1809,6 +1824,7 @@ export class Game {
   // ================= main loop =================
 
   start(): void {
+    this.renderFrame(0);
     this.running = true;
     this.clock.start();
     const loop = () => {
