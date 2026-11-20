@@ -463,6 +463,11 @@ async function checkDirection(key, axis, direction, distance = 0.05) {
     return true;
   } catch (error) {
     if (error.name !== "TimeoutError") throw error;
+    const state = await page.evaluate(() => ({
+      position: window.__gameProbe(), speed: window.__gameDebug.speed(),
+      keys: window.__gameDebug.keys(), screen: window.__gameDebug.screen(),
+    }));
+    console.error(`${key} did not travel ${distance} on ${axis}: ${JSON.stringify({ before, ...state })}`);
     return false;
   } finally {
     await page.keyboard.up(key);
@@ -471,7 +476,10 @@ async function checkDirection(key, axis, direction, distance = 0.05) {
 
 const probe = await page.evaluate(() => !!window.__gameProbe);
 if (probe) {
+  // Test reverse from a stop independently of the nitro run above.
+  await page.evaluate(() => window.__gameDebug.teleport(0, 0, Math.PI));
   if (!await checkDirection("KeyS", "z", 1, 0.75)) fail("S did not move the car backwards at a useful speed");
+  await page.evaluate(() => window.__gameDebug.teleport(0, 0, Math.PI));
   if (!await checkDirection("KeyW", "z", -1)) fail("W did not move forward");
   // Steering changes heading while gas keeps the car moving.
   await page.keyboard.down("KeyW");
