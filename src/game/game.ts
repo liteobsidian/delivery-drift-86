@@ -19,17 +19,16 @@ import {
   WORLD_MAPS,
   speedKmh,
 } from "./config";
-import { ACTIVITY_MODES, type ActivityMode, type GameScreen, type MapId, type Order, type UpgradeLevels } from "./types";
+import { ACTIVITY_MODES, type ActivityMode, type CarSpec, type GameScreen, type HeroModelKey, type MapId, type Order, type UpgradeLevels } from "./types";
 import { PROFILE_KEY, ProfileStore, type SaveStatus } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
 import { World } from "./world";
 import { CITY_STYLE } from "./city-style";
-import { Car } from "./car";
+import { Car, disposeCarVisual } from "./car";
 import { trafficLanePosition, Traffic } from "./traffic";
 import { Police } from "./police";
-import { loadGameAssets } from "./assets";
-import type { HeroModelKey, LoadedModel } from "./assets";
+import { loadGameAssets, loadHeroModel, type LoadedModel } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { NEVA_CONTRACT, NEVA_SECTORS, NevaRun, nevaChallengeLink, nevaChallengeTarget, nevaResult } from "./neva-contract";
@@ -37,7 +36,7 @@ import { buildNevaMarkings, drawNevaPreview, drawNevaRoute } from "./neva-visual
 import { sampleDeliveryDestination } from "./delivery-routing";
 import { canUnlockCar, driftMedal, driftMultiplierForSeconds, finalDriftScore, medalRank, modeReward, timeAttackCourse, timeAttackMedal, type GameMode, type MedalTier, type TimeAttackCourse } from "./modes";
 import { RADIO_CACHE_RADIUS, RADIO_GATE_RADIUS, RADIO_TIME, RADIO_TITLE, RADIO_TRAFFIC_SEED, RADIO_WAVES, RadioRun, radioCourse, radioMedal, radioScore } from "./radio-silence";
-import { carThumb, createShowroom } from "./showroom";
+import { createShowroom } from "./showroom";
 import {
   careerMedalPoints, completeWeeklyRoute, mapAccessFor, recordDetails, saveRecord,
   utcWeekKey, weeklyRouteIds, weeklyRoutes, type WeeklyRoute,
@@ -57,6 +56,8 @@ const MODE_NAMES: Record<ActivityMode, string> = {
 };
 const RADIO_SIGNAL_COLOR = 0xb899ff;
 const RADIO_CACHE_COLOR = 0xffbb62;
+const SHOWROOM_SCREENS = new Set<GameScreen>(["title", "play", "tracks", "neva-contract", "profile", "garage", "cars", "orders", "settings", "achievements"]);
+const rubles = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
 
 function el(tag: string, cls: string, html = ""): HTMLElement {
   const e = document.createElement(tag);
@@ -73,11 +74,16 @@ export class Game {
   private canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
   private showroom = createShowroom();
-  private heroModels: Partial<Record<HeroModelKey, LoadedModel>> = {};
-
-  private heroFor(car: { glb?: string }): LoadedModel | undefined {
-    return car.glb ? this.heroModels[car.glb as HeroModelKey] : undefined;
-  }
+  private readonly heroModels = new Map<HeroModelKey, LoadedModel | "loading" | "failed">();
+  private readonly reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  private readonly showroomObserver = new ResizeObserver(() => this.frameShowroom());
+  private showroomStage: HTMLElement | null = null;
+  private showroomViewport: THREE.Vector4 | null = null;
+  private showroomDrag: { pointer: number; x: number } | null = null;
+  private viewportWidth = 1;
+  private viewportHeight = 1;
+  private garageIndex = 0;
+  private garageReturn: "title" | "garage" = "title";
   private scene = new THREE.Scene();
   private readonly ambientLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 1.5);
   private readonly keyLight = new THREE.DirectionalLight();
@@ -217,12 +223,8 @@ export class Game {
     this.scene.add(this.police.group);
     this.scene.add(this.effects.group);
     // free downloaded models replace placeholders when they finish loading
-    this.assetsReady = false;
-    loadGameAssets(this.currentCarSpec().glb as HeroModelKey | undefined, (key, model) => {
-      if (this.disposed) return;
-      this.heroModels[key] = model;
-      if (this.currentCarSpec().glb === key) this.applyCarSpec();
-    })
+    this.requestHero(this.currentCarSpec().glb);
+    loadGameAssets()
       .then((assets) => {
         if (this.disposed) return;
         this.traffic.setCarModels(assets.traffic.map((m) => m.root));
@@ -231,8 +233,6 @@ export class Game {
         for (const world of this.worldCache.values()) {
           world.setHeroBuildings(assets.midrise.root, assets.midrise.size);
         }
-        this.heroModels = assets.hero;
-        this.applyCarSpec(); // swap current car to its detailed body if available
         this.assetsReady = true;
       })
       .catch((err) => console.warn("asset load failed, placeholders stay:", err));
@@ -404,6 +404,19 @@ export class Game {
           wheel: this.car.wheelLost,
         }),
         assetsReady: () => this.assetsReady,
+        showroom: () => ({
+          key: this.showroomStage?.dataset.car,
+          state: this.showroomStage?.dataset.model,
+          detailed: this.showroom.carGroup.children.length === 1,
+          angle: this.showroom.carGroup.rotation.y,
+        }),
+        turboVisual: () => ({
+          wheels: ["FL", "FR", "RL", "RR"].map((corner) => {
+            const wheel = this.car.group.getObjectByName(`hub_center_${corner}`);
+            return wheel ? { spin: wheel.rotation.x, steer: wheel.parent?.rotation.y } : null;
+          }),
+          wing: this.car.group.getObjectByName("rear_spoiler") !== undefined,
+        }),
         heroCount: () => this.world.heroCount(),
         trafficPos: () => this.traffic.debugPositions(),
         ramps: () => this.world.ramps.map((r) => ({ x: r.x, z: r.z, dx: r.dx, dz: r.dz })),
@@ -484,16 +497,80 @@ export class Game {
     this.screenEl.style.display = "none";
   }
 
+  private showroomStatus(): string {
+    return `<p class="showroom-message" role="status">Загрузка модели…</p>
+      <button type="button" class="btn small showroom-retry" hidden>Повторить загрузку</button>`;
+  }
+
+  private mountShowroomStage(): void {
+    this.showroomObserver.disconnect();
+    this.showroomDrag = null;
+    const stage = this.screenEl.querySelector<HTMLElement>("[data-showroom-stage]");
+    this.showroomStage = stage;
+    this.frameShowroom();
+    if (!stage) return;
+    this.showroomObserver.observe(stage);
+    stage.querySelector(".showroom-retry")!.addEventListener("click", () => {
+      const { glb } = this.showroomSpec();
+      if (this.heroModels.get(glb) === "failed") this.heroModels.delete(glb);
+      this.refreshShowroom();
+    });
+    if (this.screen !== "cars") return;
+    stage.addEventListener("pointerdown", (event) => {
+      if (!event.isPrimary || event.button !== 0 || (event.target as Element).closest("button")) return;
+      this.showroomDrag = { pointer: event.pointerId, x: event.clientX };
+      stage.setPointerCapture(event.pointerId);
+    });
+    stage.addEventListener("pointermove", (event) => {
+      const drag = this.showroomDrag;
+      if (drag?.pointer !== event.pointerId) return;
+      this.showroom.rotate((event.clientX - drag.x) * 0.013);
+      drag.x = event.clientX;
+    });
+    stage.addEventListener("lostpointercapture", () => { this.showroomDrag = null; });
+    stage.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      this.showroom.rotate(event.key === "ArrowLeft" ? -0.32 : 0.32);
+    });
+  }
+
+  private showroomSpec(): CarSpec {
+    if (this.screen === "cars") return CARS[this.garageIndex];
+    if (this.screen === "neva-contract") return NEVA_CAR;
+    return this.currentCarSpec();
+  }
+
+  private refreshShowroom(): void {
+    if (!SHOWROOM_SCREENS.has(this.screen)) return;
+    const car = this.showroomSpec();
+    this.requestHero(car.glb);
+    const hero = this.heroFor(car);
+    if (hero) this.showroom.setCar(car, this.screen === "neva-contract" ? STOCK_UPGRADES : this.profile.upgrades[car.id] ?? STOCK_UPGRADES, hero);
+    else this.showroom.clearCar();
+    if (this.showroomStage) {
+      const failed = this.heroModels.get(car.glb) === "failed";
+      this.showroomStage.dataset.car = car.id;
+      this.showroomStage.dataset.model = hero ? "ready" : failed ? "failed" : "loading";
+      const message = this.showroomStage.querySelector<HTMLElement>(".showroom-message")!;
+      message.hidden = !!hero;
+      message.textContent = failed ? "Модель не загрузилась" : "Загрузка модели…";
+      this.showroomStage.querySelector<HTMLElement>(".showroom-retry")!.hidden = !failed;
+    }
+  }
+
   showScreen(s: GameScreen): void {
     if (s !== "playing" && s !== "paused" && s !== "settings" && s !== "result") {
       if (this.nevaRun) this.exitNevaContract();
       else if (this.screen === "neva-contract" && s !== "neva-contract") this.clearNevaTarget();
       if (this.radioRun) this.exitRadioRun();
     }
-    if (this.screen === "neva-contract" && s === "play") {
-      this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades(), this.heroFor(this.currentCarSpec()));
+    if (s === "cars" && this.screen !== "cars") {
+      this.garageReturn = this.screen === "garage" ? "garage" : "title";
+      this.garageIndex = CARS.indexOf(this.currentCarSpec());
     }
     this.screen = s;
+    this.screenEl.dataset.screen = s;
     if (s !== "playing" && s !== "paused") this.tutorialEl.close();
     this.hudEl.style.display = s === "playing" ? "block" : "none";
     this.input.setDriving(s === "playing" && !this.tutorialEl.open && this.saveStatus !== "conflict");
@@ -510,6 +587,8 @@ export class Game {
     else if (s === "settings") this.renderSettings();
     else if (s === "achievements") this.renderAchievements();
     else this.clearScreen();
+    this.mountShowroomStage();
+    this.refreshShowroom();
   }
 
   private persistProfile(): void {
@@ -558,7 +637,6 @@ export class Game {
 
   private renderTitle(): void {
     const p = this.profile;
-    this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades());
     const mapName = WORLD_MAPS.find((map) => map.id === p.mapId)?.name ?? "Неоновый Токио";
     const now = new Date();
     const week = utcWeekKey(now);
@@ -569,7 +647,7 @@ export class Game {
       p.weeklyEventWeek = week;
       this.persistProfile();
     };
-    this.screenEl.style.display = "flex";
+    this.screenEl.style.display = "grid";
     this.screenEl.innerHTML = `
       <div class="title-box home-box">
         <div class="logo-sub">НОЧНОЙ КУРЬЕР · ${mapName.toUpperCase()}</div>
@@ -584,8 +662,10 @@ export class Game {
             <button class="btn" data-a="profile">ПРОФИЛЬ</button>
           </div>
         </div>
-        <div class="home-career"><span>₽ ${p.money}</span><span>${p.deliveries} доставок</span><span>${p.unlockedAch.length}/${ACHIEVEMENTS.length} достижений</span></div>
-        <p class="fine-print">прогресс хранится в этом браузере (localStorage)</p>
+        <div class="home-career"><span>₽${rubles.format(p.money)}</span><span>${p.deliveries} доставок</span><span>${p.unlockedAch.length}/${ACHIEVEMENTS.length} достижений</span></div>
+      </div>
+      <div class="showroom-stage home-showroom" data-showroom-stage aria-hidden="${showWeeklyEvent}">
+        ${this.showroomStatus()}
       </div>
       ${showWeeklyEvent && featuredWeekly ? `<div class="weekly-event-shade"><section class="weekly-event-card" role="dialog" aria-modal="true" aria-labelledby="weekly-event-title">
         <div class="journey-eyebrow">СОБЫТИЕ НЕДЕЛИ · UTC ${week}</div>
@@ -595,6 +675,7 @@ export class Game {
       </section></div>` : ""}`;
     if (showWeeklyEvent) {
       this.screenEl.querySelector<HTMLElement>(".home-box")!.inert = true;
+      this.screenEl.querySelector<HTMLElement>(".home-showroom")!.inert = true;
       this.screenEl.querySelector<HTMLButtonElement>('[data-a="event-dismiss"]')?.focus();
     }
     this.bindScreen({
@@ -632,7 +713,6 @@ export class Game {
   }
 
   private renderNevaContract(): void {
-    this.showroom.setCar(NEVA_CAR, STOCK_UPGRADES);
     const best = this.profile.neva.bestScore;
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `<section class="panel neva-brief">
@@ -684,40 +764,80 @@ export class Game {
   }
 
   private renderCars(): void {
-    const p = this.profile;
-    const carCards = CARS.map((c) => {
-      const owned = p.ownedCars.includes(c.id);
-      const isCur = p.carId === c.id;
-      const need = c.unlockDeliveries ?? 0;
-      const locked = !canUnlockCar(c, p);
-      const achievement = c.unlockAchievement ? ACHIEVEMENTS.find((item) => item.id === c.unlockAchievement) : undefined;
-      const unlockHint = c.unlockAchievement && achievement
-        ? `${need} доставок или ${achievement.tier === "silver" ? "серебро" : achievement.tier === "gold" ? "золото" : "медаль"} «${achievement.name}»`
-        : `${need} доставок`;
-      let btn;
-      if (isCur) btn = `<button class="btn small" disabled>ТЕКУЩАЯ</button>`;
-      else if (owned) btn = `<button class="btn small" data-a="select:${c.id}">ВЫБРАТЬ</button>`;
-      else if (locked)
-        btn = `<button class="btn small" disabled>🔒 ${p.deliveries}/${need} · ${unlockHint}</button>`;
-      else
-        btn = `<button class="btn small ${p.money >= c.price ? "primary" : ""}" data-a="buy:${c.id}">КУПИТЬ ₽${c.price}</button>`;
-      return `<div class="car-card ${isCur ? "current" : ""}">
-        <img class="car-img" src="${carThumb(c, undefined, this.heroFor(c))}" alt="${c.name}">
-        <div class="car-name">${c.name}</div>
-        <div class="car-stats">скорость ${speedKmh(c.topSpeed)} км/ч · разгон ${c.accel} · сцепление ${c.grip}</div>
-        ${btn}
-      </div>`;
-    }).join("");
-
-    this.screenEl.style.display = "flex";
+    const roster = CARS.map((car) => `<button type="button" class="garage-tab" data-a="inspect:${car.id}" aria-pressed="false">
+      <i aria-hidden="true" style="--paint:#${car.color.toString(16).padStart(6, "0")}"></i>
+      <span>${car.name.split(" «")[0]}</span>
+    </button>`).join("");
+    this.screenEl.style.display = "grid";
     this.screenEl.innerHTML = `
-      <div class="panel cars">
-        <h2>МАШИНЫ</h2>
-        <div class="money-line">Баланс: <b>₽${p.money}</b> · доставок: ${p.deliveries}</div>
-        <div class="car-cards">${carCards}</div>
-        <button class="btn" data-a="back">← НАЗАД</button>
-      </div>`;
-    this.bindScreen({ back: () => this.showScreen("title") });
+      <section class="motor-garage" aria-labelledby="garage-title">
+        <header class="garage-header">
+          <button class="btn small" type="button" data-a="back">← Назад</button>
+          <h2 id="garage-title">Машины</h2>
+          <span class="garage-balance" aria-label="Баланс">₽${rubles.format(this.profile.money)}</span>
+        </header>
+        <div class="garage-display">
+          <div class="showroom-stage garage-stage" data-showroom-stage tabindex="0" role="region" aria-label="Осмотр машины" aria-describedby="garage-orbit-hint">
+            ${this.showroomStatus()}
+            <span class="garage-orbit-hint" id="garage-orbit-hint">Перетащи, чтобы повернуть<span> · ← →</span></span>
+          </div>
+          <article class="garage-detail" aria-labelledby="garage-car-name"></article>
+        </div>
+        <nav class="garage-picker" aria-label="Выбор машины">
+          <button type="button" class="garage-arrow" data-a="car-prev" aria-label="Предыдущая машина">‹</button>
+          <div class="garage-roster">${roster}</div>
+          <button type="button" class="garage-arrow" data-a="car-next" aria-label="Следующая машина">›</button>
+        </nav>
+      </section>`;
+    this.bindScreen({
+      ...Object.fromEntries(CARS.map((car, index) => [`inspect:${car.id}`, () => this.inspectCar(index)])),
+      "car-prev": () => this.inspectCar((this.garageIndex + CARS.length - 1) % CARS.length),
+      "car-next": () => this.inspectCar((this.garageIndex + 1) % CARS.length),
+      back: () => this.showScreen(this.garageReturn),
+    });
+    this.renderCarDetails();
+  }
+
+  private inspectCar(index: number): void {
+    if (this.garageIndex === index) return;
+    this.garageIndex = index;
+    this.renderCarDetails();
+    this.refreshShowroom();
+  }
+
+  private renderCarDetails(): void {
+    const p = this.profile;
+    const car = CARS[this.garageIndex];
+    const tuned = tunedSpec(car, p.upgrades[car.id] ?? STOCK_UPGRADES);
+    const owned = p.ownedCars.includes(car.id);
+    const current = p.carId === car.id;
+    const locked = !owned && !canUnlockCar(car, p);
+    const goal = ACHIEVEMENTS.find(({ id }) => id === car.unlockAchievement);
+    const need = car.unlockDeliveries ?? 0;
+    const shortfall = car.price - p.money;
+    const action = current ? '<button class="btn" disabled>Выбрана</button>'
+      : owned ? `<button class="btn primary" data-a="select:${car.id}">Выбрать</button>`
+      : `<button class="btn ${!locked && shortfall <= 0 ? "primary" : ""}" data-a="buy:${car.id}" ${locked || shortfall > 0 ? "disabled" : ""}>Купить · ₽${rubles.format(car.price)}</button>`;
+    const note = locked
+      ? `${p.deliveries} из ${need} доставок${goal ? ` или ${goal.tier === "silver" ? "серебро" : goal.tier === "gold" ? "золото" : "достижение"} «${goal.name}»` : ""}`
+      : !owned && shortfall > 0 ? `Не хватает ₽${rubles.format(shortfall)}` : "";
+    const detail = this.screenEl.querySelector<HTMLElement>(".garage-detail")!;
+    detail.innerHTML = `
+      <div><p class="garage-status">${owned ? "В гараже" : locked ? "Закрыта" : "Доступна"}</p>
+      <h3 id="garage-car-name">${car.name}</h3></div>
+      <dl class="garage-specs">
+        <div><dt>Скорость</dt><dd>${speedKmh(tuned.topSpeed)} <small>км/ч</small></dd></div>
+        <div><dt>Разгон</dt><dd>${tuned.accel.toFixed(1).replace(".", ",")}</dd></div>
+        <div><dt>Сцепление</dt><dd>${tuned.grip.toFixed(1).replace(".", ",")}</dd></div>
+      </dl>
+      <div class="garage-purchase">${action}${note ? `<p>${note}</p>` : ""}</div>
+      ${car.id === NEVA_CAR.id ? `<a class="garage-credit" href="https://sketchfab.com/3d-models/lada-2107-low-poly-5959908e4e304234b22f3436291cb588" target="_blank" rel="noopener">Кузов · Name’s_Been_Classified · CC BY 4.0</a>` : ""}`;
+    this.bindScreen({}, detail);
+    for (const tab of this.screenEl.querySelectorAll<HTMLButtonElement>(".garage-tab")) {
+      const active = tab.dataset.a === `inspect:${car.id}`;
+      tab.setAttribute("aria-pressed", String(active));
+      if (active) tab.scrollIntoView({ inline: "nearest", block: "nearest" });
+    }
   }
 
   private renderGarage(): void {
@@ -1015,8 +1135,8 @@ export class Game {
     }
   }
 
-  private bindScreen(actions: Record<string, () => void>): void {
-    this.screenEl.querySelectorAll("[data-a]").forEach((n) => {
+  private bindScreen(actions: Record<string, () => void>, scope = this.screenEl): void {
+    scope.querySelectorAll("[data-a]").forEach((n) => {
       n.addEventListener("click", (e) => {
         e.preventDefault();
         if (this.saveStatus === "conflict") return;
@@ -1114,8 +1234,32 @@ export class Game {
 
   // ================= profile / economy =================
 
-  private currentCarSpec() {
+  private currentCarSpec(): CarSpec {
     return CARS.find((c) => c.id === this.profile.carId) ?? CARS[0];
+  }
+
+  private heroFor(car: CarSpec): LoadedModel | undefined {
+    const model = this.heroModels.get(car.glb);
+    return typeof model === "object" ? model : undefined;
+  }
+
+  private requestHero(key: HeroModelKey): void {
+    if (this.heroModels.has(key)) return;
+    this.heroModels.set(key, "loading");
+    void loadHeroModel(key).then((model) => {
+      if (this.disposed) {
+        disposeCarVisual(model.root);
+        return;
+      }
+      this.heroModels.set(key, model);
+      if (this.careerCar.spec.glb === key) this.careerCar.setHeroModel(model);
+      if (this.nevaCar?.spec.glb === key) this.nevaCar.setHeroModel(model);
+      if (this.radioCar?.spec.glb === key) this.radioCar.setHeroModel(model);
+    }, () => {
+      if (!this.disposed) this.heroModels.set(key, "failed");
+    }).then(() => {
+      if (!this.disposed && this.showroomSpec().glb === key) this.refreshShowroom();
+    });
   }
 
   private currentUpgrades() {
@@ -1173,13 +1317,11 @@ export class Game {
 
   private applyCarSpec(): void {
     const up = this.currentUpgrades();
-    const hero = this.heroFor(this.currentCarSpec());
-    this.careerCar.setSpec(tunedSpec(this.currentCarSpec(), up));
-    this.careerCar.setHeroModel(hero ?? null);
+    const car = this.currentCarSpec();
+    this.careerCar.setSpec(tunedSpec(car, up), this.heroFor(car) ?? null);
     this.careerCar.setUpgrades(up);
-    if (hero) this.radioCar?.setHeroModel(hero);
-    // The contract briefing displays the same car that the player will borrow.
-    if (this.screen !== "neva-contract") this.showroom.setCar(this.currentCarSpec(), up, hero);
+    this.requestHero(car.glb);
+    this.refreshShowroom();
   }
 
   // ================= orders =================
@@ -1308,6 +1450,9 @@ export class Game {
   private startNevaContract(): void {
     if (!this.nevaCar) {
       this.nevaCar = new Car(NEVA_CAR);
+      const hero = this.heroFor(NEVA_CAR);
+      if (hero) this.nevaCar.setHeroModel(hero);
+      this.requestHero(NEVA_CAR.glb);
       this.configureCar(this.nevaCar);
     }
     const trial = this.nevaCar;
@@ -2347,19 +2492,8 @@ export class Game {
       (window as unknown as { __GAME_READY__: boolean }).__GAME_READY__ = true;
     }
     // menu screens show the showroom turntable instead of the city
-    if (
-      this.screen === "title" ||
-      this.screen === "play" ||
-      this.screen === "tracks" ||
-      this.screen === "neva-contract" ||
-      this.screen === "profile" ||
-      this.screen === "garage" ||
-      this.screen === "orders" ||
-      this.screen === "settings" ||
-      this.screen === "achievements"
-    ) {
-      this.showroom.update(dt);
-      this.renderer.render(this.showroom.scene, this.showroom.camera);
+    if (SHOWROOM_SCREENS.has(this.screen)) {
+      this.renderShowroom(dt);
       return;
     }
     // camera follow
@@ -2403,14 +2537,50 @@ export class Game {
   private resize = (): void => {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    this.viewportWidth = w;
+    this.viewportHeight = h;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.showroom.camera.aspect = w / h;
-    this.showroom.camera.updateProjectionMatrix();
+    this.frameShowroom();
   };
+
+  private frameShowroom(): void {
+    const stage = this.showroomStage;
+    if (stage && stage.clientWidth > 0 && stage.clientHeight > 0) {
+      const rect = stage.getBoundingClientRect();
+      this.showroomViewport ??= new THREE.Vector4();
+      this.showroomViewport.set(
+        Math.round(rect.left + stage.clientLeft),
+        Math.round(this.viewportHeight - rect.top - stage.clientTop - stage.clientHeight),
+        stage.clientWidth,
+        stage.clientHeight,
+      );
+      this.showroom.frame(stage.clientWidth / stage.clientHeight);
+    } else {
+      this.showroomViewport = null;
+      this.showroom.frame(this.viewportWidth / this.viewportHeight);
+    }
+  }
+
+  private renderShowroom(dt: number): void {
+    this.showroom.update(dt, !this.reducedMotion.matches && !this.showroomDrag);
+    const viewport = this.showroomViewport;
+    if (viewport) {
+      this.renderer.setClearColor(0x0c111d);
+      this.renderer.clear();
+      this.renderer.setViewport(viewport);
+      this.renderer.setScissor(viewport);
+      this.renderer.setScissorTest(true);
+    }
+    this.renderer.render(this.showroom.scene, this.showroom.camera);
+    if (viewport) {
+      this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, this.viewportWidth, this.viewportHeight);
+    }
+  }
 
   dispose(): void {
     this.disposed = true;
@@ -2418,11 +2588,17 @@ export class Game {
     document.removeEventListener("visibilitychange", this.visibilityChanged);
     window.removeEventListener("storage", this.storageChanged);
     window.removeEventListener("resize", this.resize);
+    this.showroomObserver.disconnect();
     this.audio.dispose();
     this.input.dispose();
     this.careerCar.dispose();
     this.nevaCar?.dispose();
     this.radioCar?.dispose();
+    this.showroom.dispose();
+    for (const model of this.heroModels.values()) {
+      if (typeof model === "object") disposeCarVisual(model.root);
+    }
+    this.heroModels.clear();
     for (const object of this.radioCache?.children ?? []) {
       const mesh = object as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
       mesh.geometry.dispose();

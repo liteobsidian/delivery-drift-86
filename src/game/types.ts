@@ -67,6 +67,8 @@ export interface Profile {
   neva: { bestScore: number; mastered: boolean; seenHelp: boolean };
 }
 
+export type HeroModelKey = "ae86" | "supra" | "silvia" | "rx7" | "r34" | "nsx" | "evo" | "vaz2107turbo";
+
 export interface CarSpec {
   id: string;
   name: string;
@@ -88,8 +90,8 @@ export interface CarSpec {
   /** silhouette style for the procedural body */
   body?: "hatch" | "coupe" | "low" | "sedan";
   spoiler?: "wing" | "big" | "duck" | "none";
-  /** detailed library model replacing the procedural body (if loaded) */
-  glb?: "ae86" | "supra" | "silvia" | "rx7" | "r34" | "nsx" | "evo";
+  /** Detailed body shown in the showroom and on the road. */
+  glb: HeroModelKey;
 }
 
 export interface Order {

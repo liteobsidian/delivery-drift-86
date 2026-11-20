@@ -197,10 +197,11 @@ export const CARS: CarSpec[] = [
     price: 90000,
     unlockDeliveries: 70,
     unlockAchievement: "drifter",
-    color: 0xd7c9ac,
-    accent: 0x9d292d,
+    color: 0x2c75bc,
+    accent: 0x182338,
     body: "sedan",
-    spoiler: "duck",
+    glb: "vaz2107turbo",
+    spoiler: "wing",
   },
 ];
 

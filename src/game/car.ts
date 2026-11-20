@@ -69,22 +69,23 @@ export class Car {
     this.syncMesh(0);
   }
 
-  setSpec(spec: CarSpec): void {
+  setSpec(spec: CarSpec, model = this.heroModel): void {
+    const previousHero = this.heroModel;
     this.spec = spec;
-    this.rebuildMesh();
+    this.heroModel = model;
+    this.rebuildMesh(previousHero);
   }
 
   /** Attach/detach a detailed library body (used when assets finish loading). */
   setHeroModel(model: LoadedModel | null): void {
-    this.heroModel = model;
-    this.rebuildMesh();
+    if (model !== this.heroModel) this.setSpec(this.spec, model);
   }
 
   /** Full visual reset — used after repairs too. */
-  private rebuildMesh(): void {
+  private rebuildMesh(previousHero = this.heroModel): void {
     this.group.remove(this.body);
     // hero (GLB) clones share geometry with the cached template — never dispose it
-    disposeDeep(this.body, !!this.heroModel);
+    disposeCarVisual(this.body, !!previousHero);
     this.wheels = [];
     this.wheelPivots = [];
     this.body = this.heroModel
@@ -425,14 +426,14 @@ export class Car {
   }
 
   dispose(): void {
-    disposeDeep(this.group, !!this.heroModel);
+    disposeCarVisual(this.group, !!this.heroModel);
   }
 }
 
-function disposeDeep(obj: THREE.Object3D, keepGeometry = false): void {
+export function disposeCarVisual(obj: THREE.Object3D, keepGeometry = false): void {
   obj.traverse((o) => {
     const mesh = o as THREE.Mesh;
-    if (!keepGeometry && mesh.geometry) mesh.geometry.dispose();
+    if (!keepGeometry || mesh.userData.ownCarGeometry) mesh.geometry?.dispose();
     const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
     if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
     else mat?.dispose();
@@ -729,8 +730,7 @@ export function buildCarMesh(
  * The cached template is cloned with per-instance materials; body paint is
  * recolored to the spec color. Wheel parents are detected by name pattern,
  * wrapped in steering pivots (front pair), and registered for spin/loss.
- * Geometry stays shared with the template — do NOT run disposeDeep on it
- * without keepGeometry.
+ * Geometry stays shared with the template except for generated effects.
  */
 export function buildHeroMesh(
   spec: CarSpec,
@@ -824,20 +824,11 @@ export function buildHeroMesh(
   }
 
   // soft radial underglow in the car's own color (hard-edged plane reads as a slab)
-  const gc = document.createElement("canvas");
-  gc.width = gc.height = 128;
-  const gg = gc.getContext("2d")!;
-  const grad = gg.createRadialGradient(64, 64, 6, 64, 64, 64);
-  grad.addColorStop(0, "rgba(255,255,255,0.85)");
-  grad.addColorStop(0.55, "rgba(255,255,255,0.25)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
-  gg.fillStyle = grad;
-  gg.fillRect(0, 0, 128, 128);
   const glow = new THREE.Mesh(
     new THREE.PlaneGeometry(s.x + 1.0, s.z + 1.2),
     new THREE.MeshBasicMaterial({
       color: spec.color,
-      map: new THREE.CanvasTexture(gc),
+      map: getCarGlowTexture(),
       transparent: true,
       opacity: 0.5,
       blending: THREE.AdditiveBlending,
@@ -847,13 +838,10 @@ export function buildHeroMesh(
   glow.rotation.x = -Math.PI / 2;
   glow.position.y = 0.06;
   glow.name = "hero-underglow";
+  glow.userData.ownCarGeometry = true;
   root.add(glow);
 
-  // racing livery stripes over the roof/hood — revealed by engine upgrades.
-  // roofline comes from the body shell itself: the model bbox is inflated by
-  // wings/antennas and would leave the stripes floating in the air
-  root.add(makeBodyLivery(bodyMesh as THREE.Mesh));
-
+  heroLiveryBodies.set(root, bodyMesh as THREE.Mesh);
   onParts?.({
     bodyMesh: bodyMesh as THREE.Mesh,
     glassMats,
@@ -862,6 +850,24 @@ export function buildHeroMesh(
     spoiler,
   });
   return root;
+}
+
+const heroLiveryBodies = new WeakMap<THREE.Object3D, THREE.Mesh>();
+let carGlowTexture: THREE.CanvasTexture | undefined;
+
+function getCarGlowTexture(): THREE.CanvasTexture {
+  if (carGlowTexture) return carGlowTexture;
+  const gc = document.createElement("canvas");
+  gc.width = gc.height = 128;
+  const gg = gc.getContext("2d")!;
+  const grad = gg.createRadialGradient(64, 64, 6, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,255,255,0.85)");
+  grad.addColorStop(0.55, "rgba(255,255,255,0.25)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  gg.fillStyle = grad;
+  gg.fillRect(0, 0, 128, 128);
+  carGlowTexture = new THREE.CanvasTexture(gc);
+  return carGlowTexture;
 }
 
 function isDescendant(node: THREE.Object3D, ancestor: THREE.Object3D): boolean {
@@ -874,7 +880,7 @@ function isDescendant(node: THREE.Object3D, ancestor: THREE.Object3D): boolean {
 }
 
 /** Build racing stripes by sampling the actual body surface, so they follow hood and roof contours. */
-function makeBodyLivery(body: THREE.Mesh): THREE.Group {
+function makeBodyLivery(body: THREE.Mesh, root: THREE.Object3D): THREE.Group {
   const livery = new THREE.Group();
   livery.name = "hero-livery";
   const material = new THREE.MeshStandardMaterial({
@@ -889,7 +895,10 @@ function makeBodyLivery(body: THREE.Mesh): THREE.Group {
     polygonOffsetUnits: -1,
   });
   body.updateWorldMatrix(true, false);
-  const bounds = new THREE.Box3().setFromObject(body);
+  const shell = new THREE.Mesh(body.geometry, body.material);
+  shell.matrixWorld.copy(root.matrixWorld).invert().multiply(body.matrixWorld);
+  body.geometry.computeBoundingBox();
+  const bounds = body.geometry.boundingBox!.clone().applyMatrix4(shell.matrixWorld);
   const size = bounds.getSize(new THREE.Vector3());
   const raycaster = new THREE.Raycaster();
   const vertices: number[] = [];
@@ -901,7 +910,7 @@ function makeBodyLivery(body: THREE.Mesh): THREE.Group {
       const z = bounds.max.z - (size.z * 0.08) - (size.z * 0.84 * i / segments);
       raycaster.set(new THREE.Vector3(x, bounds.max.y + size.y + 0.5, z), new THREE.Vector3(0, -1, 0));
       raycaster.far = size.y * 2 + 1;
-      const hit = raycaster.intersectObject(body, false)[0];
+      const hit = raycaster.intersectObject(shell, false)[0];
       const y = hit ? hit.point.y + 0.012 : bounds.max.y + 0.012;
       vertices.push(x - 0.1, y, z, x + 0.1, y, z);
       if (i < segments) {
@@ -914,7 +923,9 @@ function makeBodyLivery(body: THREE.Mesh): THREE.Group {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
-  livery.add(new THREE.Mesh(geometry, material));
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.userData.ownCarGeometry = true;
+  livery.add(mesh);
   return livery;
 }
 
@@ -947,8 +958,14 @@ export function applyUpgradeLooks(root: THREE.Object3D, up: UpgradeLevels): void
   if (spoiler?.userData.procedural) {
     spoiler.visible = up.suspension + up.turbo >= 2;
   }
-  const livery = root.getObjectByName("hero-livery");
-  if (livery) livery.visible = up.engine >= 2 || total >= 7;
+  const hasLivery = up.engine >= 2 || total >= 7;
+  let livery = root.getObjectByName("hero-livery");
+  const heroBody = heroLiveryBodies.get(root);
+  if (!livery && hasLivery && heroBody) {
+    livery = makeBodyLivery(heroBody, root);
+    root.add(livery);
+  }
+  if (livery) livery.visible = hasLivery;
   const glow = root.getObjectByName("hero-underglow") as THREE.Mesh | undefined;
   if (glow) {
     const mat = glow.material as THREE.MeshBasicMaterial;

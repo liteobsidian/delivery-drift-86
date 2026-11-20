@@ -95,6 +95,13 @@ await page.locator('[data-a="event-dismiss"]').click();
 if (await page.locator('[data-a="event-dismiss"]').count()) fail("Weekly event popup did not dismiss");
 await page.evaluate(() => window.__gameDebug?.exitMode?.());
 if (await page.locator('[data-a="event-dismiss"]').count()) fail("Dismissed weekly event reappeared in the same week");
+await page.waitForFunction(() => window.__gameDebug.showroom().state === "ready");
+await page.locator('[data-a="play"]').click();
+await page.locator('[data-a="back"]').click();
+const restoredTitle = await page.evaluate(() => window.__gameDebug.showroom());
+if (restoredTitle.key !== "ae86" || !restoredTitle.detailed || restoredTitle.state !== "ready") {
+  fail("Returning to the title screen replaced the detailed model");
+}
 const eventPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 await eventPage.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
 await eventPage.locator('[data-a="event-start"]').waitFor({ state: "visible" });
@@ -337,11 +344,15 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
   await page.evaluate(() => window.__gameDebug?.exitMode?.());
 }
 await page.locator('[data-a="cars"]').click();
-await page.screenshot({ path: join(SHOTS, "mode-unlocked-cars.png") });
 for (const [carId, name] of [["silvia", "Nissan Silvia S15"], ["evo", "Mitsubishi Lancer Evo IX"]]) {
-  const car = page.locator(".car-card").filter({ hasText: name });
-  if (await car.locator(`[data-a="buy:${carId}"]`).count() !== 1) fail(`${name} did not unlock from its mode medal`);
+  await page.locator(`[data-a="inspect:${carId}"]`).click();
+  const car = page.locator(".garage-detail").filter({ hasText: name });
+  if (await car.locator(`[data-a="buy:${carId}"]`).count() !== 1 || (await car.locator(".garage-status").textContent()) !== "Доступна") {
+    fail(`${name} did not unlock from its mode medal`);
+  }
 }
+await page.locator('[data-showroom-stage][data-car="evo"][data-model="ready"]').waitFor();
+await page.screenshot({ path: join(SHOTS, "mode-unlocked-cars.png") });
 await page.locator('[data-a="back"]').click();
 const beforeUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}").deliveries);
 for (let i = 0; i < 2; i++) {
@@ -737,7 +748,19 @@ const trial = await nevaPage.evaluate(() => {
 if (trial.map !== "spb" || trial.car !== "vaz2107turbo" || trial.selected !== "tokyo" || trial.elapsed !== 0) {
   fail(`The fresh career did not receive an isolated contract car and route: ${JSON.stringify(trial)}`);
 }
+await nevaPage.waitForFunction(() => {
+  const visual = window.__gameDebug.turboVisual();
+  return visual.wing && visual.wheels.every(Boolean);
+});
 await nevaPage.locator('[data-a="tut-ok"]').click();
+await nevaPage.keyboard.down("KeyW");
+await nevaPage.keyboard.down("KeyA");
+await nevaPage.waitForFunction(() => {
+  const [front, , rear] = window.__gameDebug.turboVisual().wheels;
+  return Math.abs(front.steer) > 0.05 && Math.abs(rear.steer) < 0.01 && Math.abs(front.spin) > 0.15;
+});
+await nevaPage.keyboard.up("KeyA");
+await nevaPage.keyboard.up("KeyW");
 await nevaPage.screenshot({ path: join(SHOTS, "neva-course.png") });
 
 await nevaPage.evaluate(() => {

@@ -9,9 +9,10 @@ import midriseAssetSrc from "../assets/props/midrise/asset.js?raw";
 import midriseOrientSrc from "../assets/props/midrise/orientation.js?raw";
 import midriseDataUrl from "../assets/props/midrise/data.json.gz.b64?url";
 import midrisePackUrl from "../assets/props/midrise/pack-1.bin.gz.b64?url";
-import { loadGlbModel, type GlbModel } from "./glb";
+import { loadGlbModel } from "./glb";
+import type { HeroModelKey } from "./types";
 
-// AI-generated car bodies (Tripo), one GLB per car — see src/assets/vehicles2/
+// One GLB per car. Individual cars are requested by the game when needed.
 import ae86Url from "../assets/vehicles2/ae86.glb?url";
 import supraUrl from "../assets/vehicles2/supra.glb?url";
 import silviaUrl from "../assets/vehicles2/silvia.glb?url";
@@ -19,6 +20,7 @@ import rx7Url from "../assets/vehicles2/rx7.glb?url";
 import r34Url from "../assets/vehicles2/r34.glb?url";
 import nsxUrl from "../assets/vehicles2/nsx.glb?url";
 import evoUrl from "../assets/vehicles2/evo.glb?url";
+import ladaUrl from "../assets/vehicles2/vaz2107turbo.glb?url";
 import tHatchUrl from "../assets/vehicles2/t_hatch.glb?url";
 import tSedanUrl from "../assets/vehicles2/t_sedan.glb?url";
 import tCoupeUrl from "../assets/vehicles2/t_coupe.glb?url";
@@ -36,11 +38,7 @@ export interface GameAssets {
   traffic: LoadedModel[];
   police: LoadedModel;
   midrise: LoadedModel;
-  /** detailed AI-generated hero-car bodies, keyed by car id */
-  hero: Partial<Record<HeroModelKey, LoadedModel>>;
 }
-
-export type HeroModelKey = "ae86" | "supra" | "silvia" | "rx7" | "r34" | "nsx" | "evo";
 
 type CreateAsset = (
   three: unknown,
@@ -85,9 +83,8 @@ const B64_URLS: Record<string, { "data.json.gz": string; "pack-1.bin.gz": string
 };
 
 /**
- * AI-generated hero cars (Tripo GLBs). noseRotY aligns each model's nose to
- * local -z (verified from in-engine renders); wheels are carved out of the
- * merged mesh at load time so they spin/steer.
+ * Hero cars face local -z. The Lada has authored wheel pivots. The other GLBs
+ * retain their complete merged wheel geometry.
  */
 const HERO_GLBS: Record<HeroModelKey, { url: string; noseRotY: number; len: number }> = {
   ae86: { url: ae86Url, noseRotY: Math.PI / 2, len: 4.2 },
@@ -97,6 +94,7 @@ const HERO_GLBS: Record<HeroModelKey, { url: string; noseRotY: number; len: numb
   r34: { url: r34Url, noseRotY: Math.PI, len: 4.6 },
   nsx: { url: nsxUrl, noseRotY: Math.PI / 2, len: 4.4 },
   evo: { url: evoUrl, noseRotY: Math.PI / 2, len: 4.5 },
+  vaz2107turbo: { url: ladaUrl, noseRotY: 0, len: 4.16 },
 };
 
 const TRAFFIC_GLBS: { url: string; noseRotY: number; len: number }[] = [
@@ -208,54 +206,17 @@ const ASSET_STATES: Record<string, string> = {
   midrise: "assembled",
 };
 
-const asLoaded = (m: GlbModel): LoadedModel => ({ root: m.root, size: m.size });
+export function loadHeroModel(key: HeroModelKey): Promise<LoadedModel> {
+  const { url, noseRotY, len } = HERO_GLBS[key];
+  return loadGlbModel(url, { noseRotY, targetLength: len });
+}
 
-export async function loadGameAssets(
-  preferredHero: HeroModelKey | undefined,
-  onHeroLoaded?: (key: HeroModelKey, model: LoadedModel) => void
-): Promise<GameAssets> {
+export async function loadGameAssets(): Promise<GameAssets> {
   const mod = await loadAssetModule();
-  const load = (key: string, rotY: number, norm: (s: THREE.Vector3) => number) =>
-    loadModel(mod.assets, key, rotY, norm);
-  // Start the selected hero alongside other assets instead of waiting for the
-  // large building payload. Report each finished car immediately so gameplay
-  // can replace the placeholder without waiting for every unused vehicle.
-  const midrisePromise = load("midrise", 0, (s) => 26 / s.y);
-  const heroEntries = Object.entries(HERO_GLBS) as [HeroModelKey, (typeof HERO_GLBS)[HeroModelKey]][];
-  const loadHero = async ([key, cfg]: [HeroModelKey, (typeof HERO_GLBS)[HeroModelKey]]) => {
-    const model = asLoaded(await loadGlbModel(cfg.url, {
-      noseRotY: cfg.noseRotY,
-      targetLength: cfg.len,
-      // These AI assets are single merged meshes. Heuristic wheel carving
-      // split the tire surface into orbiting fragments; keep the authored
-      // complete wheel geometry intact.
-      bodyPaint: true,
-    }));
-    onHeroLoaded?.(key, model);
-    return [key, model] as const;
-  };
-  const preferredEntry = heroEntries.find(([key]) => key === preferredHero);
-  const preferredPromise = preferredEntry ? loadHero(preferredEntry) : Promise.resolve(null);
-  // Start other cars after the selected one finishes, so their downloads and
-  // geometry parsing cannot delay the vehicle currently on screen.
-  const remainingHeroesPromise = preferredPromise.then(() =>
-    Promise.all(heroEntries.filter(([key]) => key !== preferredHero).map(loadHero))
-  );
-  const trafficPromise = Promise.all(
-    TRAFFIC_GLBS.map((cfg) => loadGlbModel(cfg.url, { noseRotY: cfg.noseRotY, targetLength: cfg.len }))
-  ).then((models) => models.map(asLoaded));
-  const policePromise = loadGlbModel(policeGlbUrl, { noseRotY: 0, targetLength: 4.9 }).then(asLoaded);
-
-  const [midrise, preferred, remainingHeroes, traffic, police] = await Promise.all([
-    midrisePromise,
-    preferredPromise,
-    remainingHeroesPromise,
-    trafficPromise,
-    policePromise,
+  const [midrise, traffic, police] = await Promise.all([
+    loadModel(mod.assets, "midrise", 0, (s) => 26 / s.y),
+    Promise.all(TRAFFIC_GLBS.map(({ url, noseRotY, len }) => loadGlbModel(url, { noseRotY, targetLength: len }))),
+    loadGlbModel(policeGlbUrl, { noseRotY: 0, targetLength: 4.9 }),
   ]);
-  const hero = Object.fromEntries([
-    ...(preferred ? [preferred] : []),
-    ...remainingHeroes,
-  ]) as Partial<Record<HeroModelKey, LoadedModel>>;
-  return { traffic, police, midrise, hero };
+  return { traffic, police, midrise };
 }

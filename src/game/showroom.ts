@@ -1,152 +1,102 @@
-/**
- * showroom.ts — offscreen car rendering: garage thumbnails and the title-screen
- * turntable. One tiny WebGLRenderer is created lazily and reused.
- */
 import * as THREE from "three";
-import type { CarSpec } from "./types";
-import { buildCarMesh, buildHeroMesh, applyUpgradeLooks } from "./car";
-import { tunedSpec } from "./config";
-import type { UpgradeLevels } from "./types";
 import type { LoadedModel } from "./assets";
+import { applyUpgradeLooks, buildHeroMesh, disposeCarVisual } from "./car";
+import type { CarSpec, UpgradeLevels } from "./types";
 
-/** dispose per-instance materials; GLB hero clones share template geometry */
-function disposeCarVisual(obj: THREE.Object3D, keepGeometry: boolean): void {
-  obj.traverse((o) => {
-    const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
-    if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-    else mat?.dispose();
-    if (!keepGeometry) (o as THREE.Mesh).geometry?.dispose?.();
-  });
-}
-
-let thumbRenderer: THREE.WebGLRenderer | null = null;
-let thumbScene: THREE.Scene | null = null;
-let thumbCamera: THREE.PerspectiveCamera | null = null;
-const thumbCache = new Map<string, string>();
-
-function ensureThumbRig(): void {
-  if (thumbRenderer) return;
-  thumbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  thumbRenderer.setSize(260, 160);
-  thumbRenderer.setPixelRatio(1);
-  thumbRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-  thumbRenderer.toneMappingExposure = 1.25;
-  thumbScene = new THREE.Scene();
-  thumbScene.add(new THREE.HemisphereLight(0x8899cc, 0x1a1430, 1.6));
-  const key = new THREE.DirectionalLight(0xfff2dd, 2.2);
-  key.position.set(3, 5, 4);
-  thumbScene.add(key);
-  const rim = new THREE.DirectionalLight(0xff2d95, 1.4);
-  rim.position.set(-4, 2, -4);
-  thumbScene.add(rim);
-  thumbScene.background = new THREE.Color(0x0d1122);
-  thumbCamera = new THREE.PerspectiveCamera(34, 260 / 160, 0.1, 60);
-  thumbCamera.position.set(4.4, 2.1, 5.0);
-  thumbCamera.lookAt(0, 0.4, 0);
-}
-
-/** Render (and cache) a garage thumbnail for a car spec. */
-export function carThumb(spec: CarSpec, up?: UpgradeLevels, hero?: LoadedModel): string {
-  const tuned = up ? tunedSpec(spec, up) : spec;
-  const key = `${tuned.id}/${up ? `${up.engine}${up.tires}${up.suspension}${up.turbo}` : "0"}${hero ? "+glb" : ""}`;
-  const hit = thumbCache.get(key);
-  if (hit) return hit;
-  ensureThumbRig();
-  const mesh = hero ? buildHeroMesh(tuned, hero) : buildCarMesh(tuned);
-  applyUpgradeLooks(mesh, up ?? { engine: 0, tires: 0, suspension: 0, turbo: 0 });
-  thumbScene!.add(mesh);
-  thumbRenderer!.render(thumbScene!, thumbCamera!);
-  const url = thumbRenderer!.domElement.toDataURL("image/png");
-  thumbScene!.remove(mesh);
-  disposeCarVisual(mesh, !!hero);
-  thumbCache.set(key, url);
-  return url;
-}
-
-export interface Showroom {
-  scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
-  carGroup: THREE.Group;
-  setCar: (spec: CarSpec, up: UpgradeLevels, hero?: LoadedModel) => void;
-  update: (dt: number) => void;
-}
-
-/** Full-screen title background: current car on a slowly spinning neon platform. */
-export function createShowroom(): Showroom {
+export function createShowroom() {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x070a18);
-  scene.fog = new THREE.Fog(0x070a18, 14, 34);
+  scene.background = new THREE.Color(0x101929);
+  scene.fog = new THREE.Fog(0x101929, 12, 32);
 
-  scene.add(new THREE.HemisphereLight(0x6672aa, 0x141020, 1.1));
-  const key = new THREE.DirectionalLight(0xfff0d8, 1.5);
-  key.position.set(5, 8, 4);
-  scene.add(key);
-  const rim = new THREE.DirectionalLight(0xff2d95, 1.5);
-  rim.position.set(-6, 3, -6);
-  scene.add(rim);
-  const cool = new THREE.DirectionalLight(0x37e0ff, 1.2);
-  cool.position.set(-4, 2, 6);
-  scene.add(cool);
+  scene.add(new THREE.HemisphereLight(0x9eaccb, 0x303052, 1.6));
+  const key = new THREE.DirectionalLight(0xfff0dd, 1.85);
+  key.position.set(2, 6, -5);
+  const rim = new THREE.DirectionalLight(0x70c8ff, 1.7);
+  rim.position.set(-5, 3, 5);
+  const fill = new THREE.DirectionalLight(0xff587e, 0.55);
+  fill.position.set(5, 2, 3);
+  scene.add(key, rim, fill);
 
-  // platform
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(80, 80),
+    new THREE.MeshStandardMaterial({ color: 0x141c2a, metalness: 0.2, roughness: 0.8 }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.23;
+  const grid = new THREE.GridHelper(60, 40, 0x38445e, 0x252e43);
+  grid.position.y = -0.22;
+  scene.add(floor, grid);
+
   const disc = new THREE.Mesh(
-    new THREE.CylinderGeometry(3.4, 3.7, 0.22, 40),
-    new THREE.MeshStandardMaterial({ color: 0x161c30, roughness: 0.4, metalness: 0.6 })
+    new THREE.CylinderGeometry(3.02, 3.18, 0.22, 56),
+    new THREE.MeshStandardMaterial({ color: 0x263147, roughness: 0.5, metalness: 0.36 }),
   );
   disc.position.y = -0.11;
-  scene.add(disc);
   const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(3.55, 0.07, 8, 48),
-    new THREE.MeshBasicMaterial({ color: 0x37e0ff })
+    new THREE.TorusGeometry(3.03, 0.025, 8, 72),
+    new THREE.MeshBasicMaterial({ color: 0x61daf7 }),
   );
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.02;
-  scene.add(ring);
-  const ring2 = new THREE.Mesh(
-    new THREE.TorusGeometry(2.6, 0.045, 8, 40),
-    new THREE.MeshBasicMaterial({ color: 0xff2d95 })
-  );
-  ring2.rotation.x = Math.PI / 2;
-  ring2.position.y = 0.03;
-  scene.add(ring2);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.015;
+  scene.add(disc, ring);
 
   const carGroup = new THREE.Group();
   scene.add(carGroup);
+  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 80);
+  let car: THREE.Group | undefined;
+  let activeModel: LoadedModel | undefined;
+  let activeTune = "";
+  let resumeAfter = 0;
 
-  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-  camera.position.set(4.6, 2.0, 5.2);
-  camera.lookAt(0, 0.5, 0);
+  function clearCar(): void {
+    if (car) {
+      car.removeFromParent();
+      disposeCarVisual(car, true);
+    }
+    car = undefined;
+    activeModel = undefined;
+    activeTune = "";
+  }
 
-  let car: THREE.Group | null = null;
-  let carWasHero = false;
   return {
     scene,
     camera,
     carGroup,
-    setCar(spec, up, hero) {
-      if (car) {
-        carGroup.remove(car);
-        disposeCarVisual(car, carWasHero);
-      }
-      carWasHero = !!hero;
-      car = hero
-        ? buildHeroMesh(tunedSpec(spec, up), hero)
-        : buildCarMesh(tunedSpec(spec, up));
+    clearCar,
+    frame(aspect: number): void {
+      camera.aspect = aspect;
+      const fit = Math.max(1, 1.27 / aspect);
+      camera.position.set(-4.45 * fit, 2.35 * fit, -5.9 * fit);
+      camera.lookAt(0, 0.72, 0);
+      camera.updateProjectionMatrix();
+    },
+    setCar(spec: CarSpec, up: UpgradeLevels, model: LoadedModel): void {
+      const tune = `${up.engine}${up.tires}${up.suspension}${up.turbo}`;
+      if (activeModel === model && activeTune === tune) return;
+      const changedCar = activeModel !== model;
+      clearCar();
+      activeModel = model;
+      activeTune = tune;
+      car = buildHeroMesh(spec, model);
       applyUpgradeLooks(car, up);
       carGroup.add(car);
-      // detailed library bodies are bulkier — frame them a bit wider
-      camera.position.set(
-        hero ? 6.2 : 4.6,
-        hero ? 2.5 : 2.0,
-        hero ? 7.0 : 5.2
-      );
-      camera.lookAt(0, 0.5, 0);
+      if (changedCar) {
+        carGroup.rotation.y = 0;
+        resumeAfter = 0.85;
+      }
     },
-    update(dt: number) {
-      carGroup.rotation.y += dt * 0.45;
-      const s = 1 + Math.sin(performance.now() * 0.0012) * 0.04;
-      ring.scale.setScalar(s);
-      ring2.scale.setScalar(2 - s);
+    rotate(radians: number): void {
+      carGroup.rotation.y += radians;
+      resumeAfter = 2.5;
+    },
+    update(dt: number, autoRotate: boolean): void {
+      if (!car || !autoRotate) return;
+      if (resumeAfter > 0) resumeAfter -= dt;
+      else carGroup.rotation.y += dt * 0.52;
+    },
+    dispose(): void {
+      clearCar();
+      disposeCarVisual(scene);
     },
   };
 }
