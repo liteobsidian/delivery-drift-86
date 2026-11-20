@@ -113,6 +113,23 @@ describe("NPC traffic regressions", () => {
     }
   });
 
+  it("reuses the same starting fleet on a fixed challenge and resumes ordinary spawns after it", () => {
+    const player = new THREE.Vector3(95, 0, 58);
+    const velocity = new THREE.Vector3();
+    const world = { layout: cityLayoutFor("spb"), lights: [] } as unknown as World;
+    const traffic = new Traffic(world);
+    traffic.resetForPlayer(player, 46051);
+    const grid = traffic.debugPositions();
+    for (let step = 0; step < 30 * 60; step++) traffic.update(1 / 60, player, velocity, 0);
+    expect(traffic.debugPositions()).toHaveLength(grid.length);
+    traffic.resetForPlayer(player, 46051);
+    expect(traffic.debugPositions()).toEqual(grid);
+    traffic.resetForPlayer(player);
+    for (let step = 0; step < 30 * 60; step++) traffic.update(1 / 60, player, velocity, 0);
+    expect(traffic.debugPositions().length).toBeGreaterThan(grid.length);
+    traffic.dispose();
+  });
+
   it("repositions traffic around the exact start point without rebuilding routes", () => {
     const traffic = makeTraffic();
     const player = new THREE.Vector3(72, 0, -48);

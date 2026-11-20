@@ -991,3 +991,48 @@ html, body, #root {
   .track-card { min-height: 250px; }
   .track-art { height: 145px; }
 }
+
+/* Neva contract */
+.neva-feature {
+  position: relative;
+  width: 100%;
+  margin: 0 auto 10px;
+  padding: 16px 48px 16px 18px;
+  text-align: left;
+  border-color: #905e3d;
+  background: linear-gradient(115deg, #2c2430, #182737 74%, #153443);
+}
+.neva-feature b { color: #ffd195; font-size: 15px; }
+.neva-feature span { font-size: 12px; color: #d2c7c5; }
+.neva-feature i { position: absolute; right: 18px; top: 20px; color: #ffd195; font-style: normal; font-size: 20px; }
+.neva-feature:hover { border-color: #ffc06a; background: linear-gradient(115deg, #3a2935, #1d3643); }
+
+.neva-brief {
+  box-sizing: border-box;
+  width: min(760px, 94vw);
+  max-height: 92vh;
+  padding: clamp(18px, 3vw, 30px);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(16px, 3vw, 28px);
+  align-items: center;
+  overflow-y: auto;
+  border-color: #63524a;
+}
+.neva-brief h2 { color: #ffdfb4; text-align: left; margin: 6px 0 12px; }
+.neva-brief p { margin: 0 0 14px; color: #c5cce4; line-height: 1.5; font-size: 14px; }
+.neva-brief .neva-goal { color: #ffc981; font-weight: 700; }
+.neva-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.neva-actions .btn { min-width: 0; margin: 0; }
+.neva-route { margin: 0; min-width: 0; }
+.neva-route canvas { width: 100%; height: auto; display: block; border: 1px solid #40485b; border-radius: 10px; }
+.neva-route figcaption { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px 14px; color: #ffca82; font-size: 11px; }
+.neva-score { font-size: 18px; color: #ffcc89; }
+.neva-share { margin: 10px 0; text-align: left; }
+.neva-share input { box-sizing: border-box; width: 100%; padding: 8px 10px; color: #e9edff; background: #11172b; border: 1px solid #424d6e; border-radius: 6px; }
+.neva-share small { color: #addadf; }
+
+@media (max-width: 610px) {
+  .neva-brief { grid-template-columns: minmax(0, 1fr); }
+  .neva-route { width: min(100%, 320px); margin-inline: auto; }
+}
