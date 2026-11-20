@@ -452,26 +452,33 @@ if (!(nitroAfter < nitroBefore && nitroAfter >= 0)) fail("Shift did not consume 
 
 // 3) Check direction without assuming a fixed frame rate on software-rendered CI.
 async function checkDirection(key, axis, direction, distance = 0.05) {
-  const before = await page.evaluate(() => window.__gameProbe());
+  const before = await page.evaluate(() => ({ position: window.__gameProbe(), elapsed: window.__gameDebug.modeState().elapsed }));
+  let passed = false;
   await page.keyboard.down(key);
   try {
-    await page.waitForFunction(
-      ({ start, axis, direction, distance }) => (window.__gameProbe()[axis] - start) * direction > distance,
-      { start: before[axis], axis, direction, distance },
-      { timeout: 4000 },
+    const result = await page.waitForFunction(
+      ({ before, axis, direction, distance }) => {
+        const moved = (window.__gameProbe()[axis] - before.position[axis]) * direction > distance;
+        const elapsed = window.__gameDebug.modeState().elapsed - before.elapsed;
+        return moved || elapsed >= 1.5 ? { passed: moved && elapsed <= 1.5 } : false;
+      },
+      { before, axis, direction, distance },
+      { timeout: 12000 },
     );
-    return true;
+    passed = (await result.jsonValue()).passed;
   } catch (error) {
     if (error.name !== "TimeoutError") throw error;
-    const state = await page.evaluate(() => ({
-      position: window.__gameProbe(), speed: window.__gameDebug.speed(),
-      keys: window.__gameDebug.keys(), screen: window.__gameDebug.screen(),
-    }));
-    console.error(`${key} did not travel ${distance} on ${axis}: ${JSON.stringify({ before, ...state })}`);
-    return false;
   } finally {
     await page.keyboard.up(key);
   }
+  if (!passed) {
+    const state = await page.evaluate(() => ({
+      position: window.__gameProbe(), elapsed: window.__gameDebug.modeState().elapsed,
+      speed: window.__gameDebug.speed(), screen: window.__gameDebug.screen(),
+    }));
+    console.error(`${key} did not travel ${distance} on ${axis}: ${JSON.stringify({ before, after: state })}`);
+  }
+  return passed;
 }
 
 const probe = await page.evaluate(() => !!window.__gameProbe);
