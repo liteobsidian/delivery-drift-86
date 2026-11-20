@@ -187,6 +187,7 @@ await firstTutorial.locator('[data-a="tut-ok"]').press("Space");
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("Neon Tokyo could not be selected");
 if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port-only props leaked into Neon Tokyo");
 if (await page.evaluate(() => window.__gameDebug?.screen?.()) !== "playing") fail("Choosing a map did not start the selected delivery");
+if (!(await page.locator(".hud-navigation").isVisible())) fail("Delivery has no route arrow");
 const tokyoBuildingCount = await page.evaluate(() => window.__gameDebug.cityBuildingCount());
 if (tokyoBuildingCount < 350) fail(`Tokyo's generated building infill is sparse: ${tokyoBuildingCount} sites`);
 const tokyoTraffic = await page.evaluate(() => window.__gameDebug.trafficPos());
@@ -298,6 +299,7 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
   const modeState = await page.evaluate(() => window.__gameDebug?.modeState?.());
   if (await page.locator(".hud-cargo").isVisible()) fail(`${label} still shows irrelevant cargo damage`);
   if ((await page.evaluate(() => window.__gameDebug.destinationVisible())) !== (mode === "time-attack")) fail(`${label} showed the wrong destination marker`);
+  if ((await page.locator(".hud-navigation").isVisible()) !== (mode === "time-attack")) fail(`${label} showed the wrong route arrow state`);
   const tutorial = page.locator("dialog.tutorial[open]");
   if (!(await tutorial.isVisible())) fail(`${label} did not show its own tutorial`);
   if (/груз|красн.{0,10}сигнал|штраф/i.test(await tutorial.textContent() ?? "")) fail(`${label} still shows delivery-only hints`);
@@ -373,6 +375,7 @@ for (const [carId, name] of [["silvia", "Nissan Silvia S15"], ["evo", "Mitsubish
   }
 }
 await page.locator('[data-showroom-stage][data-car="evo"][data-model="ready"]').waitFor();
+if (await page.getByText("Перетащи, чтобы повернуть", { exact: false }).count()) fail("The showroom still explains the rotation gesture");
 await page.screenshot({ path: join(SHOTS, "mode-unlocked-cars.png") });
 await page.locator('[data-a="back"]').click();
 const beforeUnlimited = await page.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}").deliveries);

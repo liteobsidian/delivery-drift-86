@@ -33,7 +33,8 @@ import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { NEVA_CONTRACT, NEVA_SECTORS, NevaRun, nevaChallengeLink, nevaChallengeTarget, nevaResult } from "./neva-contract";
 import { buildNevaMarkings, drawNevaPreview, drawNevaRoute } from "./neva-visuals";
-import { sampleDeliveryDestination } from "./delivery-routing";
+import { guideAlongRoads, sampleDeliveryDestination } from "./delivery-routing";
+import type { CityPoint } from "./map-layouts";
 import { canUnlockCar, driftMedal, driftMultiplierForSeconds, finalDriftScore, medalRank, modeReward, timeAttackCourse, timeAttackMedal, type GameMode, type MedalTier, type TimeAttackCourse } from "./modes";
 import { RADIO_CACHE_RADIUS, RADIO_GATE_RADIUS, RADIO_TIME, RADIO_TITLE, RADIO_TRAFFIC_SEED, RADIO_WAVES, RadioRun, radioCourse, radioMedal, radioScore } from "./radio-silence";
 import { createShowroom } from "./showroom";
@@ -183,6 +184,10 @@ export class Game {
   private hMoney!: HTMLElement;
   private hDrift!: HTMLElement;
   private hChase!: HTMLElement;
+  private hNavigation!: HTMLElement;
+  private hArrow!: HTMLElement;
+  private routeGuide: { world: World; x: number; z: number; aim: (point: CityPoint) => CityPoint } | null = null;
+  private arrowAngle: number | null = null;
   private popups!: HTMLElement;
   private tutorialEl!: HTMLDialogElement;
   private saveNotice: HTMLElement;
@@ -208,7 +213,9 @@ export class Game {
 
     this.scene.add(this.world.group);
     this.worldCache.set(this.world.mapId, this.world);
-    this.careerCar = new Car(tunedSpec(this.currentCarSpec(), this.currentUpgrades()));
+    const upgrades = this.currentUpgrades();
+    this.careerCar = new Car(tunedSpec(this.currentCarSpec(), upgrades));
+    this.careerCar.setUpgrades(upgrades);
     this.configureCar(this.careerCar);
     this.car = this.careerCar;
     this.scene.add(this.car.group);
@@ -792,9 +799,8 @@ export class Game {
           <span class="garage-balance" aria-label="Баланс">₽${rubles.format(this.profile.money)}</span>
         </header>
         <div class="garage-display">
-          <div class="showroom-stage garage-stage" data-showroom-stage tabindex="0" role="region" aria-label="Осмотр машины" aria-describedby="garage-orbit-hint">
+          <div class="showroom-stage garage-stage" data-showroom-stage tabindex="0" role="region" aria-label="Осмотр машины">
             ${this.showroomStatus()}
-            <span class="garage-orbit-hint" id="garage-orbit-hint">Перетащи, чтобы повернуть<span> · ← →</span></span>
           </div>
           <article class="garage-detail" aria-labelledby="garage-car-name"></article>
         </div>
@@ -1564,6 +1570,10 @@ export class Game {
     this.debris = [];
     this.wasInPuddle = false;
     this.wreckTimer = -1;
+    this.routeGuide = null;
+    this.arrowAngle = null;
+    this.toastTimer = 0;
+    this.toastEl.style.opacity = "0";
     this.redFinedX.clear();
     if (this.radioRun) this.updateRadioMarkers(this.radioRun);
     else if (mode === "drift-trial") this.world.hideDestination();
@@ -1573,11 +1583,6 @@ export class Game {
     this.audio.ensure();
     this.showScreen("playing");
     this.updateHud();
-    this.toast(this.nevaRun ? "Следуй к мосту по линии на миникарте" : this.radioRun ? "Перехвати сигнал на фиолетовой отметке" : mode === "drift-trial"
-      ? "Drift Trial · удерживай занос, чтобы поднять множитель"
-      : mode === "time-attack"
-        ? `Time Attack · контрольная точка 1/${this.timeAttackCourse?.checkpoints.length ?? 5}`
-        : `Доставь заказ за ${o.timeLimit} с. Береги груз!`);
     if (!(this.nevaRun ? this.profile.neva.seenHelp : this.profile.seenTutorials[mode])) this.showTutorial();
     else this.audio.startMusic();
   }
@@ -1599,6 +1604,7 @@ export class Game {
   // ================= HUD =================
 
   private buildHud(): void {
+    const heading = el("div", "hud-heading");
     const top = el("div", "hud-top");
     this.hOrder = el("span", "hud-order");
     this.hTimer = el("span", "hud-timer");
@@ -1614,7 +1620,15 @@ export class Game {
     this.hChase = el("span", "hud-chase", "🚔 ПОГОНЯ!");
     this.hChase.style.display = "none";
     top.appendChild(this.hChase);
-    this.hudEl.appendChild(top);
+    heading.appendChild(top);
+    this.hNavigation = el("div", "hud-navigation");
+    this.hNavigation.hidden = true;
+    this.hNavigation.setAttribute("role", "img");
+    this.hNavigation.setAttribute("aria-label", "Направление к цели");
+    this.hArrow = el("span", "hud-arrow");
+    this.hNavigation.appendChild(this.hArrow);
+    heading.appendChild(this.hNavigation);
+    this.hudEl.appendChild(heading);
 
     const right = el("div", "hud-right");
     this.hSpeed = el("div", "hud-speed", "0");
@@ -1634,7 +1648,7 @@ export class Game {
     this.buildMinimapBase();
 
     this.toastEl = el("div", "toast");
-    this.hudEl.appendChild(this.toastEl);
+    heading.appendChild(this.toastEl);
 
     this.popups = el("div", "bonus-popups");
     this.hudEl.appendChild(this.popups);
@@ -1663,11 +1677,6 @@ export class Game {
       }
     });
     this.overlay.appendChild(this.tutorialEl);
-
-    if (this.input?.isTouch) {
-      const rh = el("div", "rotate-hint", "Поверните телефон горизонтально 🔄");
-      this.hudEl.appendChild(rh);
-    }
   }
 
   private showTutorial(): void {
@@ -1690,7 +1699,7 @@ export class Game {
         ? `<div class="tut-row"><span class="tut-ico">◆</span><span>За ${RADIO_TIME} с пройди три передатчика. Каждый начинает погоню. Следуй по линии карты к бирюзовой зоне тишины и въезжай в неё с нужным отрывом.</span></div>
            <div class="tut-row"><span class="tut-ico">✦</span><span>Золотой пакет пополняет нитро и даёт очки после побега. Пакеты, запас времени и состояние кузова определяют медаль и выплату.</span></div>`
         : mode === "drift-trial"
-        ? `<div class="tut-row"><span class="tut-ico">🔥</span><span>Держи занос: множитель растёт до ×5. Когда занос закончится, серия сохранится через 0,7 секунды.</span></div>
+        ? `<div class="tut-row"><span class="tut-ico">🔥</span><span>Держи занос, чтобы поднять множитель до ×5. Когда машина выйдет из заноса, очки серии засчитаются.</span></div>
            <div class="tut-row"><span class="tut-ico">⚠</span><span>Сильный удар сбрасывает незабранные очки серии. За итоговый счёт выдаются медали и ₽.</span></div>`
         : `<div class="tut-row"><span class="tut-ico">🏁</span><span>Пройди контрольные точки строго по порядку и вернись на старт для финиша.</span></div>
            <div class="tut-row"><span class="tut-ico">🥇</span><span>Время круга определяет медаль, выплату и лучший результат трассы.</span></div>`;
@@ -1880,6 +1889,17 @@ export class Game {
     const prevX = this.car.pos.x;
     const prevZ = this.car.pos.z;
     const res = this.car.step(dt, inp, this.world);
+    const lamp = !this.car.isFlipping && this.car.vel.lengthSq() >= 25
+      ? this.world.knockStreetLamp(prevX, prevZ, this.car.pos.x, this.car.pos.z, this.car.airY, dt)
+      : null;
+    if (lamp) {
+      const strength = Math.min(1, this.car.vel.length() / 24);
+      this.car.vel.multiplyScalar(0.9);
+      this.car.damageCar(1 + 4 * strength);
+      this.shake = Math.min(0.8, this.shake + 0.2 * strength);
+      this.audio.thud(0.25 + 0.45 * strength);
+      this.effects.spawnFlash(lamp.x, lamp.z, 0xffbc64);
+    }
     if (res.drift > 5 && Math.abs(res.speed) > 8) this.nitroFuel = Math.min(100, this.nitroFuel + dt * 5);
     const spec = this.car.spec;
     const frag = this.mode === "delivery" ? this.order.fragility : 0;
@@ -2034,7 +2054,7 @@ export class Game {
     }
 
     if (this.nevaRun) {
-      const clean = !res.offRoad && !res.airborne && !res.rolled && !this.car.isFlipping && !this.car.wrecked
+      const clean = !lamp && !res.offRoad && !res.airborne && !res.rolled && !this.car.isFlipping && !this.car.wrecked
         && res.impact <= 3 && tHit <= 0;
       const i = this.nevaRun.update(prevX, prevZ, this.car.pos.x, this.car.pos.z, dt, res.speed, res.drift, clean);
       if (i >= 0) {
@@ -2458,6 +2478,25 @@ export class Game {
     this.showScreen("result");
   }
 
+  private updateNavigation(dest: CityPoint): void {
+    this.hNavigation.hidden = this.mode === "drift-trial";
+    if (this.hNavigation.hidden) return;
+    let guide = this.routeGuide;
+    if (!guide || guide.world !== this.world || guide.x !== dest.x || guide.z !== dest.z) {
+      guide = { world: this.world, ...dest, aim: guideAlongRoads(this.world.layout, dest) };
+      this.routeGuide = guide;
+    }
+    const point = guide.aim(this.car.pos);
+    const dx = point.x - this.car.pos.x;
+    const dz = point.z - this.car.pos.z;
+    if (dx * dx + dz * dz < 0.1) return;
+    const angle = this.car.heading - Math.atan2(dx, dz);
+    const previous = this.arrowAngle ?? 0;
+    const change = angle - previous;
+    this.arrowAngle = previous + Math.atan2(Math.sin(change), Math.cos(change));
+    this.hArrow.style.transform = `rotate(${this.arrowAngle}rad)`;
+  }
+
   private updateHud(): void {
     if (!this.order) return;
     const o = this.order;
@@ -2497,6 +2536,7 @@ export class Game {
     this.hChase.textContent = radioPursuit ? `🚔 Отрыв ${Math.floor(this.police.dist)}/${radio.leg.requiredGap} м` : "🚔 ПОГОНЯ!";
     this.hChase.classList.toggle("radio-lead", !!radioPursuit && this.police.dist >= radio.leg.requiredGap);
     this.hChase.style.display = this.police.active ? "inline" : "none";
+    this.updateNavigation(o.dest);
     this.drawMinimap();
   }
 
