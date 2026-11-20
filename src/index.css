@@ -440,6 +440,25 @@ html, body, #root {
   .hud-right {
     bottom: calc(240px + env(safe-area-inset-bottom));
   }
+  .hud[data-mode="radio-silence"] .hud-right {
+    left: 50%;
+    right: auto;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: center;
+    gap: 2px 12px;
+    padding: 5px 10px;
+    border: 1px solid #2c3552;
+    border-radius: 9px;
+    background: rgba(10, 14, 28, .78);
+    text-align: left;
+  }
+  .hud[data-mode="radio-silence"] .hud-speed { font-size: 24px; }
+  .hud[data-mode="radio-silence"] .hud-money { margin: 0; font-size: 12px; white-space: nowrap; }
+  .hud[data-mode="radio-silence"] .hud-drift,
+  .hud[data-mode="radio-silence"] .hud-nitro { grid-column: 1 / -1; font-size: 11px; white-space: nowrap; }
 }
 
 #minimap {
@@ -476,6 +495,7 @@ html, body, #root {
   animation: blink 0.5s infinite;
   text-shadow: 0 0 10px rgba(255, 51, 68, 0.8);
 }
+.hud-chase.radio-lead { color: #57edca; animation: none; text-shadow: none; }
 
 .hud-pause {
   position: absolute;
@@ -954,14 +974,15 @@ html, body, #root {
 .journey-panel h2 { margin: 6px 0; }
 .journey-eyebrow { color: #00dffc; font-size: 10px; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; }
 .journey-panel > .dim { margin: 8px 0 18px; }
-.journey-activities { grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 auto 18px; max-width: 690px; }
-.journey-activities .activity-card { min-height: 200px; justify-content: flex-end; align-items: flex-start; padding: 18px; text-align: left; background-position: center; background-size: cover; }
+.journey-activities { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 auto 18px; max-width: 690px; }
+.journey-activities .activity-card { min-height: 134px; justify-content: flex-end; align-items: flex-start; padding: 18px; text-align: left; background-position: center; background-size: cover; }
 .journey-activities .activity-card b { font-size: 15px; }
 .journey-activities .activity-card span { font-size: 12px; }
 .journey-activities .activity-card i { color: #00e5ff; font-size: 11px; font-style: normal; margin-top: auto; }
 .journey-activities .activity-card[data-a="activity:delivery"] { background-image: linear-gradient(0deg, rgba(7,12,22,.98), rgba(7,12,22,.2)), radial-gradient(ellipse at 55% 20%, #3e546f, #10182a 70%); }
 .journey-activities .activity-card[data-a="activity:drift-trial"] { background-image: linear-gradient(0deg, rgba(7,12,22,.98), rgba(7,12,22,.2)), radial-gradient(ellipse at 45% 20%, #853a77, #17152d 70%); }
 .journey-activities .activity-card[data-a="activity:time-attack"] { background-image: linear-gradient(0deg, rgba(7,12,22,.98), rgba(7,12,22,.2)), radial-gradient(ellipse at 55% 20%, #1c6979, #11192e 70%); }
+.journey-activities .activity-card[data-a="activity:radio-silence"] { background-image: linear-gradient(0deg, #0c101e, transparent), linear-gradient(128deg, #403884, #4e295c 55%, #263459); }
 
 .track-picker { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 18px; max-width: 700px; }
 .track-card { position: relative; min-height: 300px; padding: 10px; overflow: hidden; border-color: #3e4b67; text-align: left; }

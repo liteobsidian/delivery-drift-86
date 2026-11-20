@@ -127,7 +127,9 @@ export class World {
   private readonly deckSites: readonly Pick<CityParcel, "x" | "z" | "width" | "depth" | "rotation">[];
   private flickerT = 0;
   private marker = new THREE.Group();
-  private markerRing!: THREE.Mesh;
+  private markerRing!: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+  private markerBeam!: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
+  private markerScale = 1;
   private time = 0;
 
   constructor(mapId: MapId = "tokyo") {
@@ -285,8 +287,12 @@ export class World {
 
   // ---------- marker ----------
 
-  setDestination(x: number, z: number): void {
+  setDestination(x: number, z: number, color = 0x22ffcc, radius = 3.1): void {
     this.marker.position.set(x, 0, z);
+    this.markerScale = radius / 3.1;
+    this.markerRing.scale.set(this.markerScale, this.markerScale, 1);
+    this.markerRing.material.color.setHex(color);
+    this.markerBeam.material.color.setHex(color);
     this.marker.visible = true;
   }
 
@@ -358,7 +364,7 @@ export class World {
     }
     // destination marker pulse + spin
     this.markerRing.rotation.z += dt * 1.5;
-    const s = 1 + Math.sin(this.time * 4) * 0.12;
+    const s = this.markerScale * (1 + Math.sin(this.time * 4) * 0.12);
     this.markerRing.scale.set(s, s, 1);
     // rooftop billboards scroll their text
     for (const t of this.billboardTex) {
@@ -2062,12 +2068,12 @@ export class World {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    const beam = new THREE.Mesh(
+    this.markerBeam = new THREE.Mesh(
       new THREE.CylinderGeometry(1.6, 2.2, 40, 16, 1, true),
       beamMat
     );
-    beam.position.y = 20;
-    this.marker.add(beam);
+    this.markerBeam.position.y = 20;
+    this.marker.add(this.markerBeam);
     this.markerRing = new THREE.Mesh(
       new THREE.RingGeometry(2.2, 3.1, 32),
       new THREE.MeshBasicMaterial({

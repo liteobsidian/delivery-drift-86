@@ -138,7 +138,7 @@ if (!mobileHomeFits) fail("Home screen overflows the mobile viewport");
 await page.screenshot({ path: join(SHOTS, "03-home-mobile.png") });
 await page.setViewportSize({ width: 1280, height: 720 });
 await page.locator('[data-a="play"]').click();
-for (const mode of ["delivery", "drift-trial", "time-attack"]) {
+for (const mode of ["delivery", "drift-trial", "time-attack", "radio-silence"]) {
   if (await page.locator(`[data-a="activity:${mode}"]`).count() !== 1) fail(`Activity picker is missing ${mode}`);
 }
 await page.locator('[data-a="activity:delivery"]').click();
@@ -653,6 +653,70 @@ if (!(await row.getByText(/Toyota AE86 Sprinter/).isVisible()) || !(await row.ge
 }
 if (await secondTab.locator(".record-row").filter({ hasText: "Time Attack" }).count()) fail("Malformed time record reached the UI");
 await mobileContext.close();
+
+// A fresh career can lose three separate patrols, submit a record and retry.
+const radioPage = await browser.newPage({ viewport: { width: 1000, height: 620 } });
+radioPage.on("pageerror", (error) => consoleErrors.push(String(error)));
+await radioPage.goto(`http://127.0.0.1:${port}/`);
+await radioPage.locator('[data-a="event-dismiss"]').click();
+await radioPage.evaluate(() => window.__gameDebug.damageTest());
+await radioPage.locator('[data-a="play"]').click();
+await radioPage.locator('[data-a="activity:radio-silence"]').click();
+await radioPage.locator('[data-a="map:tokyo"]').click();
+await radioPage.locator("dialog.tutorial[open]").waitFor();
+const radioStart = await radioPage.evaluate(() => {
+  const debug = window.__gameDebug;
+  return { hp: debug.hp(), mode: debug.mode(), phase: debug.radio().phase, time: debug.radio().timeLeft };
+});
+if (radioStart.hp !== 100 || radioStart.mode !== "radio-silence" || radioStart.phase !== "transmitter" || radioStart.time !== 120 ||
+  await radioPage.locator(".hud-cargo").isVisible()) fail(`Invalid Radio Silence start: ${JSON.stringify(radioStart)}`);
+await radioPage.locator('[data-a="tut-ok"]').click();
+await radioPage.keyboard.down("KeyW");
+await radioPage.waitForFunction(() => window.__gameDebug.radio()?.phase === "pursuit");
+await radioPage.keyboard.up("KeyW");
+await radioPage.screenshot({ path: join(SHOTS, "mode-radio-silence-hud.png") });
+for (let wave = 0; wave < 3; wave++) {
+  if (wave > 0) {
+    await radioPage.evaluate(() => {
+      const debug = window.__gameDebug;
+      const { x, z } = debug.radio().target;
+      debug.teleport(x, z);
+    });
+    await radioPage.waitForFunction(() => window.__gameDebug.policeActive());
+  }
+  await radioPage.evaluate(() => {
+    const debug = window.__gameDebug;
+    const { x, z } = debug.radio().cache;
+    debug.teleport(x, z);
+  });
+  await radioPage.waitForFunction(() => window.__gameDebug.radio()?.carryingPacket);
+  await radioPage.evaluate(() => {
+    const debug = window.__gameDebug;
+    const { x, z } = debug.radio().target;
+    debug.teleport(x, z);
+  });
+  await radioPage.waitForFunction((expected) => window.__gameDebug.radio()?.escapes === expected, wave + 1);
+  if (await radioPage.evaluate(() => window.__gameDebug.policeActive())) fail("Patrol stayed active after reaching the safe zone");
+}
+await radioPage.locator(".result.ok").waitFor();
+await radioPage.screenshot({ path: join(SHOTS, "mode-radio-silence-result.png") });
+const radioSave = await radioPage.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2")));
+if (radioSave.stats.escapes !== 3 || radioSave.deliveries !== 0 || !radioSave.unlockedAch.includes("escapee") ||
+  radioSave.totalEarn !== 1300 || !(radioSave.records["tokyo:radio-silence:ae86"] >= 1250)) {
+  fail("Radio Silence did not persist three escapes, the gold payout and the record");
+}
+await radioPage.locator('[data-a="replay"]').click();
+if (await radioPage.evaluate(() => window.__gameDebug.radio().escapes !== 0) || await radioPage.locator("dialog.tutorial[open]").count()) {
+  fail("Radio Silence replay reused progress or repeated the tutorial");
+}
+await radioPage.evaluate(() => window.__gameDebug.setElapsedForTest(120));
+await radioPage.locator(".result.bad").waitFor();
+if ((await radioPage.evaluate(() => window.__gameDebug.profile().money)) !== radioSave.money) fail("A timed-out attempt paid a reward");
+await radioPage.locator('[data-a="garage"]').click();
+if (await radioPage.evaluate(() => window.__gameDebug.radio() !== null || window.__gameDebug.hp() === 100)) {
+  fail("Leaving Radio Silence did not restore the career car");
+}
+await radioPage.close();
 
 // A fresh career can play the authored contract, share it, and return to its own car.
 const nevaPage = await browser.newPage({ viewport: { width: 1000, height: 650 } });

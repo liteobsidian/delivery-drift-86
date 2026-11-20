@@ -1,9 +1,9 @@
 import type { CityPoint, TrafficRoute } from "./map-layouts";
 import { cityLayoutFor } from "./map-layouts";
-import type { CarSpec, MapId, Profile } from "./types";
+import type { ActivityMode, CarSpec, MapId, Profile } from "./types";
 
 export type MedalTier = "bronze" | "silver" | "gold";
-export type GameMode = "drift-trial" | "time-attack";
+export type GameMode = Exclude<ActivityMode, "delivery">;
 
 export interface TimeAttackCourse {
   mapId: MapId;
@@ -106,6 +106,11 @@ export function timeAttackMedal(course: TimeAttackCourse, elapsed: number): Meda
 /** Medal rewards are paid once per completed run; non-medal runs still earn a small purse. */
 export function modeReward(mode: GameMode, medal: MedalTier | null, score: number, finished = true): number {
   if (!finished) return 0;
+  if (mode === "radio-silence") {
+    if (medal === "gold") return 1300;
+    if (medal === "silver") return 800;
+    return medal === "bronze" ? 450 : 0;
+  }
   if (mode === "drift-trial") {
     if (medal === "gold") return 900;
     if (medal === "silver") return 450;
