@@ -330,11 +330,19 @@ html, body, #root {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.hud-top {
+.hud-heading {
   position: absolute;
   top: max(10px, env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: min(calc(100vw - 16px), 520px);
+}
+
+.hud-top {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -345,6 +353,28 @@ html, body, #root {
   color: #e6ebff;
   font-size: 13px;
   white-space: nowrap;
+}
+
+.hud-navigation {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid #426378;
+  border-radius: 50%;
+  background: rgba(10, 17, 30, 0.82);
+  box-shadow: 0 2px 8px #0c1529a3;
+}
+.hud-navigation[hidden] { display: none; }
+.hud-arrow {
+  width: 25px;
+  height: 25px;
+  background: linear-gradient(180deg, #d0fff5, #40ddc0);
+  clip-path: polygon(50% 5%, 89% 85%, 50% 66%, 11% 85%);
+  transition: transform 0.11s linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud-arrow { transition: none; }
 }
 
 .hud-timer { color: #22ffcc; font-weight: 700; }
@@ -428,10 +458,8 @@ html, body, #root {
 }
 
 .toast {
-  position: absolute;
-  top: 72px;
-  left: 50%;
-  transform: translateX(-50%);
+  box-sizing: border-box;
+  max-width: 100%;
   background: rgba(10, 14, 28, 0.85);
   border: 1px solid #22ffcc;
   color: #e6ebff;
@@ -440,7 +468,7 @@ html, body, #root {
   font-size: 13px;
   opacity: 0;
   transition: opacity 0.3s;
-  white-space: nowrap;
+  text-align: center;
 }
 
 .toast.bad { border-color: #ff5566; color: #ffb3bb; }
@@ -601,24 +629,6 @@ html, body, #root {
   background: linear-gradient(90deg, #22ffcc, #22ff88);
   transform-origin: left;
   transition: transform 0.2s;
-}
-
-.rotate-hint { display: none; }
-
-@media (orientation: portrait) and (pointer: coarse) {
-  .rotate-hint {
-    display: block;
-    position: absolute;
-    top: 40%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(10, 14, 28, 0.85);
-    border: 1px solid #ffd24a;
-    color: #ffd24a;
-    padding: 10px 18px;
-    border-radius: 12px;
-    font-size: 14px;
-  }
 }
 
 /* ============ touch controls ============ */
@@ -791,6 +801,8 @@ html, body, #root {
 
 /* ============ compact HUD on phones ============ */
 @media (max-width: 700px) {
+  .hud-navigation { width: 30px; height: 30px; }
+  .hud-arrow { width: 21px; height: 21px; }
   .hud-top {
     gap: 7px;
     padding: 4px 8px;
@@ -805,7 +817,15 @@ html, body, #root {
 
 @media (max-width: 420px) {
   .hud-cargo-text { display: none; }
-  .hud-top { font-size: 10px; gap: 6px; }
+  .hud-top {
+    box-sizing: border-box;
+    max-width: calc(100vw - 100px);
+    flex-wrap: wrap;
+    justify-content: center;
+    font-size: 10px;
+    gap: 3px 6px;
+  }
+  .hud-order { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 }
 
 .activity-picker {
@@ -859,6 +879,32 @@ html, body, #root {
   transform-origin: left center;
   background: linear-gradient(90deg, #00b7ff, #9df7ff);
   box-shadow: 0 0 8px #00d5ff;
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  .hud[data-mode="radio-silence"] .hud-right {
+    left: auto;
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+    transform: none;
+    gap: 1px 8px;
+    padding: 2px 8px;
+  }
+  .hud[data-mode="radio-silence"] .hud-speed { font-size: 20px; }
+  .hud[data-mode="radio-silence"] .hud-drift { margin-top: 0; }
+  .hud[data-mode="radio-silence"] .hud-nitro {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    margin-top: 0;
+  }
+  .hud[data-mode="radio-silence"] .nitro-track { flex: 1; margin-top: 0; }
+  .hud[data-mode="radio-silence"] #minimap {
+    width: clamp(88px, 31vw, 132px);
+    height: clamp(88px, 31vw, 132px);
+  }
+  #tc-brake { bottom: calc(max(68px, 12dvh) + env(safe-area-inset-bottom)); }
 }
 
 #tc-nitro {
@@ -997,7 +1043,7 @@ html, body, #root {
 .neva-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .neva-actions .btn { min-width: 0; margin: 0; }
 .neva-route { margin: 0; min-width: 0; }
-.neva-route canvas { width: 100%; height: auto; display: block; border: 1px solid #40485b; border-radius: 10px; }
+.neva-route canvas { width: 100%; height: auto; display: block; border-radius: 10px; }
 .neva-route figcaption { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px 14px; color: #ffca82; font-size: 11px; }
 .neva-score { font-size: 18px; color: #ffcc89; }
 .neva-share { margin: 10px 0; text-align: left; }
@@ -1049,7 +1095,6 @@ html, body, #root {
   box-sizing: border-box;
   min-width: 0;
   min-height: 0;
-  border: 1px solid #43536f;
   isolation: isolate;
 }
 .home-showroom { height: min(78dvh, 690px); }
@@ -1115,18 +1160,6 @@ html, body, #root {
 .garage-stage:focus-visible,
 .garage-tab:focus-visible,
 .garage-arrow:focus-visible { outline: 2px solid #7ce9ff; outline-offset: 2px; }
-.garage-orbit-hint {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  padding: 5px 8px;
-  border-radius: 5px;
-  background: #0c1321dc;
-  color: #d3e2fb;
-  font-size: 12px;
-  pointer-events: none;
-}
-.garage-stage:not([data-model="ready"]) .garage-orbit-hint { visibility: hidden; }
 .garage-detail {
   display: flex;
   flex-direction: column;
@@ -1137,6 +1170,7 @@ html, body, #root {
   padding: clamp(14px, 2.4vw, 32px);
   overflow-y: auto;
   border: 1px solid #384761;
+  border-radius: 14px;
   background: linear-gradient(142deg, #1b263a, #121a29 75%);
 }
 .garage-status {
@@ -1230,5 +1264,4 @@ html, body, #root {
 
 @media (pointer: coarse) {
   .home-links .btn, .garage-header .btn { min-height: 40px; }
-  .garage-orbit-hint span { display: none; }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { deliveryDistance, sampleDeliveryDestination } from "./delivery-routing";
-import { cityLayoutFor, isOnLayoutRoad } from "./map-layouts";
+import { deliveryDistance, guideAlongRoads, sampleDeliveryDestination } from "./delivery-routing";
+import { cityLayoutFor, isOnLayoutRoad, type CityLayout } from "./map-layouts";
 import { MAP_IDS } from "./types";
 
 describe("delivery route distance", () => {
@@ -25,5 +25,27 @@ describe("delivery route distance", () => {
       }
       expect(used.size).toBe(3);
     }
+  });
+});
+
+describe("road guidance", () => {
+  const corner: CityLayout = {
+    ...cityLayoutFor("tokyo"),
+    roads: [{ id: "bend", width: 8, points: [{ x: 0, z: 0 }, { x: 0, z: 55 }, { x: 35, z: 55 }] }],
+  };
+
+  it("points along the approach instead of cutting across the block", () => {
+    const guide = guideAlongRoads(corner, { x: 34, z: 55 });
+    expect(guide({ x: 0, z: 4 })).toEqual({ x: 0, z: 18 });
+    const turn = guide({ x: 0, z: 44 });
+    expect(turn.x).toBeCloseTo(3);
+    expect(turn.z).toBeCloseTo(55);
+    expect(guide({ x: 30, z: 55 })).toEqual({ x: 34, z: 55 });
+  });
+
+  it("guides an off-road driver to a connected street", () => {
+    const guide = guideAlongRoads(corner, { x: 34, z: 55 });
+    expect(guide({ x: 12, z: 11 }).x).toBe(0);
+    expect(guide({ x: 12, z: 11 }).z).toBeCloseTo(11);
   });
 });

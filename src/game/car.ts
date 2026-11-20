@@ -3,6 +3,7 @@ import type { CarSpec } from "./types";
 import type { InputState } from "./input";
 import type { World } from "./world";
 import type { LoadedModel } from "./assets";
+import { prepareCarLivery, prepareHeroLivery, setCarLiveryVisible, type PaintSurface } from "./car-livery";
 
 export interface CarStepResult {
   speed: number;
@@ -46,7 +47,7 @@ export class Car {
   onWheelLost: ((x: number, z: number) => void) | null = null;
   onPartLost: ((x: number, z: number, kind: "spoiler" | "bumper") => void) | null =
     null;
-  private airTime = 0;
+  private inFlight = false;
   private parts: CarParts | null = null;
   private flipT = -1; // >=0 while rolling over
   private flipDir = 1;
@@ -124,6 +125,7 @@ export class Car {
     this.heading = heading;
     this.airY = 0;
     this.airV = 0;
+    this.inFlight = false;
     this.flipT = -1;
     this.curbBump = 0;
     this.body.position.y = 0;
@@ -290,42 +292,11 @@ export class Car {
       this.vel.multiplyScalar(Math.max(0, 1 - 1.3 * dt));
     }
 
-    // --- ramps: launch only when driving UP the slope ---
-    let rampImpact = 0;
-    if (this.airY === 0 && this.airV === 0) {
-      const ramp = world.rampAt(this.pos.x, this.pos.z);
-      if (ramp) {
-        const along = this.vel.x * ramp.dx + this.vel.z * ramp.dz;
-        if (along > 1) {
-          // any up-slope speed launches — otherwise the car just sinks
-          // into the wedge while "climbing" it
-          this.airV = along * 0.42 + 4;
-        } else if (along < -8) {
-          // slamming into the tall back wall of the wedge — that hurts
-          rampImpact = -along;
-          this.vel.multiplyScalar(0.1);
-        }
-      }
-    }
-
-    // --- airborne integration ---
-    if (this.airY > 0 || this.airV !== 0) {
-      res.airborne = true;
-      this.airV -= 30 * dt;
-      this.airY += this.airV * dt;
-      if (this.airY <= 0 && this.airV < 0) {
-        res.landing = -this.airV;
-        this.airY = 0;
-        this.airV = 0;
-        this.vel.multiplyScalar(0.94);
-      }
-    }
-
     // --- surface (ignored while airborne) ---
     const onRoad = world.isOnRoad(this.pos.x, this.pos.z);
-    res.offRoad = !onRoad && !res.airborne;
-    res.onCobble = !res.airborne && world.isCobble(this.pos.x, this.pos.z);
-    const puddle = res.airborne ? null : world.puddleAt(this.pos.x, this.pos.z);
+    res.offRoad = !onRoad && !this.inFlight;
+    res.onCobble = !this.inFlight && world.isCobble(this.pos.x, this.pos.z);
+    const puddle = this.inFlight ? null : world.puddleAt(this.pos.x, this.pos.z);
     res.inPuddle = puddle !== null;
     let surfaceGrip = 1;
     if (res.inPuddle) surfaceGrip = 0.55;
@@ -352,10 +323,45 @@ export class Car {
     res.latG = latAccel;
 
     // --- collisions ---
-    res.impact = Math.max(rampImpact, world.collideBuildings(this.pos, 1.5, this.vel));
+    res.impact = world.collideBuildings(this.pos, 1.5, this.vel);
 
-    // --- integrate ---
+    // Cross the crest at the actual point of takeoff, then integrate the remaining step in the air.
+    const fromX = this.pos.x;
+    const fromZ = this.pos.z;
     this.pos.addScaledVector(this.vel, dt);
+    const ground = world.rampHeightAt(this.pos.x, this.pos.z);
+    let airStep = dt;
+    let pitch = 0;
+    if (!this.inFlight) {
+      const jump = world.rampLaunchAt(fromX, fromZ, this.pos.x, this.pos.z, dt);
+      if (jump) {
+        this.inFlight = true;
+        this.airY = jump.height;
+        this.airV = jump.alongSpeed * 0.42 + 4;
+        airStep *= 1 - jump.fraction;
+      } else {
+        this.airY = ground;
+        if (ground > 0) {
+          const front = world.rampHeightAt(this.pos.x + 1.15 * fwd2.x, this.pos.z + 1.15 * fwd2.z);
+          const rear = world.rampHeightAt(this.pos.x - 1.15 * fwd2.x, this.pos.z - 1.15 * fwd2.z);
+          pitch = Math.atan2(front - rear, 2.3);
+        }
+      }
+    }
+    if (this.inFlight) {
+      res.airborne = true;
+      res.offRoad = res.onCobble = res.inPuddle = false;
+      this.airY += (this.airV - 15 * airStep) * airStep;
+      this.airV -= 30 * airStep;
+      pitch = Math.atan2(this.airV, Math.max(7, Math.abs(speed))) * 0.42;
+      if (this.airY <= ground && this.airV < 0) {
+        res.landing = -this.airV;
+        this.airY = ground;
+        this.airV = 0;
+        this.inFlight = false;
+        this.vel.multiplyScalar(0.94);
+      }
+    }
 
     // --- smoke when drifting ---
     this.smokeTimer -= dt;
@@ -369,7 +375,7 @@ export class Car {
       );
     }
 
-    this.syncMesh(dt, latMag, steerInput, onRoad);
+    this.syncMesh(dt, latMag, steerInput, onRoad || res.airborne, pitch);
     return res;
   }
 
@@ -383,7 +389,8 @@ export class Car {
     dt: number,
     latMag = 0,
     steerInput = 0,
-    onRoad = true
+    onRoad = true,
+    pitch = 0,
   ): void {
     this.animT += dt;
     this.group.position.copy(this.pos);
@@ -394,7 +401,7 @@ export class Car {
     // body roll visual
     const targetRoll = THREE.MathUtils.clamp(-latMag * 0.02 * Math.sign(steerInput || 1), -0.3, 0.3);
     this.body.rotation.z += (targetRoll - this.body.rotation.z) * Math.min(1, dt * 8);
-    this.body.rotation.x += ((-latMag * 0.012) - this.body.rotation.x) * Math.min(1, dt * 6);
+    this.body.rotation.x += (pitch - latMag * 0.012 - this.body.rotation.x) * Math.min(1, dt * 6);
 
     // curb bump
     const targetY = onRoad ? 0 : 0.14;
@@ -550,13 +557,22 @@ export function buildCarMesh(
     low: [0.66, 1.6, 0.28],
     sedan: [0.8, 1.75, 0.2],
   };
-  const cab = CABIN[body] ?? CABIN.hatch;
+  const [cabinY, cabinLength, cabinZ] = CABIN[body] ?? CABIN.hatch;
   const cabin = new THREE.Mesh(
-    new THREE.BoxGeometry(W - 0.45, 0.42, cab[1]),
+    new THREE.BoxGeometry(W - 0.45, 0.42, cabinLength),
     glassMat
-    );
-  cabin.position.set(0, cab[0], cab[2]);
+  );
+  cabin.position.set(0, cabinY, cabinZ);
   root.add(cabin);
+
+  const bodyBounds = new THREE.Box3().setFromObject(bodyMesh);
+  const bodyLength = bodyBounds.max.z - bodyBounds.min.z;
+  const cabinFront = (cabinZ - cabinLength / 2 - bodyBounds.min.z) / bodyLength;
+  const cabinRear = (cabinZ + cabinLength / 2 - bodyBounds.min.z) / bodyLength;
+  prepareCarLivery(root, [{ mesh: bodyMesh, material: bodyMat }], bodyBounds, [
+    [0.08, cabinFront - 0.01],
+    [cabinRear + 0.01, 0.92],
+  ]);
 
   // bumpers / skirt
   const skirt = new THREE.Mesh(
@@ -679,9 +695,6 @@ export function buildCarMesh(
   glow.name = "hero-underglow";
   root.add(glow);
 
-  // racing livery over the cabin (revealed by engine upgrades)
-  root.add(makeLivery(W, cab[0] + 0.235, 3.2));
-
   // wheels: pivots for steering (front), spin meshes inside
   const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 14);
   wheelGeo.rotateZ(Math.PI / 2);
@@ -746,6 +759,7 @@ export function buildHeroMesh(
 
   // per-instance materials + body recolor
   const glassMats: THREE.MeshStandardMaterial[] = [];
+  const paintSurfaces: PaintSurface[] = [];
   let bodyMesh: THREE.Mesh | null = null;
   inner.traverse((o) => {
     const mesh = o as THREE.Mesh;
@@ -759,6 +773,9 @@ export function buildHeroMesh(
           if ("metalness" in sm) sm.metalness = 0.2;
           if ("roughness" in sm) sm.roughness = 0.42;
           if (!bodyMesh && /body/i.test(c.name)) bodyMesh = mesh;
+          if (sm.isMeshStandardMaterial && !/glass|window/i.test(c.name)) {
+            paintSurfaces.push({ mesh, material: sm });
+          }
         }
         if (/glass/i.test(c.name) && sm.color) glassMats.push(sm);
         return c;
@@ -841,7 +858,7 @@ export function buildHeroMesh(
   glow.userData.ownCarGeometry = true;
   root.add(glow);
 
-  heroLiveryBodies.set(root, bodyMesh as THREE.Mesh);
+  prepareHeroLivery(root, inner, spec.glb, bodyMesh, paintSurfaces);
   onParts?.({
     bodyMesh: bodyMesh as THREE.Mesh,
     glassMats,
@@ -852,7 +869,6 @@ export function buildHeroMesh(
   return root;
 }
 
-const heroLiveryBodies = new WeakMap<THREE.Object3D, THREE.Mesh>();
 let carGlowTexture: THREE.CanvasTexture | undefined;
 
 function getCarGlowTexture(): THREE.CanvasTexture {
@@ -879,69 +895,6 @@ function isDescendant(node: THREE.Object3D, ancestor: THREE.Object3D): boolean {
   return false;
 }
 
-/** Build racing stripes by sampling the actual body surface, so they follow hood and roof contours. */
-function makeBodyLivery(body: THREE.Mesh, root: THREE.Object3D): THREE.Group {
-  const livery = new THREE.Group();
-  livery.name = "hero-livery";
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xeef2f8,
-    roughness: 0.45,
-    metalness: 0.25,
-    emissive: 0xbfc8dd,
-    emissiveIntensity: 0.12,
-    side: THREE.DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-  });
-  body.updateWorldMatrix(true, false);
-  const shell = new THREE.Mesh(body.geometry, body.material);
-  shell.matrixWorld.copy(root.matrixWorld).invert().multiply(body.matrixWorld);
-  body.geometry.computeBoundingBox();
-  const bounds = body.geometry.boundingBox!.clone().applyMatrix4(shell.matrixWorld);
-  const size = bounds.getSize(new THREE.Vector3());
-  const raycaster = new THREE.Raycaster();
-  const vertices: number[] = [];
-  const indices: number[] = [];
-  const segments = 40;
-  for (const x of [-size.x * 0.16, size.x * 0.16]) {
-    const base = vertices.length / 3;
-    for (let i = 0; i <= segments; i++) {
-      const z = bounds.max.z - (size.z * 0.08) - (size.z * 0.84 * i / segments);
-      raycaster.set(new THREE.Vector3(x, bounds.max.y + size.y + 0.5, z), new THREE.Vector3(0, -1, 0));
-      raycaster.far = size.y * 2 + 1;
-      const hit = raycaster.intersectObject(shell, false)[0];
-      const y = hit ? hit.point.y + 0.012 : bounds.max.y + 0.012;
-      vertices.push(x - 0.1, y, z, x + 0.1, y, z);
-      if (i < segments) {
-        const a = base + i * 2;
-        indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-      }
-    }
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.userData.ownCarGeometry = true;
-  livery.add(mesh);
-  return livery;
-}
-
-function makeLivery(w: number, h: number, l: number): THREE.Group {
-  const group = new THREE.Group();
-  group.name = "hero-livery";
-  const material = new THREE.MeshStandardMaterial({ color: 0xeef2f8, roughness: 0.45, metalness: 0.25 });
-  for (const x of [-0.26, 0.26]) {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.022, Math.max(1.5, l * 0.86)), material);
-    stripe.position.set(x, h, -l * 0.04);
-    group.add(stripe);
-  }
-  void w;
-  return group;
-}
-
 export interface UpgradeLevels {
   engine: number;
   tires: number;
@@ -949,23 +902,14 @@ export interface UpgradeLevels {
   turbo: number;
 }
 
-/** Reveal/visualize upgrade levels on a car body built by either builder.
- *  Nodes: "hero-spoiler" (procedural wings only), "hero-livery" stripes,
- *  "hero-underglow" (color tier by turbo), wheel tint by tires. */
+/** Reveal visual upgrades for paint, procedural wings, underglow, and wheel tint. */
 export function applyUpgradeLooks(root: THREE.Object3D, up: UpgradeLevels): void {
   const total = up.engine + up.tires + up.suspension + up.turbo;
   const spoiler = root.getObjectByName("hero-spoiler");
   if (spoiler?.userData.procedural) {
     spoiler.visible = up.suspension + up.turbo >= 2;
   }
-  const hasLivery = up.engine >= 2 || total >= 7;
-  let livery = root.getObjectByName("hero-livery");
-  const heroBody = heroLiveryBodies.get(root);
-  if (!livery && hasLivery && heroBody) {
-    livery = makeBodyLivery(heroBody, root);
-    root.add(livery);
-  }
-  if (livery) livery.visible = hasLivery;
+  setCarLiveryVisible(root, up.engine >= 2 || total >= 7);
   const glow = root.getObjectByName("hero-underglow") as THREE.Mesh | undefined;
   if (glow) {
     const mat = glow.material as THREE.MeshBasicMaterial;

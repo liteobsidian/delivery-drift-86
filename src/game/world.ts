@@ -13,9 +13,13 @@ import { createBuildingGeometry, createCityFacade, TOKYO_TOWER_WIDTH } from "./c
 import { buildCityLandmarks, palmOffsets, PALM_BASE_RADIUS } from "./city-landmarks";
 import { circleOrientedRectContact, cityBuildingMeshYaw, generateCityBuildingSites, type CityBuildingSite } from "./city-building-layout";
 import { BuildingSpatialIndex } from "./building-spatial-index";
-import { cityLayoutFor, distanceToRoad, distanceToRoadPath, gantrySupports, worldLengthToTexturePixels, worldToTextureCoordinate, type CityParcel } from "./map-layouts";
+import { cityLayoutFor, distanceToRoad, distanceToRoadPath, gantrySupports, worldLengthToTexturePixels, worldToTextureCoordinate, type CityParcel, type CityPoint } from "./map-layouts";
 import { RoadSpatialIndex } from "./road-spatial-index";
+import { StreetLights } from "./street-lights";
 import { paintRoadSurface, transverseMarking } from "./road-surface";
+import { buildRampArrows, buildRampSurface, rampProfileHeight, RAMP_ARROW_LEAD, RAMP_HEIGHT, type Ramp } from "./ramps";
+
+export type { Ramp } from "./ramps";
 
 /** Central drift ring (radius) at map center. */
 export const RING_R = 44;
@@ -68,14 +72,10 @@ export interface Cobble {
   h: number;
 }
 
-export interface Ramp {
-  x: number;
-  z: number;
-  width: number;
-  length: number;
-  /** world-space direction of travel that goes UP the slope (launch direction) */
-  dx: number;
-  dz: number;
+export interface RampLaunch {
+  fraction: number;
+  height: number;
+  alongSpeed: number;
 }
 
 export interface LightVisual {
@@ -96,6 +96,9 @@ const GS = WORLD_HALF * 2 + ROAD_W * 2 + 60; // ground plane size
 const ROAD_DECK_Y = 0.09;
 const RAMP_LENGTH = 7;
 const RAMP_MODEL_WIDTH = 6.4;
+const RAMP_MIN_LAUNCH_SPEED = 4;
+const RAMP_ARROW_CYCLES_PER_SECOND = 1.65;
+
 export class World {
   readonly mapId: MapId;
   readonly layout;
@@ -109,6 +112,7 @@ export class World {
   readonly lightGrid = new Map<string, LightVisual>(); // "i,j" -> light (enforced only)
 
   private puddleMeshes: THREE.Mesh[] = [];
+  private rampArrowTexture!: THREE.Texture;
   private heroSpots: { x: number; z: number; w: number; h: number; d: number }[] =
     [];
   /** AABBs reserved for real mid-rise models — no neon/signs placed there */
@@ -122,6 +126,7 @@ export class World {
   private flickerMats: THREE.MeshBasicMaterial[] = [];
   private chevronMats: THREE.Matrix4[] = [];
   private buildingIndex!: BuildingSpatialIndex;
+  private streetLights!: StreetLights;
   private readonly roadIndex: RoadSpatialIndex;
   private readonly groundMaterial: THREE.MeshStandardMaterial;
   private readonly deckSites: readonly Pick<CityParcel, "x" | "z" | "width" | "depth" | "rotation">[];
@@ -240,6 +245,34 @@ export class World {
     return null;
   }
 
+  rampHeightAt(x: number, z: number): number {
+    const ramp = this.rampAt(x, z);
+    if (!ramp) return 0;
+    const along = (x - ramp.x) * ramp.dx + (z - ramp.z) * ramp.dz;
+    return rampProfileHeight(along, ramp.length);
+  }
+
+  rampLaunchAt(fromX: number, fromZ: number, toX: number, toZ: number, dt: number): RampLaunch | null {
+    if (dt <= 0) return null;
+    const dx = toX - fromX;
+    const dz = toZ - fromZ;
+    let launch: RampLaunch | null = null;
+    for (const ramp of this.ramps) {
+      const travelAlong = dx * ramp.dx + dz * ramp.dz;
+      const alongSpeed = Math.abs(travelAlong) / dt;
+      if (alongSpeed < RAMP_MIN_LAUNCH_SPEED) continue;
+      const startX = fromX - ramp.x;
+      const startZ = fromZ - ramp.z;
+      const fraction = -(startX * ramp.dx + startZ * ramp.dz) / travelAlong;
+      if (fraction <= 0 || fraction > 1 || (launch && fraction >= launch.fraction)) continue;
+      const crestX = startX + dx * fraction;
+      const crestZ = startZ + dz * fraction;
+      if (Math.abs(crestX * ramp.dz - crestZ * ramp.dx) > ramp.width / 2) continue;
+      launch = { fraction, height: RAMP_HEIGHT, alongSpeed };
+    }
+    return launch;
+  }
+
   isCobble(x: number, z: number): boolean {
     for (const c of this.cobbles) {
       if (
@@ -251,6 +284,10 @@ export class World {
         return true;
     }
     return false;
+  }
+
+  knockStreetLamp(fromX: number, fromZ: number, x: number, z: number, elevation: number, dt: number) {
+    return this.streetLights.knock(fromX, fromZ, x, z, elevation, dt);
   }
 
   puddleAt(x: number, z: number): Puddle | null {
@@ -304,6 +341,7 @@ export class World {
 
   update(dt: number): void {
     this.time += dt;
+    this.streetLights.update(dt);
     // traffic lights cycle
     for (const l of this.lights) {
       l.timer += dt;
@@ -370,6 +408,7 @@ export class World {
     for (const t of this.billboardTex) {
       t.offset.x = (t.offset.x + dt * 0.018) % 1;
     }
+    this.rampArrowTexture.offset.y = -(this.time * RAMP_ARROW_CYCLES_PER_SECOND % 1);
     // neon signs buzz and occasionally drop out
     this.flickerT += dt;
     for (let i = 0; i < this.flickerMats.length; i++) {
@@ -1209,7 +1248,7 @@ export class World {
       emissive: 0xffc070,
       emissiveIntensity: 2.4,
     });
-    const positions: THREE.Vector3[] = [];
+    const positions: CityPoint[] = [];
     for (const road of this.layout.roads) for (let i = 0; i < road.points.length - 1; i++) {
       const a = road.points[i];
       const b = road.points[i + 1];
@@ -1225,18 +1264,12 @@ export class World {
         const x = a.x + dx * t - dz / length * offset * side;
         const z = a.z + dz * t + dx / length * offset * side;
         if (this.roadIndex.covers(x, z, 0.28)) continue;
-        positions.push(new THREE.Vector3(x, height, z));
+        positions.push({ x, z });
       }
     }
     const poles = new THREE.InstancedMesh(poleGeo, poleMat, positions.length);
     const tips = new THREE.InstancedMesh(tipGeo, tipMat, positions.length);
-    const m = new THREE.Matrix4();
-    positions.forEach((p, i) => {
-      m.makeTranslation(p.x, height / 2, p.z);
-      poles.setMatrixAt(i, m);
-      m.makeTranslation(p.x, p.y, p.z);
-      tips.setMatrixAt(i, m);
-    });
+    this.streetLights = new StreetLights(poles, tips, positions, height);
     g.add(poles, tips);
 
     if (this.mapId === "tokyo") {
@@ -1875,47 +1908,7 @@ export class World {
   private buildRamps(): THREE.Group {
     const g = new THREE.Group();
     const rng = mulberry32(9090);
-    // wedge profile: low edge -> high edge, extruded across the width
-    const shape = new THREE.Shape();
-    shape.moveTo(-RAMP_LENGTH / 2, 0);
-    shape.lineTo(RAMP_LENGTH / 2, 1.5);
-    shape.lineTo(RAMP_LENGTH / 2, 0);
-    shape.closePath();
-    const geo = new THREE.ExtrudeGeometry(shape, {
-      depth: RAMP_MODEL_WIDTH,
-      bevelEnabled: false,
-    });
-    geo.rotateY(Math.PI / 2); // slope rises toward local -z (car enters from +z going -z)
-    geo.computeBoundingBox();
-    if (geo.boundingBox) {
-      const cx = (geo.boundingBox.min.x + geo.boundingBox.max.x) / 2;
-      const cz = (geo.boundingBox.min.z + geo.boundingBox.max.z) / 2;
-      geo.translate(-cx, 0, -cz);
-    }
-    // hazard stripes
-    const cv = document.createElement("canvas");
-    cv.width = cv.height = 64;
-    const cg = cv.getContext("2d")!;
-    cg.fillStyle = "#c86018";
-    cg.fillRect(0, 0, 64, 64);
-    cg.strokeStyle = "#ffd24a";
-    cg.lineWidth = 8;
-    for (let i = -64; i < 128; i += 22) {
-      cg.beginPath();
-      cg.moveTo(i, 64);
-      cg.lineTo(i + 64, 0);
-      cg.stroke();
-    }
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(2, 2);
-    const mat = new THREE.MeshStandardMaterial({
-      map: tex,
-      roughness: 0.7,
-      emissive: 0x552200,
-      emissiveIntensity: 0.25,
-    });
+    const footprintLength = RAMP_LENGTH / 2 + RAMP_ARROW_LEAD;
     let guard = 0;
     while (this.ramps.length < 6 && guard++ < 180) {
       const road = this.layout.roads[Math.floor(rng() * this.layout.roads.length)];
@@ -1927,13 +1920,12 @@ export class World {
       const segLength = Math.hypot(segX, segZ);
       const along = 0.2 + rng() * 0.6;
       const side = rng() < 0.5 ? -1 : 1;
-      const footprintLength = RAMP_LENGTH / 2 + 0.6;
       if (Math.min(along, 1 - along) * segLength < footprintLength) continue;
       const lane = road.width / 4;
       const width = Math.min(RAMP_MODEL_WIDTH, road.width / 2 - 0.9);
       const x = a.x + segX * along - segZ / segLength * side * lane;
       const z = a.z + segZ * along + segX / segLength * side * lane;
-      if (this.ramps.some((ramp) => Math.hypot(ramp.x - x, ramp.z - z) < RAMP_LENGTH + 2)) continue;
+      if (this.ramps.some((ramp) => Math.hypot(ramp.x - x, ramp.z - z) < footprintLength * 2 + 0.8)) continue;
       if (this.deckSites.some((site) => circleOrientedRectContact(x, z, footprintLength + 0.8, site))) continue;
       const dx = -side * segX / segLength;
       const dz = -side * segZ / segLength;
@@ -1946,14 +1938,11 @@ export class World {
           return px < minX || px > maxX || pz < minZ || pz > maxZ || this.roadIndex.covers(px, pz, 0.8, road);
         }));
       if (obstructsRoad) continue;
-      const rotY = Math.atan2(-dx, -dz);
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(x, 0.02, z);
-      mesh.rotation.y = rotY;
-      mesh.scale.x = width / RAMP_MODEL_WIDTH;
-      g.add(mesh);
       this.ramps.push({ x, z, width, length: RAMP_LENGTH, dx, dz });
     }
+    const arrows = buildRampArrows(this.ramps);
+    this.rampArrowTexture = arrows.texture;
+    g.add(buildRampSurface(this.ramps, this.groundMaterial, GS), arrows.mesh);
     return g;
   }
 
