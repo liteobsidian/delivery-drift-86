@@ -23,7 +23,7 @@ export type GameScreen =
 
 export const MAP_IDS = ["tokyo", "yokohama", "spb", "kazan", "sochi"] as const;
 export type MapId = (typeof MAP_IDS)[number];
-export const ACTIVITY_MODES = ["delivery", "drift-trial", "time-attack"] as const;
+export const ACTIVITY_MODES = ["delivery", "drift-trial", "time-attack", "radio-silence"] as const;
 export type ActivityMode = (typeof ACTIVITY_MODES)[number];
 
 export interface UpgradeLevels {

@@ -19,7 +19,7 @@ import {
   WORLD_MAPS,
   speedKmh,
 } from "./config";
-import type { ActivityMode, GameScreen, MapId, Order, UpgradeLevels } from "./types";
+import { ACTIVITY_MODES, type ActivityMode, type GameScreen, type MapId, type Order, type UpgradeLevels } from "./types";
 import { PROFILE_KEY, ProfileStore, type SaveStatus } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
@@ -35,7 +35,8 @@ import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { NEVA_CONTRACT, NEVA_SECTORS, NevaRun, nevaChallengeLink, nevaChallengeTarget, nevaResult } from "./neva-contract";
 import { buildNevaMarkings, drawNevaPreview, drawNevaRoute } from "./neva-visuals";
 import { sampleDeliveryDestination } from "./delivery-routing";
-import { canUnlockCar, driftMedal, driftMultiplierForSeconds, finalDriftScore, medalRank, modeReward, timeAttackCourse, timeAttackMedal, type TimeAttackCourse } from "./modes";
+import { canUnlockCar, driftMedal, driftMultiplierForSeconds, finalDriftScore, medalRank, modeReward, timeAttackCourse, timeAttackMedal, type GameMode, type MedalTier, type TimeAttackCourse } from "./modes";
+import { RADIO_CACHE_RADIUS, RADIO_GATE_RADIUS, RADIO_TIME, RADIO_TITLE, RADIO_TRAFFIC_SEED, RADIO_WAVES, RadioRun, radioCourse, radioMedal, radioScore } from "./radio-silence";
 import { carThumb, createShowroom } from "./showroom";
 import {
   careerMedalPoints, completeWeeklyRoute, mapAccessFor, recordDetails, saveRecord,
@@ -51,12 +52,21 @@ const SD = ROAD_W / 2 + 1.6; // stop-line distance from intersection center
 const MAP_PREVIEWS: Record<MapId, string> = {
   tokyo: tokyoPreview, yokohama: yokohamaPreview, spb: spbPreview, kazan: kazanPreview, sochi: sochiPreview,
 };
+const MODE_NAMES: Record<ActivityMode, string> = {
+  delivery: "Доставка", "drift-trial": "Drift Trial", "time-attack": "Time Attack", "radio-silence": RADIO_TITLE,
+};
+const RADIO_SIGNAL_COLOR = 0xb899ff;
+const RADIO_CACHE_COLOR = 0xffbb62;
 
 function el(tag: string, cls: string, html = ""): HTMLElement {
   const e = document.createElement(tag);
   e.className = cls;
   e.innerHTML = html;
   return e;
+}
+
+function medalLabel(medal: MedalTier | null): string {
+  return medal === "gold" ? "🥇 золото" : medal === "silver" ? "🥈 серебро" : medal === "bronze" ? "🥉 бронза" : "без медали";
 }
 
 export class Game {
@@ -96,6 +106,9 @@ export class Game {
   car: Car;
   private readonly careerCar: Car;
   private nevaCar: Car | null = null;
+  private radioCar: Car | null = null;
+  private radioRun: RadioRun | null = null;
+  private radioCache: THREE.Group | null = null;
   private nevaMarkings: ReturnType<typeof buildNevaMarkings> | null = null;
   private nevaRun: NevaRun | null = null;
   private nevaTarget = nevaChallengeTarget(window.location.search);
@@ -286,6 +299,11 @@ export class Game {
           course: this.timeAttackCourse,
           elapsed: this.order ? this.order.timeLimit - this.timeLeft : 0,
         }),
+        radio: () => this.radioRun && ({
+          phase: this.radioRun.phase, escapes: this.radioRun.escapes, packets: this.radioRun.packets,
+          carryingPacket: this.radioRun.carryingPacket, target: this.radioRun.target, cache: this.radioRun.leg.cache,
+          timeLeft: this.timeLeft, lead: this.police.dist,
+        }),
         profile: () => ({
           money: this.profile.money,
           deliveries: this.profile.deliveries,
@@ -470,6 +488,7 @@ export class Game {
     if (s !== "playing" && s !== "paused" && s !== "settings" && s !== "result") {
       if (this.nevaRun) this.exitNevaContract();
       else if (this.screen === "neva-contract" && s !== "neva-contract") this.clearNevaTarget();
+      if (this.radioRun) this.exitRadioRun();
     }
     if (this.screen === "neva-contract" && s === "play") {
       this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades(), this.heroFor(this.currentCarSpec()));
@@ -605,6 +624,7 @@ export class Game {
         <button class="activity-card" data-a="activity:delivery"><b>ДОСТАВКА</b><span>Бесконечные заказы, деньги и развитие гаража</span><i>Выбрать →</i></button>
         <button class="activity-card" data-a="activity:drift-trial"><b>DRIFT TRIAL</b><span>60 секунд · комбо до ×5 · ₽ за очки · Silvia за серебро</span><i>Выбрать →</i></button>
         <button class="activity-card" data-a="activity:time-attack"><b>TIME ATTACK</b><span>Фиксированный круг с контрольными точками · медали и Evo за золото</span><i>Выбрать →</i></button>
+        <button class="activity-card" data-a="activity:radio-silence"><b>${RADIO_TITLE.toUpperCase()}</b><span>2 минуты · три погони · пакеты данных и премия за отрыв</span><i>Выбрать →</i></button>
       </div>
       <button class="btn" data-a="back">← НАЗАД</button>
     </div>`;
@@ -651,7 +671,7 @@ export class Game {
         ${locked ? `<span class="track-progress">${progress} / ${map.unlockDeliveries} доставок · ${medalPoints} / ${map.unlockMedalPoints} очков медалей</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
       </button>`;
     }).join("");
-    const modeName = this.pendingMode === "delivery" ? "Доставка" : this.pendingMode === "drift-trial" ? "Drift Trial" : "Time Attack";
+    const modeName = MODE_NAMES[this.pendingMode];
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `<div class="panel journey-panel tracks-panel">
       <div class="journey-eyebrow">${modeName.toUpperCase()}</div>
@@ -891,7 +911,7 @@ export class Game {
       if (!entry) return [];
       const { mapId, mode, car } = entry;
       const mapName = WORLD_MAPS.find((item) => item.id === mapId)!.name;
-      const modeName = mode === "drift-trial" ? "Drift Trial" : mode === "time-attack" ? "Time Attack" : "Доставка";
+      const modeName = MODE_NAMES[mode];
       const value = records[key];
       const rounded = Math.round(value).toLocaleString("ru-RU");
       const metric = mode === "time-attack" ? `${value.toFixed(1)} с` : mode === "delivery" ? `₽${rounded}` : `${rounded} очк.`;
@@ -946,7 +966,7 @@ export class Game {
   }
 
   private lastResult: {
-    ok: boolean; lines: string[]; mode?: "drift-trial" | "time-attack"; title?: string; nevaScore?: number;
+    ok: boolean; lines: string[]; mode?: GameMode; title?: string; nevaScore?: number;
   } = { ok: false, lines: [] };
 
   private renderResult(): void {
@@ -1023,10 +1043,13 @@ export class Game {
           }
           return;
         }
-        if (act === "activity" && arg && (arg === "delivery" || arg === "drift-trial" || arg === "time-attack")) {
-          this.pendingMode = arg;
-          this.showScreen("tracks");
-          return;
+        if (act === "activity") {
+          const mode = ACTIVITY_MODES.find((item) => item === arg);
+          if (mode) {
+            this.pendingMode = mode;
+            this.showScreen("tracks");
+            return;
+          }
         }
         if (act === "take" && arg !== undefined) {
           this.startOrder(this.orders[Number(arg)]);
@@ -1154,6 +1177,7 @@ export class Game {
     this.careerCar.setSpec(tunedSpec(this.currentCarSpec(), up));
     this.careerCar.setHeroModel(hero ?? null);
     this.careerCar.setUpgrades(up);
+    if (hero) this.radioCar?.setHeroModel(hero);
     // The contract briefing displays the same car that the player will borrow.
     if (this.screen !== "neva-contract") this.showroom.setCar(this.currentCarSpec(), up, hero);
   }
@@ -1189,7 +1213,11 @@ export class Game {
     if (this.orders[0]) this.startOrder(this.orders[0]);
   }
 
-  private startMode(mode: "drift-trial" | "time-attack"): void {
+  private startMode(mode: GameMode): void {
+    if (mode === "radio-silence") {
+      this.startRadioRun();
+      return;
+    }
     if (mode === "drift-trial") {
       this.timeAttackCourse = null;
       this.startOrder({
@@ -1204,6 +1232,72 @@ export class Game {
       id: this.orderId++, title: `Time Attack · ${course.name}`, dest: course.checkpoints[0],
       reward: 0, timeLimit: course.timeLimit, fragility: 0, distance: course.length,
     }, mode);
+  }
+
+  private startRadioRun(): void {
+    if (!this.radioCar) {
+      const spec = this.currentCarSpec();
+      const upgrades = this.currentUpgrades();
+      const car = new Car(tunedSpec(spec, upgrades));
+      this.configureCar(car);
+      car.setUpgrades(upgrades);
+      const hero = this.heroFor(spec);
+      if (hero) car.setHeroModel(hero);
+      this.radioCar = car;
+      this.careerCar.group.removeFromParent();
+      this.scene.add(car.group);
+      this.car = car;
+    } else if (this.radioCar.hp < 100 || this.radioCar.wrecked) {
+      this.radioCar.repair();
+    }
+    const run = new RadioRun(radioCourse(this.world.mapId));
+    this.radioRun = run;
+    this.buildMinimapBase();
+    this.nitroFuel = 100;
+    this.startOrder({ id: this.orderId++, title: RADIO_TITLE, dest: run.target,
+      timeLimit: RADIO_TIME, reward: 0, fragility: 0, distance: 0 }, "radio-silence");
+  }
+
+  private exitRadioRun(): void {
+    this.police.stop();
+    this.world.hideDestination();
+    if (this.radioCache) this.radioCache.visible = false;
+    this.radioRun = null;
+    this.order = null;
+    if (this.radioCar) {
+      this.radioCar.group.removeFromParent();
+      this.radioCar.dispose();
+      this.radioCar = null;
+    }
+    this.car = this.careerCar;
+    this.scene.add(this.careerCar.group);
+    this.buildMinimapBase();
+  }
+
+  private updateRadioMarkers(run: RadioRun): void {
+    if (!this.order) return;
+    this.order.dest = run.target;
+    const isTransmitter = run.phase === "transmitter";
+    this.world.setDestination(run.target.x, run.target.z, isTransmitter ? RADIO_SIGNAL_COLOR : 0x22ffcc, RADIO_GATE_RADIUS);
+    const showCache = run.phase === "pursuit" && !run.carryingPacket;
+    if (showCache && !this.radioCache) {
+      const group = new THREE.Group();
+      group.name = "radio-cache";
+      const halo = new THREE.Mesh(new THREE.RingGeometry(RADIO_CACHE_RADIUS - 0.55, RADIO_CACHE_RADIUS, 24),
+        new THREE.MeshBasicMaterial({ color: RADIO_CACHE_COLOR, transparent: true, opacity: 0.88 }));
+      halo.rotation.x = -Math.PI / 2;
+      halo.position.y = 0.13;
+      const icon = new THREE.Mesh(new THREE.OctahedronGeometry(1.05),
+        new THREE.MeshBasicMaterial({ color: RADIO_CACHE_COLOR }));
+      icon.position.y = 2.55;
+      group.add(halo, icon);
+      this.scene.add(group);
+      this.radioCache = group;
+    }
+    if (this.radioCache) {
+      this.radioCache.visible = showCache;
+      this.radioCache.position.set(run.leg.cache.x, 0, run.leg.cache.z);
+    }
   }
 
   private gotoOrders(): void {
@@ -1266,6 +1360,7 @@ export class Game {
 
   private startOrder(o: Order, mode: ActivityMode = "delivery"): void {
     this.mode = mode;
+    this.hudEl.dataset.mode = mode;
     this.order = o;
     if (mode !== "time-attack") this.timeAttackCourse = null;
     this.timeAttackCheckpointIndex = 0;
@@ -1273,6 +1368,10 @@ export class Game {
     if (this.nevaRun) {
       this.car.resetPose(NEVA_START.x, NEVA_START.z, NEVA_START.heading);
       this.camPos.set(NEVA_START.x + 9, 4.2, NEVA_START.z);
+    } else if (this.radioRun) {
+      const { x, z, dx, dz } = this.radioRun.course.start;
+      this.car.resetPose(x, z, Math.atan2(dx, dz));
+      this.camPos.set(x - dx * 10, 4.2, z - dz * 10);
     } else if (mode === "time-attack" && this.timeAttackCourse) {
       const tangent = { x: Math.sin(this.timeAttackCourse.heading), z: Math.cos(this.timeAttackCourse.heading) };
       const start = trafficLanePosition(this.timeAttackCourse.start, tangent, ROAD_W / 4);
@@ -1280,7 +1379,7 @@ export class Game {
     } else {
       this.car.resetPose(0, 0, Math.PI);
     }
-    this.traffic.resetForPlayer(this.car.pos, this.nevaRun ? NEVA_CONTRACT.trafficSeed : undefined);
+    this.traffic.resetForPlayer(this.car.pos, this.nevaRun ? NEVA_CONTRACT.trafficSeed : this.radioRun ? RADIO_TRAFFIC_SEED : undefined);
     this.car.cargo = 100;
     this.timeLeft = o.timeLimit;
     this.driftScore = 0;
@@ -1306,14 +1405,15 @@ export class Game {
     this.wasInPuddle = false;
     this.wreckTimer = -1;
     this.redFinedX.clear();
-    if (mode === "drift-trial") this.world.hideDestination();
+    if (this.radioRun) this.updateRadioMarkers(this.radioRun);
+    else if (mode === "drift-trial") this.world.hideDestination();
     else this.world.setDestination(o.dest.x, o.dest.z);
     this.setTutorialContent(mode);
     this.hCargo.style.display = mode === "delivery" ? "flex" : "none";
     this.audio.ensure();
     this.showScreen("playing");
     this.updateHud();
-    this.toast(this.nevaRun ? "Следуй к мосту по линии на миникарте" : mode === "drift-trial"
+    this.toast(this.nevaRun ? "Следуй к мосту по линии на миникарте" : this.radioRun ? "Перехвати сигнал на фиолетовой отметке" : mode === "drift-trial"
       ? "Drift Trial · удерживай занос, чтобы поднять множитель"
       : mode === "time-attack"
         ? `Time Attack · контрольная точка 1/${this.timeAttackCourse?.checkpoints.length ?? 5}`
@@ -1426,13 +1526,16 @@ export class Game {
       : mode === "delivery"
       ? `<div class="tut-row"><span class="tut-ico">⚠</span><span>Береги груз от ударов и луж; красный сигнал стоит ₽${RED_LIGHT_FINE}.</span></div>
          <div class="tut-row"><span class="tut-ico">₽</span><span>Заказы, трюки и безопасные проезды дают деньги.</span></div>`
-      : mode === "drift-trial"
+      : mode === "radio-silence"
+        ? `<div class="tut-row"><span class="tut-ico">◆</span><span>За ${RADIO_TIME} с пройди три передатчика. Каждый начинает погоню. Следуй по линии карты к бирюзовой зоне тишины и въезжай в неё с нужным отрывом.</span></div>
+           <div class="tut-row"><span class="tut-ico">✦</span><span>Золотой пакет пополняет нитро и даёт очки после побега. Пакеты, запас времени и состояние кузова определяют медаль и выплату.</span></div>`
+        : mode === "drift-trial"
         ? `<div class="tut-row"><span class="tut-ico">🔥</span><span>Держи занос: множитель растёт до ×5. Когда занос закончится, серия сохранится через 0,7 секунды.</span></div>
            <div class="tut-row"><span class="tut-ico">⚠</span><span>Сильный удар сбрасывает незабранные очки серии. За итоговый счёт выдаются медали и ₽.</span></div>`
         : `<div class="tut-row"><span class="tut-ico">🏁</span><span>Пройди контрольные точки строго по порядку и вернись на старт для финиша.</span></div>
            <div class="tut-row"><span class="tut-ico">🥇</span><span>Время круга определяет медаль, выплату и лучший результат трассы.</span></div>`;
     this.tutorialEl.innerHTML = `<div class="tutorial-box">
-      <h3 id="tutorial-title">КАК ИГРАТЬ · ${this.nevaRun ? NEVA_CONTRACT.title : mode === "delivery" ? "ДОСТАВКА" : mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK"}</h3>
+      <h3 id="tutorial-title">КАК ИГРАТЬ · ${this.nevaRun ? NEVA_CONTRACT.title : MODE_NAMES[mode].toUpperCase()}</h3>
       <div class="tut-row"><span class="tut-ico wheel">🕹</span><span>${controls}</span></div>
       <div class="tut-row"><span class="tut-ico hb">★</span><span><b>ДРИФТ</b> — ручник и газ помогают начать занос; нитро пополняется за дрифт.</span></div>
       ${activity}
@@ -1499,6 +1602,16 @@ export class Game {
       g.stroke();
     }
     if (this.nevaRun) drawNevaRoute(g, u, v);
+    if (this.radioRun) {
+      g.strokeStyle = "rgba(191,157,255,.82)";
+      g.lineWidth = 1.6;
+      g.beginPath();
+      for (const [i, point] of this.radioRun.course.guide.entries()) {
+        if (i === 0) g.moveTo(u(point.x), v(point.z));
+        else g.lineTo(u(point.x), v(point.z));
+      }
+      g.stroke();
+    }
   }
 
   private drawMinimap(): void {
@@ -1512,9 +1625,20 @@ export class Game {
     const v = (z: number) => S / 2 + (z - (bounds.minZ + bounds.maxZ) / 2) * scale;
     if (this.order && this.mode !== "drift-trial") {
       const pulse = 3 + Math.sin(performance.now() / 200) * 1;
-      g.fillStyle = "#22ffcc";
+      g.fillStyle = this.radioRun?.phase === "transmitter" ? "#b899ff" : "#22ffcc";
       g.beginPath();
       g.arc(u(this.order.dest.x), v(this.order.dest.z), pulse + 1.5, 0, Math.PI * 2);
+      g.fill();
+    }
+    if (this.radioRun?.phase === "pursuit") {
+      if (!this.radioRun.carryingPacket) {
+        const { x, z } = this.radioRun.leg.cache;
+        g.fillStyle = "#ffbb62";
+        g.fillRect(u(x) - 2, v(z) - 2, 4, 4);
+      }
+      g.beginPath();
+      g.fillStyle = "#ff744b";
+      g.arc(u(this.police.pos.x), v(this.police.pos.z), 2.5, 0, Math.PI * 2);
       g.fill();
     }
     g.save();
@@ -1784,7 +1908,10 @@ export class Game {
       this.completeOrder(false, "Груз разбит вдребезги");
     } else if (this.timeLeft <= 0) {
       if (this.mode === "drift-trial") this.completeOrder(true, "60 секунд истекли");
-      else this.completeOrder(false, this.mode === "time-attack" ? "Время вышло до финиша" : "Время вышло — клиент ушёл");
+      else this.completeOrder(false, this.mode === "time-attack" ? "Время вышло до финиша"
+        : this.mode === "radio-silence" ? "Время эфира истекло" : "Время вышло — клиент ушёл");
+    } else if (this.radioRun) {
+      this.updateRadioRun(this.radioRun, dt);
     } else if (this.mode === "delivery" && dDest < 4.2) {
       this.completeOrder(true, "Точка назначения достигнута");
     } else if (this.mode === "time-attack" && dDest < 8.5) {
@@ -1943,6 +2070,38 @@ export class Game {
     this.toast("Машина взорвалась!", true);
   }
 
+  private updateRadioRun(run: RadioRun, dt: number): void {
+    const { x, z } = this.car.pos;
+    const caught = run.phase === "pursuit" && this.police.update(dt, x, z);
+    const canEnterGate = this.car.hp > 0 && !this.car.isFlipping && this.car.airY < 0.6 && this.world.isOnRoad(x, z);
+    const event = run.update(dt, x, z, canEnterGate, this.police.dist, caught);
+    if (event === "signal") {
+      this.police.startOnRoute(run.course.route, run.leg.spawnProgress, run.leg.patrolSpeed, x, z);
+      this.updateRadioMarkers(run);
+      this.audio.fine();
+      this.toast("Погоня началась · держи отрыв до зоны тишины", true);
+    } else if (event === "cache") {
+      this.nitroFuel = Math.min(100, this.nitroFuel + 25);
+      this.updateRadioMarkers(run);
+      this.audio.uiClick();
+      this.toast("Пакет перехвачен · +25 к нитро");
+    } else if (event === "escape" || event === "finish") {
+      this.police.stop();
+      this.profile.stats.escapes++;
+      if (event === "finish") {
+        this.completeOrder(true, "Три сигнала доставлены в зоны тишины");
+      } else {
+        this.updateRadioMarkers(run);
+        this.audio.success();
+        this.toast(`Побег ${run.escapes}/${RADIO_WAVES} · следующий передатчик отмечен`);
+        this.grantAchievements(false);
+        this.persistProfile();
+      }
+    } else if (event === "caught") {
+      this.completeOrder(false, "Патруль перехватил машину");
+    }
+  }
+
   /** Unlock newly completed achievements, announce them and persist. */
   private grantAchievements(save = true): void {
     const fresh = checkAchievements(this.profile);
@@ -1962,6 +2121,10 @@ export class Game {
       this.completeNevaContract(this.nevaRun, ok, reason);
       return;
     }
+    if (this.radioRun) {
+      this.completeRadioRun(this.radioRun, ok, reason);
+      return;
+    }
     const p = this.profile;
     if (this.mode === "drift-trial") this.bankDriftChain();
     const driftScore = finalDriftScore(this.driftScore);
@@ -1979,11 +2142,10 @@ export class Game {
           : saveRecord(p.records, p.mapId, this.mode, p.carId, elapsed)
         : null;
       const reward = modeReward(this.mode, medal, driftScore, ok);
-      const medalLabel = medal ? `${medal === "gold" ? "🥇 золото" : medal === "silver" ? "🥈 серебро" : "🥉 бронза"}` : "без медали";
       const lines = this.mode === "drift-trial"
-        ? [`${reason}.`, `Счёт: ${driftScore} · ${medalLabel}`]
+        ? [`${reason}.`, `Счёт: ${driftScore} · ${medalLabel(medal)}`]
         : ok
-          ? [`${reason}.`, `Время круга: ${elapsed.toFixed(1)} с · ${medalLabel}`]
+          ? [`${reason}.`, `Время круга: ${elapsed.toFixed(1)} с · ${medalLabel(medal)}`]
           : [`${reason}.`, `Время до схода: ${elapsed.toFixed(1)} с`];
       if (this.mode === "time-attack" && this.timeAttackCourse) {
         lines.push(this.timeAttackCourse.name);
@@ -2061,6 +2223,36 @@ export class Game {
     this.showScreen("result");
   }
 
+  private completeRadioRun(run: RadioRun, ok: boolean, reason: string): void {
+    const p = this.profile;
+    const lines = [`${reason}.`, `Побеги ${run.escapes}/${RADIO_WAVES} · Пакеты ${run.packets}/${RADIO_WAVES}`];
+    const timeLeft = Math.max(0, this.timeLeft);
+    lines.push(`Время ${(RADIO_TIME - timeLeft).toFixed(1)} с · Кузов ${Math.round(this.car.hp)}%`);
+    if (ok) {
+      const score = radioScore(run.packets, timeLeft, this.car.hp);
+      const medal = radioMedal(score);
+      const best = saveRecord(p.records, this.world.mapId, "radio-silence", p.carId, score);
+      const reward = modeReward("radio-silence", medal, score);
+      p.money += reward;
+      p.totalEarn += reward;
+      p.bestEarn = Math.max(p.bestEarn, reward);
+      lines.push(`${score} очк. · ${medalLabel(medal)} · Рекорд ${best}`);
+      lines.push(`<b class="gold">Выплата за заезд ₽${reward}</b>`);
+      if (p.stats.escapes >= RADIO_WAVES && !p.unlockedAch.includes("escapee")) lines.push("Открыта ачивка «Невидимка»");
+      this.audio.success();
+    } else {
+      if (run.escapes > 0) lines.push("Успешные побеги засчитаны в карьере");
+      this.audio.fail();
+    }
+    this.police.stop();
+    if (this.radioCache) this.radioCache.visible = false;
+    this.grantAchievements(false);
+    this.persistProfile();
+    this.lastResult = { ok, title: RADIO_TITLE.toUpperCase(), mode: "radio-silence", lines };
+    this.order = null;
+    this.showScreen("result");
+  }
+
   private completeNevaContract(run: NevaRun, ok: boolean, reason: string): void {
     const p = this.profile;
     const lines = [reason + "."];
@@ -2108,11 +2300,15 @@ export class Game {
   private updateHud(): void {
     if (!this.order) return;
     const o = this.order;
-    this.hOrder.textContent = this.nevaRun ? NEVA_CONTRACT.title : this.mode === "delivery"
+    const radio = this.radioRun;
+    this.hOrder.textContent = this.nevaRun ? NEVA_CONTRACT.title : radio
+      ? `${Math.min(radio.escapes + 1, RADIO_WAVES)}/${RADIO_WAVES} · ${radio.phase === "transmitter" ? "К передатчику" : "В зону тишины"}`
+      : this.mode === "delivery"
       ? `📦 ${CARGO_NAMES[o.id % CARGO_NAMES.length]} · ₽${o.reward}`
       : this.mode === "drift-trial" ? "DRIFT TRIAL · комбо до ×5" : `TIME ATTACK · КП ${Math.min(this.timeAttackCheckpointIndex + 1, this.timeAttackCourse?.checkpoints.length ?? 5)}/${this.timeAttackCourse?.checkpoints.length ?? 5}`;
     const t = Math.max(0, this.timeLeft);
-    this.hTimer.textContent = this.mode === "time-attack"
+    const seconds = Math.ceil(t);
+    this.hTimer.textContent = radio ? `⏱ ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : this.mode === "time-attack"
       ? `⏱ ${Math.max(0, o.timeLimit - this.timeLeft).toFixed(1)}с`
       : `⏱ ${t.toFixed(0)}с`;
     this.hTimer.classList.toggle("low", t < 12);
@@ -2123,18 +2319,22 @@ export class Game {
     this.hCargo.style.display = this.mode === "delivery" ? "flex" : "none";
     this.hSpeed.innerHTML = `${speedKmh(this.car.speed)}<small>км/ч</small>`;
     const speed = Math.abs(this.car.speed);
-    this.hMoney.textContent = this.nevaRun && this.nevaTarget !== null
+    this.hMoney.textContent = radio ? `Кузов ${Math.round(this.car.hp)}%` : this.nevaRun && this.nevaTarget !== null
       ? `Цель ${this.nevaTarget} очк.`
       : `₽${this.profile.money}${this.orderFines ? ` (−${this.orderFines})` : ""}`;
     const sector = this.nevaRun?.activeSector() ?? -1;
     this.hDrift.textContent = this.nevaRun
       ? sector >= 0 ? `ЗОНА ЗАНОСА · ${NEVA_SECTORS[sector].name}` : `Чистые повороты ${this.nevaRun.cleanSectors}/${NEVA_SECTORS.length}`
+      : radio ? `Побеги ${radio.escapes}/${RADIO_WAVES} · Пакеты ${radio.packets}${radio.carryingPacket ? "+1" : ""}/${RADIO_WAVES}`
       : this.mode === "drift-trial"
       ? `дрифт ${Math.round(this.driftScore)} · ×${this.driftMultiplier}${this.driftChainScore > 0 ? ` · серия ${Math.round(this.driftChainScore)}` : ""}`
       : this.mode === "delivery" && this.driftScore > 50 && speed > 8
         ? `дрифт +${Math.round(this.driftScore)}`
         : "";
     this.hNitro.querySelector("i")!.setAttribute("style", `transform:scaleX(${this.nitroFuel / 100})`);
+    const radioPursuit = radio?.phase === "pursuit" && this.police.active;
+    this.hChase.textContent = radioPursuit ? `🚔 Отрыв ${Math.floor(this.police.dist)}/${radio.leg.requiredGap} м` : "🚔 ПОГОНЯ!";
+    this.hChase.classList.toggle("radio-lead", !!radioPursuit && this.police.dist >= radio.leg.requiredGap);
     this.hChase.style.display = this.police.active ? "inline" : "none";
     this.drawMinimap();
   }
@@ -2222,6 +2422,12 @@ export class Game {
     this.input.dispose();
     this.careerCar.dispose();
     this.nevaCar?.dispose();
+    this.radioCar?.dispose();
+    for (const object of this.radioCache?.children ?? []) {
+      const mesh = object as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    }
     if (this.nevaMarkings) {
       this.nevaMarkings.geometry.dispose();
       this.nevaMarkings.material.dispose();

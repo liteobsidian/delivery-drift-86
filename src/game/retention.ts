@@ -2,6 +2,7 @@ import { CARS, WORLD_MAPS } from "./config";
 import { sampleDeliveryDestination } from "./delivery-routing";
 import { cityLayoutFor } from "./map-layouts";
 import { driftMedal, medalRank, timeAttackCourse, timeAttackMedal } from "./modes";
+import { radioMedal } from "./radio-silence";
 import { MAP_IDS, type ActivityMode, type MapId } from "./types";
 
 const TIME_ATTACK_RECORD_KEY = "time-attack-course-v1";
@@ -51,7 +52,8 @@ export function recordDetails(key: string) {
   const mapId = MAP_IDS.find((id) => id === map);
   const car = CARS.find((item) => item.id === carId);
   if (!mapId || !car) return;
-  const mode = kind === TIME_ATTACK_RECORD_KEY ? "time-attack" : kind === "drift-trial" || kind === "delivery" ? kind : undefined;
+  const mode: ActivityMode | undefined = kind === TIME_ATTACK_RECORD_KEY ? "time-attack"
+    : kind === "drift-trial" || kind === "delivery" || kind === "radio-silence" ? kind : undefined;
   if (mode) return { mapId, mode, car };
 }
 
@@ -74,7 +76,8 @@ export function careerMedalPoints(records: Readonly<Record<string, number>>): nu
     if (!entry || entry.mode === "delivery") continue;
     const { mapId, mode } = entry;
     const group = `${mapId}:${mode}`;
-    const medal = mode === "drift-trial" ? driftMedal(value) : timeAttackMedal(timeAttackCourse(mapId), value);
+    const medal = mode === "drift-trial" ? driftMedal(value)
+      : mode === "radio-silence" ? radioMedal(value) : timeAttackMedal(timeAttackCourse(mapId), value);
     best.set(group, Math.max(best.get(group) ?? 0, medalRank(medal)));
   }
   return [...best.values()].reduce((total, rank) => total + rank, 0);

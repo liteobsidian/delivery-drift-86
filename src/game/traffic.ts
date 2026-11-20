@@ -108,6 +108,37 @@ export function smoothedRouteTangent(
   return { x: x / magnitude, z: z / magnitude };
 }
 
+export function buildRouteData(route: TrafficRoute): RouteData {
+  const cumulative = [0];
+  const tangents: CityPoint[] = [];
+  for (let i = 0; i < route.points.length - 1; i++) {
+    const a = route.points[i];
+    const b = route.points[i + 1];
+    const length = Math.hypot(b.x - a.x, b.z - a.z);
+    cumulative.push(cumulative[i] + length);
+    tangents.push({ x: length ? (b.x - a.x) / length : 0, z: length ? (b.z - a.z) / length : 0 });
+  }
+  return { points: route.points, cumulative, tangents, length: cumulative[cumulative.length - 1] };
+}
+
+export function routePose(route: RouteData, progress: number, direction: 1 | -1, lane: number) {
+  const distance = ((progress % route.length) + route.length) % route.length;
+  let low = 0;
+  let high = route.cumulative.length - 1;
+  while (low + 1 < high) {
+    const middle = (low + high) >>> 1;
+    if (route.cumulative[middle] <= distance) low = middle;
+    else high = middle;
+  }
+  const segment = Math.min(low, route.tangents.length - 1);
+  const a = route.points[segment];
+  const b = route.points[segment + 1];
+  const length = route.cumulative[segment + 1] - route.cumulative[segment] || 1;
+  const t = Math.max(0, Math.min(1, (distance - route.cumulative[segment]) / length));
+  const { x: dx, z: dz } = smoothedRouteTangent(route, segment, distance, direction);
+  return { x: a.x + (b.x - a.x) * t + dz * lane, z: a.z + (b.z - a.z) * t - dx * lane, dx, dz };
+}
+
 /** City traffic follows authored closed routes, including their bends and cul-de-sacs. */
 export class Traffic {
   readonly group = new THREE.Group();
@@ -152,18 +183,7 @@ export class Traffic {
   }
 
   private rebuildRoutes(): void {
-    this.routes = this.world.layout.trafficRoutes.map((route) => {
-      const cumulative = [0];
-      const tangents: CityPoint[] = [];
-      for (let i = 0; i < route.points.length - 1; i++) {
-        const a = route.points[i];
-        const b = route.points[i + 1];
-        const length = Math.hypot(b.x - a.x, b.z - a.z);
-        cumulative.push(cumulative[i] + length);
-        tangents.push({ x: length ? (b.x - a.x) / length : 0, z: length ? (b.z - a.z) / length : 0 });
-      }
-      return { points: route.points, cumulative, tangents, length: cumulative[cumulative.length - 1] };
-    }).filter((route) => route.length > 0);
+    this.routes = this.world.layout.trafficRoutes.map(buildRouteData).filter((route) => route.length > 0);
   }
 
   private rnd(): number {
@@ -174,28 +194,12 @@ export class Traffic {
   private pose(car: TrafficCar): void {
     const route = this.routes[car.routeIndex];
     if (!route) return;
-    const distance = ((car.progress % route.length) + route.length) % route.length;
-    let low = 0;
-    let high = route.cumulative.length - 1;
-    while (low + 1 < high) {
-      const middle = (low + high) >>> 1;
-      if (route.cumulative[middle] <= distance) low = middle;
-      else high = middle;
-    }
-    const segment = Math.min(low, route.tangents.length - 1);
-    const a = route.points[segment];
-    const b = route.points[segment + 1];
-    const segmentLength = route.cumulative[segment + 1] - route.cumulative[segment] || 1;
-    const t = Math.max(0, Math.min(1, (distance - route.cumulative[segment]) / segmentLength));
-    const { x: tx, z: tz } = smoothedRouteTangent(route, segment, distance, car.dir);
-    const centerX = a.x + (b.x - a.x) * t;
-    const centerZ = a.z + (b.z - a.z) * t;
-    const lanePosition = trafficLanePosition({ x: centerX, z: centerZ }, { x: tx, z: tz }, LANE);
-    car.x = lanePosition.x;
-    car.z = lanePosition.z;
-    car.dx = tx;
-    car.dz = tz;
-    car.axis = Math.abs(tx) >= Math.abs(tz) ? 0 : 1;
+    const { x, z, dx, dz } = routePose(route, car.progress, car.dir, LANE);
+    car.x = x;
+    car.z = z;
+    car.dx = dx;
+    car.dz = dz;
+    car.axis = Math.abs(dx) >= Math.abs(dz) ? 0 : 1;
   }
 
   private place(car: TrafficCar): void {

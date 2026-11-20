@@ -89,7 +89,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     id: "escapee",
     icon: "🚔",
     name: "Невидимка",
-    desc: "Уйди от полиции 3 раза",
+    desc: "Уйди от полиции 3 раза за карьеру. В «Радиомолчании» можно уйти трижды за заезд.",
     progress: (p) => `${Math.min(p.stats.escapes, 3)}/3`,
     done: (p) => p.stats.escapes >= 3,
   },

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { routePose, type RouteData } from "./traffic";
 
 /**
  * Police pursuit — a single cruiser that spawns behind the player,
@@ -13,6 +14,7 @@ export class Police {
   private redMat: THREE.MeshStandardMaterial;
   private blueMat: THREE.MeshStandardMaterial;
   private flash = 0;
+  private routeChase: { route: RouteData; progress: number; speed: number } | null = null;
   /** distance to player, updated each frame while active */
   dist = 999;
 
@@ -101,16 +103,43 @@ export class Police {
   }
 
   start(px: number, pz: number): void {
+    this.routeChase = null;
     this.pos.set(px + 10, 0, pz + 18);
     this.heading = Math.atan2(px - this.pos.x, pz - this.pos.z);
     this.speed = 16;
+    this.begin(px, pz);
+  }
+
+  startOnRoute(route: RouteData, progress: number, speed: number, px: number, pz: number): void {
+    this.routeChase = { route, progress, speed };
+    this.speed = speed * 0.75;
+    this.placeOnRoute(route, progress);
+    this.begin(px, pz);
+  }
+
+  private begin(px: number, pz: number): void {
+    this.flash = 0;
+    this.dist = Math.hypot(px - this.pos.x, pz - this.pos.z);
     this.active = true;
     this.group.visible = true;
+    this.syncMesh();
+  }
+
+  private placeOnRoute(route: RouteData, progress: number): void {
+    const { x, z, dx, dz } = routePose(route, progress, 1, 2.7);
+    this.pos.set(x, 0, z);
+    this.heading = Math.atan2(dx, dz);
+  }
+
+  private syncMesh(): void {
+    this.group.position.copy(this.pos);
+    this.group.rotation.y = this.heading + Math.PI;
   }
 
   stop(): void {
     this.active = false;
     this.group.visible = false;
+    this.routeChase = null;
   }
 
   /** returns true when the cruiser is close enough to bust the player */
@@ -120,6 +149,19 @@ export class Police {
     const phase = Math.floor(this.flash * 6) % 2;
     this.redMat.emissiveIntensity = phase === 0 ? 3 : 0.4;
     this.blueMat.emissiveIntensity = phase === 0 ? 0.4 : 3;
+
+    if (this.routeChase) {
+      const chase = this.routeChase;
+      const ahead = routePose(chase.route, chase.progress + 14, 1, 0);
+      const alignment = Math.max(0, ahead.dx * Math.sin(this.heading) + ahead.dz * Math.cos(this.heading));
+      const target = chase.speed * (0.62 + 0.38 * alignment);
+      this.speed += (target - this.speed) * Math.min(1, dt * 1.8);
+      chase.progress += this.speed * dt;
+      this.placeOnRoute(chase.route, chase.progress);
+      this.dist = Math.hypot(px - this.pos.x, pz - this.pos.z);
+      this.syncMesh();
+      return this.dist < 3.4;
+    }
 
     const dx = px - this.pos.x;
     const dz = pz - this.pos.z;
@@ -136,8 +178,7 @@ export class Police {
     this.pos.x += Math.sin(this.heading) * this.speed * dt;
     this.pos.z += Math.cos(this.heading) * this.speed * dt;
 
-    this.group.position.copy(this.pos);
-    this.group.rotation.y = this.heading + Math.PI;
+    this.syncMesh();
     return this.dist < 3.4;
   }
 
