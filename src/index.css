@@ -817,7 +817,15 @@ html, body, #root {
 
 @media (max-width: 420px) {
   .hud-cargo-text { display: none; }
-  .hud-top { font-size: 10px; gap: 6px; }
+  .hud-top {
+    box-sizing: border-box;
+    max-width: calc(100vw - 100px);
+    flex-wrap: wrap;
+    justify-content: center;
+    font-size: 10px;
+    gap: 3px 6px;
+  }
+  .hud-order { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 }
 
 .activity-picker {
@@ -880,7 +888,7 @@ html, body, #root {
     bottom: max(8px, env(safe-area-inset-bottom));
     transform: none;
     gap: 1px 8px;
-    padding: 4px 8px;
+    padding: 2px 8px;
   }
   .hud[data-mode="radio-silence"] .hud-speed { font-size: 20px; }
   .hud[data-mode="radio-silence"] .hud-drift { margin-top: 0; }
@@ -896,6 +904,7 @@ html, body, #root {
     width: clamp(88px, 31vw, 132px);
     height: clamp(88px, 31vw, 132px);
   }
+  #tc-brake { bottom: calc(max(68px, 12dvh) + env(safe-area-inset-bottom)); }
 }
 
 #tc-nitro {
