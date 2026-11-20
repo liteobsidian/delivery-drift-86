@@ -34,7 +34,7 @@ mkdirSync(SHOTS, { recursive: true });
 // Must match <canvas id="..."> in src/pages/Home.tsx. Change both together.
 const CANVAS_ID = "game-canvas";
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".json": "application/json", ".wasm": "application/wasm" };
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".webp": "image/webp", ".json": "application/json", ".wasm": "application/wasm" };
 
 const server = createServer(async (req, res) => {
   try {
@@ -142,6 +142,11 @@ for (const mode of ["delivery", "drift-trial", "time-attack"]) {
   if (await page.locator(`[data-a="activity:${mode}"]`).count() !== 1) fail(`Activity picker is missing ${mode}`);
 }
 await page.locator('[data-a="activity:delivery"]').click();
+await page.waitForFunction(() => {
+  const images = [...document.querySelectorAll(".track-art img")];
+  return images.length === 5 && images.every((image) => image.complete && image.naturalWidth === 456) &&
+    new Set(images.map((image) => image.src)).size === 5;
+});
 const lockedPortMap = page.locator('[data-a="map:yokohama"]');
 if (await lockedPortMap.count() !== 1) fail("Yokohama Port is missing from the tracks screen");
 if (!(await lockedPortMap.isDisabled())) fail("Yokohama opened before the delivery threshold");
@@ -496,19 +501,43 @@ await page.evaluate(() => {
   window.__gameDebug.exitMode();
   window.__gameDebug.setDeliveriesForTest(32);
 });
-for (const city of ["spb", "kazan", "sochi", "tokyo"]) {
+const cityLandmarks = {
+  tokyo: ["shrine-gate", "tokyo-radio-tower"],
+  yokohama: ["marine-observation-tower"],
+  spb: ["admiralty-spire", "palace-embankment", "central-neva-bridge"],
+  kazan: ["soyembika-tower", "kul-sharif-mosque", "kazan-family-centre"],
+  sochi: ["fisht-stadium", "marine-terminal", "seaside-palms"],
+};
+const cityPalettes = new Set();
+for (const [city, landmarks] of Object.entries(cityLandmarks)) {
   await page.locator('[data-a="play"]').click();
   await page.locator('[data-a="activity:delivery"]').click();
   await page.locator(`[data-a="map:${city}"]`).click();
   const state = await page.evaluate(() => {
     const debug = window.__gameDebug;
-    return { city: debug.mapId(), cache: debug.worldCacheSize(), buildings: debug.cityBuildingCount(), traffic: debug.trafficPos().length };
+    const mapId = debug.mapId();
+    const world = debug.scene.getObjectByName(`world-${mapId}`);
+    const batches = world.getObjectByName("city-buildings").children.filter((mesh) => mesh.isInstancedMesh);
+    const atlas = batches[0]?.material.map;
+    return {
+      city: mapId, cache: debug.worldCacheSize(), buildings: debug.cityBuildingCount(), traffic: debug.trafficPos().length,
+      landmarks: world.getObjectByName(`landmarks-${mapId}`).children.map((mesh) => mesh.name),
+      batches: batches.length, instanceCount: batches.reduce((count, mesh) => count + mesh.count, 0),
+      sharedAtlas: !!atlas && atlas.image.width === 512 && batches.every((mesh) => mesh.material.map === atlas),
+      fog: debug.scene.fog.color.getHex(),
+    };
   });
-  if (state.city !== city || state.cache > 2 || state.buildings < 400 || state.traffic < 5) {
+  if (state.city !== city || state.cache > 2 || state.buildings < (city === "yokohama" ? 350 : 400) || state.traffic < 5) {
     fail(`Unexpected world after switching to ${city}: ${JSON.stringify(state)}`);
   }
+  if (state.batches !== 2 || state.instanceCount !== state.buildings || !state.sharedAtlas ||
+      !landmarks.every((name) => state.landmarks.includes(name))) {
+    fail(`Missing landmark or architecture batch in ${city}: ${JSON.stringify(state)}`);
+  }
+  cityPalettes.add(state.fog);
   await page.evaluate(() => window.__gameDebug.exitMode());
 }
+if (cityPalettes.size !== Object.keys(cityLandmarks).length) fail("Cities reuse the same scene lighting palette");
 
 await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="activity:delivery"]').click();

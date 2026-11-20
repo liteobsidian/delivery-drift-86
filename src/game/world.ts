@@ -8,6 +8,9 @@ import {
   LIGHT_YELLOW,
 } from "./config";
 import type { MapId } from "./types";
+import { CITY_STYLE } from "./city-style";
+import { createBuildingGeometry, createCityFacade, TOKYO_TOWER_WIDTH } from "./city-architecture";
+import { buildCityLandmarks, palmOffsets, PALM_BASE_RADIUS } from "./city-landmarks";
 import { cityBuildingMeshYaw, generateCityBuildingSites, type CityBuildingSite } from "./city-building-layout";
 import { BuildingSpatialIndex } from "./building-spatial-index";
 import { cityLayoutFor, distanceToRoad, distanceToRoadPath, isOnLayoutRoad, worldLengthToTexturePixels, worldToTextureCoordinate } from "./map-layouts";
@@ -89,14 +92,6 @@ export interface LightVisual {
 }
 
 const GS = WORLD_HALF * 2 + ROAD_W * 2 + 60; // ground plane size
-const CITY_THEME: Record<MapId, { ground: string; road: string; buildingTint: number; buildingShades: [string, string, string]; outline: string; seed: number }> = {
-  tokyo: { ground: "#414a5c", road: "#596273", buildingTint: 0x9aa0b4, buildingShades: ["#343b4a", "#394152", "#313849"], outline: "rgba(136,151,176,.26)", seed: 31337 },
-  yokohama: { ground: "#424c55", road: "#56616a", buildingTint: 0x9aa5a6, buildingShades: ["#485157", "#444d54", "#4b555b"], outline: "rgba(175,190,189,.28)", seed: 9182 },
-  spb: { ground: "#494753", road: "#68616e", buildingTint: 0xa69e9e, buildingShades: ["#45424d", "#4a4651", "#403e49"], outline: "rgba(190,173,177,.28)", seed: 52231 },
-  kazan: { ground: "#404b58", road: "#5f6c78", buildingTint: 0x9eaab0, buildingShades: ["#35414c", "#3b4752", "#323e49"], outline: "rgba(158,185,190,.28)", seed: 265379 },
-  sochi: { ground: "#3d4e59", road: "#56727a", buildingTint: 0x96a9aa, buildingShades: ["#354751", "#3d5058", "#32444d"], outline: "rgba(155,190,184,.28)", seed: 298529 },
-};
-
 export class World {
   readonly mapId: MapId;
   readonly layout;
@@ -115,14 +110,13 @@ export class World {
   /** AABBs reserved for real mid-rise models — no neon/signs placed there */
   private heroAABBs: AABB[] = [];
   private heroBuildings = new THREE.Group();
+  private heroFallbacks: { mesh: THREE.InstancedMesh; index: number }[] = [];
   /** tall buildings that get rooftop billboards */
   private roofSpots: { x: number; z: number; w: number; h: number; d: number }[] =
     [];
   private billboardTex: THREE.Texture[] = [];
   private flickerMats: THREE.MeshBasicMaterial[] = [];
   private chevronMats: THREE.Matrix4[] = [];
-  /** building heights aligned with this.buildings (AABBs carry no height) */
-  private buildingHeights: number[] = [];
   private buildingIndex!: BuildingSpatialIndex;
   private flickerT = 0;
   private marker = new THREE.Group();
@@ -136,8 +130,7 @@ export class World {
     this.group.name = `world-${mapId}`;
     this.group.add(this.buildSky());
     this.group.add(this.buildGround());
-    if (mapId === "yokohama") this.group.add(this.buildHarborWater());
-    else if (this.layout.waterAreas.length) this.group.add(this.buildCityWater());
+    if (this.layout.waterAreas.length) this.group.add(this.buildWater());
     this.group.add(this.buildBuildings());
     this.group.add(this.buildStreetProps());
     if (mapId === "tokyo") {
@@ -148,7 +141,9 @@ export class World {
     } else if (mapId === "yokohama") {
       this.group.add(this.buildPortCranes());
     }
-    if (this.layout.landmarks.length) this.group.add(this.buildCityLandmarks());
+    const landmarks = buildCityLandmarks(this.layout.landmarks);
+    landmarks.name = `landmarks-${mapId}`;
+    this.group.add(landmarks);
     if (mapId === "tokyo") this.group.add(this.buildRoadSigns());
     this.group.add(this.buildPuddles());
     this.group.add(this.buildRamps());
@@ -371,18 +366,50 @@ export class World {
 
   private buildSky(): THREE.Group {
     const g = new THREE.Group();
-    const rng = mulberry32(CITY_THEME[this.mapId].seed);
-    if (this.mapId === "tokyo" || this.mapId === "sochi") {
-      // Tokyo's distant peaks hint at touge roads; Sochi's silhouette rises above the coast.
-      const mat = new THREE.MeshBasicMaterial({ color: this.mapId === "sochi" ? 0x101d26 : 0x0d1226, fog: false });
+    const style = CITY_STYLE[this.mapId];
+    const rng = mulberry32(style.seed);
+    const sphere = new THREE.SphereGeometry(940, 20, 14);
+    const skyColor = new THREE.Color(style.sky);
+    const horizon = new THREE.Color(style.horizon);
+    const color = new THREE.Color();
+    const colors = [];
+    const positions = sphere.attributes.position;
+    for (let i = 0; i < positions.count; i++) {
+      const mix = THREE.MathUtils.smoothstep(positions.getY(i) / 940, -0.035, 0.56);
+      color.copy(horizon).lerp(skyColor, mix);
+      colors.push(color.r, color.g, color.b);
+    }
+    sphere.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    const dome = new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({
+      side: THREE.BackSide, vertexColors: true, depthWrite: false, fog: false, toneMapped: false,
+    }));
+    dome.renderOrder = -10;
+    g.add(dome);
+    if (this.mapId === "sochi") {
+      for (const [range, tint] of [[0, 0x8a9a97], [1, 0x5d796d]] as const) {
+        const ridge = [];
+        for (let i = 0; i < 48; i++) {
+          const a = i * Math.PI / 48;
+          const b = (i + 1) * Math.PI / 48;
+          const r = 630 - range * 120;
+          const height = (angle: number) => 12 + Math.sin(angle) * (78 + 23 * Math.sin(angle * 10 + range) + 11 * Math.sin(angle * 23));
+          const x1 = r * Math.cos(a), z1 = r * Math.sin(a);
+          const x2 = r * Math.cos(b), z2 = r * Math.sin(b);
+          ridge.push(x1, -25, z1, x2, -25, z2, x1, height(a), z1, x1, height(a), z1, x2, -25, z2, x2, height(b), z2);
+        }
+        const geo = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(ridge, 3));
+        g.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: tint, fog: false, side: THREE.DoubleSide, toneMapped: false })));
+      }
+    } else if (this.mapId === "tokyo") {
+      const mat = new THREE.MeshBasicMaterial({ color: 0x161c3f, fog: false });
       const geo = new THREE.ConeGeometry(1, 1, 5);
       const inst = new THREE.InstancedMesh(geo, mat, 40);
       const m = new THREE.Matrix4();
       const q = new THREE.Quaternion();
       for (let i = 0; i < 40; i++) {
         const a = (i / 40) * Math.PI * 2 + rng() * 0.1;
-        const r = (this.mapId === "sochi" ? 390 : 480) + rng() * 120;
-        const h = (this.mapId === "sochi" ? 150 : 90) + rng() * 130;
+        const r = 480 + rng() * 120;
+        const h = 70 + rng() * 95;
         const w = 120 + rng() * 140;
         q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * Math.PI);
         m.compose(
@@ -425,14 +452,14 @@ export class World {
       // Low city silhouettes give the historic districts a horizon without repeating Tokyo's peaks.
       const skyline = new THREE.InstancedMesh(
         new THREE.BoxGeometry(1, 1, 1),
-        new THREE.MeshBasicMaterial({ color: this.mapId === "spb" ? 0x242735 : 0x20303b, fog: false }),
+        new THREE.MeshBasicMaterial({ color: this.mapId === "spb" ? 0x625a6a : 0x48474e, fog: false }),
         36,
       );
       const matrix = new THREE.Matrix4();
       for (let i = 0; i < 36; i++) {
         const angle = (i / 36) * Math.PI * 2;
         const radius = 430 + rng() * 70;
-        const height = 35 + rng() * (this.mapId === "spb" ? 48 : 72);
+        const height = 10 + rng() * (this.mapId === "spb" ? 17 : 29);
         const width = 22 + rng() * 38;
         matrix.compose(
           new THREE.Vector3(Math.cos(angle) * radius, height / 2 - 5, Math.sin(angle) * radius),
@@ -443,6 +470,7 @@ export class World {
       }
       g.add(skyline);
     }
+    if (this.mapId === "sochi" || this.mapId === "spb") return g;
     // stars
     const starGeo = new THREE.BufferGeometry();
     const n = 350;
@@ -503,52 +531,56 @@ export class World {
     return mesh;
   }
 
-  private buildHarborWater(): THREE.Group {
+  private buildWater(): THREE.Group {
     const group = new THREE.Group();
-    group.name = "harbor-water";
-    const water = new THREE.MeshBasicMaterial({ color: 0x0d3b4c, fog: true });
-    const { minX, maxX, minZ, maxZ } = this.layout.bounds;
-    const coastGap = 36;
-    const centerX = (minX + maxX) / 2;
-    const centerZ = (minZ + maxZ) / 2;
-    const strip = (width: number, depth: number, x: number, z: number) => {
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), water);
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(x, 0.025, z);
-      group.add(mesh);
-    };
-    strip(maxX - minX + coastGap, coastGap, centerX, minZ - coastGap / 2);
-    strip(maxX - minX + coastGap, coastGap, centerX, maxZ + coastGap / 2);
-    strip(coastGap, maxZ - minZ, minX - coastGap / 2, centerZ);
-    strip(coastGap, maxZ - minZ, maxX + coastGap / 2, centerZ);
-    const shoreline = new THREE.LineBasicMaterial({ color: 0x75a4ae, transparent: true, opacity: 0.46 });
-    for (const area of this.layout.waterAreas) {
-      const shape = new THREE.Shape();
-      shape.moveTo(area.points[0].x, -area.points[0].z);
-      for (const point of area.points.slice(1)) shape.lineTo(point.x, -point.z);
-      shape.closePath();
-      const inlet = new THREE.Mesh(new THREE.ShapeGeometry(shape), water);
-      inlet.rotation.x = -Math.PI / 2;
-      inlet.position.y = 0.04;
-      inlet.name = `water-area-${area.id}`;
-      group.add(inlet);
-
-      const edge = new THREE.LineLoop(
-        new THREE.BufferGeometry().setFromPoints(area.points.map(({ x, z }) => new THREE.Vector3(x, 0.075, z))),
-        shoreline,
-      );
-      edge.name = `shoreline-${area.id}`;
-      group.add(edge);
+    const port = this.mapId === "yokohama";
+    group.name = port ? "harbor-water" : `water-${this.mapId}`;
+    const palette = CITY_STYLE[this.mapId];
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 128;
+    const g = canvas.getContext("2d")!;
+    g.fillStyle = palette.water;
+    g.fillRect(0, 0, 128, 128);
+    const rng = mulberry32(palette.seed + 53);
+    for (let i = 0; i < 145; i++) {
+      const x = rng() * 128, y = rng() * 128, width = 3 + rng() * 14;
+      g.strokeStyle = i % 3 ? "rgba(180,224,230,.22)" : "rgba(14,37,49,.17)";
+      g.lineWidth = 0.45 + rng() * 0.7;
+      for (const left of x + width > 128 ? [x, x - 128] : [x]) {
+        g.beginPath();
+        g.moveTo(left, y);
+        g.quadraticCurveTo(left + width * 0.5, y - 1.7, left + width, y);
+        g.stroke();
+      }
     }
-    group.userData.interiorWater = this.layout.waterAreas.length;
-    return group;
-  }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(0.051, 0.073);
+    texture.anisotropy = 4;
+    const water = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
+    if (port) {
+      const { minX, maxX, minZ, maxZ } = this.layout.bounds;
+      const coastGap = 36;
+      const centerX = (minX + maxX) / 2;
+      const centerZ = (minZ + maxZ) / 2;
+      const strip = (width: number, depth: number, x: number, z: number) => {
+        const geometry = new THREE.PlaneGeometry(width, depth);
+        const uv = geometry.getAttribute("uv");
+        const pos = geometry.getAttribute("position");
+        for (let i = 0; i < uv.count; i++) uv.setXY(i, x + pos.getX(i), -z + pos.getY(i));
+        const mesh = new THREE.Mesh(geometry, water);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(x, 0.025, z);
+        group.add(mesh);
+      };
+      strip(maxX - minX + coastGap, coastGap, centerX, minZ - coastGap / 2);
+      strip(maxX - minX + coastGap, coastGap, centerX, maxZ + coastGap / 2);
+      strip(coastGap, maxZ - minZ, minX - coastGap / 2, centerZ);
+      strip(coastGap, maxZ - minZ, maxX + coastGap / 2, centerZ);
+    }
 
-  private buildCityWater(): THREE.Group {
-    const group = new THREE.Group();
-    group.name = `water-${this.mapId}`;
-    const water = new THREE.MeshBasicMaterial({ color: this.mapId === "sochi" ? 0x0c5266 : 0x123c4b, fog: true });
-    const shoreline = new THREE.LineBasicMaterial({ color: this.mapId === "sochi" ? 0x7fc3c9 : 0x8aaeb0, transparent: true, opacity: 0.52 });
+    const shoreline = new THREE.LineBasicMaterial({ color: palette.shore, transparent: true, opacity: 0.52 });
     for (const area of this.layout.waterAreas) {
       const shape = new THREE.Shape();
       shape.moveTo(area.points[0].x, -area.points[0].z);
@@ -559,10 +591,12 @@ export class World {
       surface.position.y = 0.04;
       surface.name = `water-area-${area.id}`;
       group.add(surface);
-      group.add(new THREE.LineLoop(
+      const edge = new THREE.LineLoop(
         new THREE.BufferGeometry().setFromPoints(area.points.map(({ x, z }) => new THREE.Vector3(x, 0.075, z))),
         shoreline,
-      ));
+      );
+      edge.name = `shoreline-${area.id}`;
+      group.add(edge);
     }
     group.userData.interiorWater = this.layout.waterAreas.length;
     return group;
@@ -577,14 +611,24 @@ export class World {
     const v = (z: number) => worldToTextureCoordinate(z, GS, S);
     const w = (value: number) => worldLengthToTexturePixels(value, GS, S);
 
-    const theme = CITY_THEME[this.mapId];
+    const theme = CITY_STYLE[this.mapId];
     g.fillStyle = theme.ground;
     g.fillRect(0, 0, S, S);
+    if (this.mapId === "sochi") {
+      g.fillStyle = "#d0af83";
+      g.fillRect(0, v(-160), S, w(15));
+    }
+    const speckle = mulberry32(theme.seed + 13);
+    for (let i = 0; i < 3800; i++) {
+      g.fillStyle = speckle() > 0.5 ? "rgba(220,207,165,.13)" : "rgba(21,34,35,.14)";
+      const size = 1 + speckle() * 3.5;
+      g.fillRect(speckle() * S, speckle() * S, size, size * 0.6);
+    }
     for (const area of this.layout.waterAreas) {
       g.beginPath();
       area.points.forEach((point, i) => i === 0 ? g.moveTo(u(point.x), v(point.z)) : g.lineTo(u(point.x), v(point.z)));
       g.closePath();
-      g.fillStyle = "#123c4b";
+      g.fillStyle = theme.water;
       g.fill();
       g.strokeStyle = "rgba(133,177,184,.5)";
       g.lineWidth = w(0.7);
@@ -598,18 +642,15 @@ export class World {
       g.fillRect(-w(parcel.width / 2), -w(parcel.depth / 2), w(parcel.width), w(parcel.depth));
       g.restore();
     }
-    this.buildingSites.forEach((site, index) => {
+    for (const site of this.buildingSites) {
       g.save();
       g.translate(u(site.x), v(site.z));
       g.rotate(site.rotation);
-      const shade = index % 3;
-      g.fillStyle = theme.buildingShades[shade];
-      g.fillRect(-w(site.width / 2), -w(site.depth / 2), w(site.width), w(site.depth));
-      g.strokeStyle = theme.outline;
-      g.lineWidth = w(0.45);
-      g.strokeRect(-w(site.width / 2), -w(site.depth / 2), w(site.width), w(site.depth));
+      g.fillStyle = theme.paving;
+      g.globalAlpha = 0.29;
+      g.fillRect(-w(site.width / 2 + 0.46), -w(site.depth / 2 + 0.46), w(site.width + 0.92), w(site.depth + 0.92));
       g.restore();
-    });
+    }
     for (const site of this.layout.portSites) {
       if (site.kind === "pier" || site.kind === "cargo-ship" || site.kind === "gantry-crane") continue;
       g.save();
@@ -638,30 +679,37 @@ export class World {
 
     g.lineCap = "round";
     g.lineJoin = "round";
-    for (const road of this.layout.roads) {
-      const drawPath = () => {
+    const strokeRoads = (color: string, width: (road: number) => number) => {
+      g.strokeStyle = color;
+      for (const road of this.layout.roads) {
         g.beginPath();
         road.points.forEach((p, i) => i === 0 ? g.moveTo(u(p.x), v(p.z)) : g.lineTo(u(p.x), v(p.z)));
-      };
-      drawPath();
-      g.strokeStyle = "#242a36";
-      g.lineWidth = w(road.width + 2.4);
-      g.stroke();
-      drawPath();
-      g.strokeStyle = theme.road;
-      g.lineWidth = w(road.width);
-      g.stroke();
-      drawPath();
-      g.strokeStyle = "rgba(177,188,207,.48)";
-      g.lineWidth = w(0.42);
-      g.setLineDash([]);
-      g.stroke();
-      drawPath();
-      g.strokeStyle = "rgba(178,185,199,.68)";
-      g.lineWidth = w(0.52);
-      g.setLineDash([w(3.5), w(5)]);
-      g.stroke();
-      g.setLineDash([]);
+        g.lineWidth = w(width(road.width));
+        g.stroke();
+      }
+    };
+    strokeRoads(theme.paving, (width) => width + (this.mapId === "spb" ? 4.2 : 2.6));
+    strokeRoads(theme.asphalt, (width) => width);
+    g.globalAlpha = this.mapId === "tokyo" ? 0.60 : 0.79;
+    g.setLineDash([w(this.mapId === "yokohama" ? 5 : 3.1), w(4.8)]);
+    strokeRoads(theme.lane, () => this.mapId === "yokohama" ? 0.34 : 0.27);
+    g.setLineDash([]);
+    g.globalAlpha = 1;
+    if (theme.line === "edge") {
+      g.strokeStyle = theme.lane;
+      g.lineWidth = w(0.22);
+      for (const road of this.layout.roads) for (const side of [-1, 1]) {
+        g.beginPath();
+        road.points.forEach((point, index, points) => {
+          const a = points[Math.max(0, index - 1)], b = points[Math.min(points.length - 1, index + 1)];
+          const dx = b.x - a.x, dz = b.z - a.z;
+          const offset = side * (road.width / 2 - 0.65) / (Math.hypot(dx, dz) || 1);
+          const x = u(point.x - dz * offset), z = v(point.z + dx * offset);
+          if (index) g.lineTo(x, z);
+          else g.moveTo(x, z);
+        });
+        g.stroke();
+      }
     }
 
     // Crosswalks only mark the major authored intersections.
@@ -676,8 +724,8 @@ export class World {
     }
 
     // Deterministic asphalt wear sampled along the same centerlines as driving.
-    const rng = mulberry32(CITY_THEME[this.mapId].seed);
-    for (let n = 0; n < 3200; n++) {
+    const rng = mulberry32(CITY_STYLE[this.mapId].seed);
+    for (let n = 0; n < 2300; n++) {
       const road = this.layout.roads[Math.floor(rng() * this.layout.roads.length)];
       const segment = Math.floor(rng() * (road.points.length - 1));
       const a = road.points[segment];
@@ -687,8 +735,8 @@ export class World {
       const lateral = (rng() - 0.5) * Math.max(0, road.width - 2);
       const px = a.x + (b.x - a.x) * t - (b.z - a.z) / length * lateral;
       const pz = a.z + (b.z - a.z) * t + (b.x - a.x) / length * lateral;
-      g.fillStyle = rng() < 0.5 ? "rgba(16,19,26,.42)" : "rgba(118,126,143,.3)";
-      const size = 0.4 + rng() * 1.8;
+      g.fillStyle = rng() < 0.5 ? "rgba(16,19,26,.22)" : "rgba(166,158,143,.22)";
+      const size = 0.15 + rng() * 0.68;
       g.fillRect(u(px - size / 2), v(pz - size / 2), w(size), w(size));
     }
 
@@ -701,21 +749,8 @@ export class World {
   private buildBuildings(): THREE.Group {
     const g = new THREE.Group();
     g.name = "city-buildings";
-    const rng = mulberry32(CITY_THEME[this.mapId].seed + 1);
-    const texture = this.mapId === "yokohama" ? this.makeIndustrialTexture() : this.makeBuildingTexture();
-    const mat = this.mapId === "yokohama"
-      ? new THREE.MeshStandardMaterial({ map: texture, color: CITY_THEME[this.mapId].buildingTint, emissive: 0x556164, emissiveIntensity: 0.2, roughness: 0.78, metalness: 0.2 })
-      : new THREE.MeshStandardMaterial({
-          map: texture,
-          emissive: 0xffffff,
-          emissiveMap: texture,
-          emissiveIntensity: 0.85,
-          color: CITY_THEME[this.mapId].buildingTint,
-          roughness: 0.85,
-          metalness: 0.1,
-        });
-    const geo = new THREE.BoxGeometry(1, 1, 1);
-    geo.translate(0, 0.5, 0);
+    const rng = mulberry32(CITY_STYLE[this.mapId].seed + 1);
+    const material = createCityFacade(this.mapId);
     const placements = this.buildingSites.map((site) => ({
       x: site.x,
       z: site.z,
@@ -723,179 +758,65 @@ export class World {
       h: site.height,
       d: site.depth,
       rotation: site.rotation,
+      variant: site.variant,
     }));
-    placements.forEach((p) => {
-      const c = Math.cos(p.rotation);
-      const s = Math.sin(p.rotation);
-      const ex = Math.abs(c) * p.w / 2 + Math.abs(s) * p.d / 2;
-      const ez = Math.abs(s) * p.w / 2 + Math.abs(c) * p.d / 2;
-      this.buildings.push({
-        minX: p.x - ex,
-        maxX: p.x + ex,
-        minZ: p.z - ez,
-        maxZ: p.z + ez,
-        collisionRect: { x: p.x, z: p.z, width: p.w, depth: p.d, rotation: p.rotation, cosRotation: c, sinRotation: s },
-      });
-      this.buildingHeights.push(p.h);
-    });
+    for (const site of this.buildingSites) this.addBuildingCollider(site.x, site.z, site.width, site.depth, site.rotation);
     for (const site of this.layout.landmarks) {
       if (site.kind === "bridge") continue;
-      const c = Math.cos(site.rotation);
-      const s = Math.sin(site.rotation);
-      const ex = Math.abs(c) * site.width / 2 + Math.abs(s) * site.depth / 2;
-      const ez = Math.abs(s) * site.width / 2 + Math.abs(c) * site.depth / 2;
-      this.buildings.push({
-        minX: site.x - ex,
-        maxX: site.x + ex,
-        minZ: site.z - ez,
-        maxZ: site.z + ez,
-        collisionRect: { x: site.x, z: site.z, width: site.width, depth: site.depth, rotation: site.rotation, cosRotation: c, sinRotation: s },
-      });
-      this.buildingHeights.push(
-        site.kind === "spire" ? 54 : site.kind === "kremlin" ? 52 : site.kind === "mosque" ? 40 : site.kind === "palm-row" ? 14 : 15,
-      );
+      if (site.kind === "palm-row") {
+        for (const offset of palmOffsets(site.width)) {
+          this.addBuildingCollider(site.x + offset * Math.cos(site.rotation), site.z + offset * Math.sin(site.rotation),
+            PALM_BASE_RADIUS * 2, PALM_BASE_RADIUS * 2, site.rotation);
+        }
+      } else this.addBuildingCollider(site.x, site.z, site.width, site.depth, site.rotation);
     }
-    const inst = new THREE.InstancedMesh(geo, mat, placements.length);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const col = new THREE.Color();
-    placements.forEach((p, i) => {
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), cityBuildingMeshYaw(p.rotation));
-      if (this.mapId === "tokyo" && this.heroSpots.length < 8 && i % 73 === 2) {
-        // reserve this spot for a real mid-rise model (dropped in when assets load)
+    const batches: [(typeof placements)[number][], (typeof placements)[number][]] = [[], []];
+    for (const [index, p] of placements.entries()) {
+      if (this.mapId === "tokyo" && this.heroSpots.length < 8 && index % 73 === 2) {
         this.heroSpots.push(p);
-        const ex = Math.abs(Math.cos(p.rotation)) * p.w / 2 + Math.abs(Math.sin(p.rotation)) * p.d / 2;
-        const ez = Math.abs(Math.sin(p.rotation)) * p.w / 2 + Math.abs(Math.cos(p.rotation)) * p.d / 2;
-        this.heroAABBs.push({
-          minX: p.x - ex,
-          maxX: p.x + ex,
-          minZ: p.z - ez,
-          maxZ: p.z + ez,
-        });
-        m.compose(
-          new THREE.Vector3(p.x, -60, p.z),
-          q,
-          new THREE.Vector3(0.001, 0.001, 0.001)
-        );
-        inst.setMatrixAt(i, m);
-        return;
+        this.heroAABBs.push(this.buildings[index]);
       }
-      m.compose(
-        new THREE.Vector3(p.x, 0, p.z),
-        q,
-        new THREE.Vector3(p.w, p.h, p.d)
-      );
-      inst.setMatrixAt(i, m);
-      const shade = 0.85 + rng() * 0.35;
-      col.setRGB(shade, shade, shade * 1.08);
-      inst.setColorAt(i, col);
-      if (p.h > 31) this.roofSpots.push(p);
-    });
-    inst.castShadow = false;
-    inst.receiveShadow = false;
-    g.add(inst);
-    g.userData.cityBuildingCount = placements.length;
+      // Retain the procedural body until the optional Tokyo GLB is available.
+      batches[p.variant].push(p);
+      if (this.mapId === "tokyo" && p.h > 31) this.roofSpots.push(p);
+    }
+    const matrix = new THREE.Matrix4();
+    const rotation = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const pos = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+    const color = new THREE.Color();
+    for (const variant of [0, 1] as const) {
+      const sites = batches[variant];
+      if (!sites.length) continue;
+      const mesh = new THREE.InstancedMesh(createBuildingGeometry(this.mapId, variant), material, sites.length);
+      mesh.name = `architecture-${this.mapId}-${variant}`;
+      for (const [index, site] of sites.entries()) {
+        rotation.setFromAxisAngle(up, cityBuildingMeshYaw(site.rotation));
+        matrix.compose(pos.set(site.x, 0, site.z), rotation, scale.set(site.w, site.h, site.d));
+        mesh.setMatrixAt(index, matrix);
+        const tone = rng();
+        if (this.mapId === "spb") color.setHex([0xfffff2, 0xe3d3c8, 0xf4dfcc, 0xe7ece5][Math.floor(tone * 4)]);
+        else if (this.mapId === "kazan") color.setHex([0xffffee, 0xf3dfbc, 0xc8e4cd, 0xddbbaa][Math.floor(tone * 4)]);
+        else if (this.mapId === "sochi") color.setHex([0xfff3dd, 0xffdfa7, 0xffffff, 0xd7e7dc][Math.floor(tone * 4)]);
+        else color.setScalar(0.82 + tone * 0.18);
+        mesh.setColorAt(index, color);
+        if (this.heroSpots.includes(site)) this.heroFallbacks.push({ mesh, index });
+      }
+      g.add(mesh);
+    }
     if (this.mapId === "yokohama") g.add(this.buildPortBuildings());
     return g;
   }
 
-  private buildCityLandmarks(): THREE.Group {
-    const group = new THREE.Group();
-    group.name = `landmarks-${this.mapId}`;
-    const stone = new THREE.MeshStandardMaterial({ color: this.mapId === "spb" ? 0xc8bba8 : 0xc0c6c2, roughness: 0.82, emissive: 0x22242a, emissiveIntensity: 0.16 });
-    const pale = new THREE.MeshStandardMaterial({ color: 0xd9d4c6, roughness: 0.78, emissive: 0x27272c, emissiveIntensity: 0.18 });
-    const roof = new THREE.MeshStandardMaterial({ color: this.mapId === "kazan" ? 0x2f9eaa : 0xc84636, roughness: 0.55, metalness: 0.18, emissive: 0x1b262a });
-    const fortress = new THREE.MeshStandardMaterial({ color: 0x9e493b, roughness: 0.84, emissive: 0x26100c, emissiveIntensity: 0.12 });
-    const turf = new THREE.MeshStandardMaterial({ color: 0x43835c, roughness: 0.9, emissive: 0x112719, emissiveIntensity: 0.12 });
-    const seating = new THREE.MeshStandardMaterial({ color: 0x73818b, roughness: 0.72, metalness: 0.18, emissive: 0x182129 });
-    const gold = new THREE.MeshStandardMaterial({ color: 0xe1b64e, roughness: 0.42, metalness: 0.5, emissive: 0x44310b, emissiveIntensity: 0.3 });
-    const glass = new THREE.MeshStandardMaterial({ color: 0x496a78, roughness: 0.4, metalness: 0.38, emissive: 0x152c39 });
-    const greenery = new THREE.MeshStandardMaterial({ color: 0x39755f, roughness: 0.88, emissive: 0x11291f, emissiveIntensity: 0.16 });
-    const trunk = new THREE.MeshStandardMaterial({ color: 0x927454, roughness: 0.96 });
-    const addMesh = (parent: THREE.Group, geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => {
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      parent.add(mesh);
-      return mesh;
-    };
-    for (const site of this.layout.landmarks) {
-      const landmark = new THREE.Group();
-      landmark.position.set(site.x, 0, site.z);
-      landmark.rotation.y = cityBuildingMeshYaw(site.rotation);
-      landmark.name = site.id;
-      const box = (x: number, y: number, z: number, width: number, height: number, depth: number, material = stone) =>
-        addMesh(landmark, new THREE.BoxGeometry(width, height, depth), material, x, y, z);
-      if (site.kind === "spire") {
-        box(0, 1, 0, site.width, 2, site.depth, pale);
-        addMesh(landmark, new THREE.CylinderGeometry(3.8, 4.8, 24, 10), stone, 0, 13, 0);
-        box(0, 26, 0, 8.5, 1.8, 8.5, gold);
-        addMesh(landmark, new THREE.ConeGeometry(3.8, 24, 8), gold, 0, 39, 0);
-      } else if (site.kind === "kremlin") {
-        box(0, 1, 0, site.width * 1.08, 2, site.depth * 1.08, pale);
-        box(0, 6.5, 0, site.width, 11, site.depth, fortress);
-        for (const side of [-1, 1]) {
-          for (const z of [-site.depth * 0.44, site.depth * 0.44]) {
-            addMesh(landmark, new THREE.CylinderGeometry(2.1, 2.7, 20, 8), fortress, side * site.width * 0.42, 10, z);
-            addMesh(landmark, new THREE.ConeGeometry(3.3, 8, 6), roof, side * site.width * 0.42, 24, z);
-          }
-        }
-        box(0, 3, site.depth * 0.51, site.width * 0.9, 6, 1.8, fortress);
-        for (let x = -site.width * 0.42; x <= site.width * 0.42; x += 4) {
-          box(x, 7.5, site.depth * 0.51, 1.15, 2, 1.9, fortress);
-        }
-        box(0, 21, -site.depth * 0.08, 9, 21, 9, pale);
-        addMesh(landmark, new THREE.ConeGeometry(6.4, 14, 6), roof, 0, 38.5, -site.depth * 0.08);
-      } else if (site.kind === "mosque") {
-        box(0, 4, 0, site.width * 0.72, 8, site.depth * 0.72, pale);
-        const dome = addMesh(landmark, new THREE.SphereGeometry(site.width * 0.22, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), roof, 0, 7.8, 0);
-        dome.scale.y = 0.9;
-        for (const x of [-1, 1]) for (const z of [-1, 1]) {
-          const minaretX = x * site.width * 0.38;
-          const minaretZ = z * site.depth * 0.34;
-          addMesh(landmark, new THREE.CylinderGeometry(0.8, 1.2, 26, 8), pale, minaretX, 13, minaretZ);
-          addMesh(landmark, new THREE.ConeGeometry(1.6, 5.5, 8), roof, minaretX, 28.8, minaretZ);
-        }
-        addMesh(landmark, new THREE.ConeGeometry(1.1, 3.5, 8), gold, 0, 16.5, 0);
-      } else if (site.kind === "stadium") {
-        const oval = site.depth / site.width;
-        const base = addMesh(landmark, new THREE.CylinderGeometry(site.width * 0.5, site.width * 0.5, 1.4, 24), stone, 0, 0.7, 0);
-        base.scale.z = oval;
-        const bowl = addMesh(landmark, new THREE.CylinderGeometry(site.width * 0.42, site.width * 0.5, 7, 24, 1, true), glass, 0, 4.8, 0);
-        bowl.scale.z = oval;
-        for (const [radius, y, material] of [[0.42, 8.35, pale], [0.36, 6.6, seating], [0.31, 4.9, seating]] as const) {
-          const tier = addMesh(landmark, new THREE.TorusGeometry(site.width * radius, 0.75, 5, 28), material, 0, y, 0);
-          tier.rotation.x = Math.PI / 2;
-          tier.scale.z = oval;
-        }
-        addMesh(landmark, new THREE.BoxGeometry(site.width * 0.56, 0.3, site.depth * 0.48), turf, 0, 2.3, 0);
-        addMesh(landmark, new THREE.BoxGeometry(site.width * 0.46, 0.08, site.depth * 0.38), greenery, 0, 2.5, 0);
-      } else if (site.kind === "bridge") {
-        box(0, 0.08, 0, site.width, 0.16, site.depth, new THREE.MeshStandardMaterial({ color: 0x343944, roughness: 0.88 }));
-        for (const side of [-1, 1]) {
-          box(side * (site.width / 2 - 0.35), 0.8, 0, 0.45, 1.35, site.depth, glass);
-          for (let z = -site.depth / 2 + 4; z < site.depth / 2; z += 10) {
-            box(side * (site.width / 2 - 0.35), 1.55, z, 0.7, 0.25, 0.7, gold);
-          }
-        }
-        for (let z = -site.depth / 2 + 5; z < site.depth / 2 - 2; z += 9) {
-          box(0, 0.18, z, 0.28, 0.035, 3.6, pale);
-        }
-      } else {
-        for (const x of [-6, -2, 2, 6]) {
-          addMesh(landmark, new THREE.CylinderGeometry(0.28, 0.42, 8, 6), trunk, x, 4, 0);
-          for (let frond = 0; frond < 6; frond++) {
-            const angle = (frond / 6) * Math.PI * 2;
-            const leaf = addMesh(landmark, new THREE.ConeGeometry(1.1, 5, 5), greenery, x + Math.cos(angle) * 1.7, 8.6, Math.sin(angle) * 1.7);
-            leaf.rotation.z = -Math.cos(angle) * 0.9;
-            leaf.rotation.x = Math.sin(angle) * 0.9;
-          }
-        }
-      }
-      group.add(landmark);
-    }
-    return group;
+  private addBuildingCollider(x: number, z: number, width: number, depth: number, rotation: number): void {
+    const c = Math.cos(rotation), s = Math.sin(rotation);
+    const ex = Math.abs(c) * width / 2 + Math.abs(s) * depth / 2;
+    const ez = Math.abs(s) * width / 2 + Math.abs(c) * depth / 2;
+    this.buildings.push({
+      minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez,
+      collisionRect: { x, z, width, depth, rotation, cosRotation: c, sinRotation: s },
+    });
   }
 
   private buildPortBuildings(): THREE.Group {
@@ -905,6 +826,14 @@ export class World {
     const unitBox = new THREE.BoxGeometry(1, 1, 1);
     const cranePaint = new THREE.MeshStandardMaterial({ color: 0xd7ded7, roughness: 0.82, metalness: 0.16, map: this.makeWarehouseTexture() });
     const roofMat = new THREE.MeshStandardMaterial({ color: 0x48555a, roughness: 0.76, metalness: 0.28 });
+    const gable = new THREE.Shape();
+    gable.moveTo(-0.5, 0);
+    gable.lineTo(0.5, 0);
+    gable.lineTo(0.5, 0.14);
+    gable.lineTo(0, 1);
+    gable.lineTo(-0.5, 0.14);
+    gable.closePath();
+    const warehouseRoof = new THREE.ExtrudeGeometry(gable, { depth: 1, bevelEnabled: false }).translate(0, 0, -0.5);
     const doorMat = new THREE.MeshStandardMaterial({ color: 0x17252a, emissive: 0x10232a, emissiveIntensity: 0.55, roughness: 0.65 });
     const trimMat = new THREE.MeshStandardMaterial({ color: 0xd6ab57, emissive: 0x593b0e, emissiveIntensity: 0.35, roughness: 0.58, metalness: 0.28 });
     const steelMat = new THREE.MeshStandardMaterial({ color: 0x64757a, roughness: 0.42, metalness: 0.72 });
@@ -933,7 +862,7 @@ export class World {
       group.add(siteGroup);
       return siteGroup;
     };
-    const addBuildingBounds = (site: (typeof this.layout.portSites)[number], x: number, z: number, w: number, d: number, h: number) => {
+    const addBuildingBounds = (site: (typeof this.layout.portSites)[number], x: number, z: number, w: number, d: number) => {
       const c = Math.cos(site.rotation);
       const s = Math.sin(site.rotation);
       const worldX = site.x + x * c - z * s;
@@ -941,7 +870,6 @@ export class World {
       const ex = Math.abs(c) * w / 2 + Math.abs(s) * d / 2;
       const ez = Math.abs(s) * w / 2 + Math.abs(c) * d / 2;
       this.buildings.push({ minX: worldX - ex, maxX: worldX + ex, minZ: worldZ - ez, maxZ: worldZ + ez });
-      this.buildingHeights.push(h);
     };
 
     for (const [siteIndex, site] of this.layout.portSites.entries()) {
@@ -951,7 +879,10 @@ export class World {
         const depth = site.depth * 0.82;
         const height = 11;
         addBox(place, cranePaint, 0, height / 2, 0, width, height, depth);
-        addBox(place, roofMat, 0, height + 0.4, 0, width + 1.8, 0.8, depth + 1.4);
+        const roof = new THREE.Mesh(warehouseRoof, roofMat);
+        roof.position.y = height;
+        roof.scale.set(width + 1.8, 3.05, depth + 1.4);
+        place.add(roof);
         addBox(place, steelMat, 0, height - 0.3, -depth * 0.32, width * 0.82, 0.32, 0.48);
         for (const x of [-0.28, 0, 0.28]) {
           const doorX = x * width;
@@ -967,7 +898,7 @@ export class World {
           beacon.position.set(x, height + 2.35, depth * 0.2);
           place.add(beacon);
         }
-        addBuildingBounds(site, 0, 0, width, depth, height + 2.5);
+        addBuildingBounds(site, 0, 0, width, depth);
         stats.warehouses++;
         continue;
       }
@@ -987,7 +918,7 @@ export class World {
           for (let level = 0; level < levels; level++) {
             positions.push({ x, z, level, color: containerPaint[(row * cols + col + siteIndex) % containerPaint.length] });
           }
-          addBuildingBounds(site, x, z, containerW, containerD, levels * containerH);
+          addBuildingBounds(site, x, z, containerW, containerD);
         }
         const instanced = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), containerMat, positions.length);
         positions.forEach((item, i) => {
@@ -1024,7 +955,7 @@ export class World {
           stripe.position.set(x, 2.2, 0);
           place.add(stripe);
           addBox(place, steelMat, x + 1.1, height + 0.9, -0.9, 0.45, 1.8, 0.45);
-          addBuildingBounds(site, x, 0, radius * 2, radius * 2, height + 1);
+          addBuildingBounds(site, x, 0, radius * 2, radius * 2);
         }
         stats.tankFarms++;
         continue;
@@ -1132,7 +1063,6 @@ export class World {
         const worldX = site.x + x * Math.cos(site.rotation) - z * Math.sin(site.rotation);
         const worldZ = site.z + x * Math.sin(site.rotation) + z * Math.cos(site.rotation);
         this.buildings.push({ minX: worldX - 0.8, maxX: worldX + 0.8, minZ: worldZ - 0.8, maxZ: worldZ + 0.8 });
-        this.buildingHeights.push(h);
       }
       for (const z of [-d * 0.38, d * 0.38]) {
         addBeam(0, h, z, w + 3.2, 1.4, 1.5);
@@ -1213,6 +1143,12 @@ export class World {
   setHeroBuildings(model: THREE.Group, modelSize: THREE.Vector3): void {
     const rng = mulberry32(4242);
     this.heroBuildings.clear();
+    if (!this.heroSpots.length) return;
+    const hidden = new THREE.Matrix4().makeScale(1e-4, 1e-4, 1e-4).setPosition(0, -20, 0);
+    for (const { mesh, index } of this.heroFallbacks) {
+      mesh.setMatrixAt(index, hidden);
+      mesh.instanceMatrix.needsUpdate = true;
+    }
     for (const s of this.heroSpots) {
       const clone = model.clone(true);
       const fit = Math.min(
@@ -1263,73 +1199,15 @@ export class World {
     return this.buildingSites.length;
   }
 
-  private makeBuildingTexture(): THREE.CanvasTexture {
-    const cv = document.createElement("canvas");
-    cv.width = 128;
-    cv.height = 256;
-    const g = cv.getContext("2d")!;
-    // walls — near black in the emissive map so only windows glow
-    g.fillStyle = "#181e2e";
-    g.fillRect(0, 0, 128, 256);
-    const rng = mulberry32(99);
-    for (let y = 6; y < 250; y += 14) {
-      for (let x = 6; x < 122; x += 12) {
-        if (rng() < 0.55) {
-          const warm = rng() < 0.6;
-          const a = 0.55 + rng() * 0.45;
-          g.fillStyle = warm
-            ? `rgba(255,190,105,${a})`
-            : `rgba(130,215,255,${a * 0.9})`;
-          g.fillRect(x, y, 7, 9);
-        }
-      }
-    }
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-  }
-
-  private makeIndustrialTexture(): THREE.CanvasTexture {
-    const cv = document.createElement("canvas");
-    cv.width = 128;
-    cv.height = 128;
-    const g = cv.getContext("2d")!;
-    g.fillStyle = "#657176";
-    g.fillRect(0, 0, 128, 128);
-    for (let x = 5; x < 128; x += 8) {
-      g.fillStyle = "rgba(17,29,35,.3)";
-      g.fillRect(x, 0, 2, 128);
-      g.fillStyle = "rgba(225,232,227,.13)";
-      g.fillRect(x + 2, 0, 1, 128);
-    }
-    g.fillStyle = "#334047";
-    g.fillRect(22, 39, 84, 89);
-    g.fillStyle = "#29343a";
-    g.fillRect(29, 52, 70, 76);
-    g.strokeStyle = "rgba(188,201,199,.62)";
-    g.lineWidth = 2;
-    for (let y = 57; y < 126; y += 11) {
-      g.beginPath();
-      g.moveTo(32, y);
-      g.lineTo(96, y);
-      g.stroke();
-    }
-    g.fillStyle = "#e3b34c";
-    g.fillRect(7, 15, 23, 6);
-    g.fillStyle = "#17262c";
-    g.fillRect(7, 27, 30, 8);
-    const texture = new THREE.CanvasTexture(cv);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    return texture;
-  }
-
   private buildStreetProps(): THREE.Group {
     const g = new THREE.Group();
     const rng = mulberry32(31337);
-    // lamp poles along roads — emissive tips + additive glow sprites
-    const poleGeo = new THREE.CylinderGeometry(0.12, 0.16, 7, 6);
-    const poleMat = new THREE.MeshStandardMaterial({ color: 0x3a4152 });
-    const tipGeo = new THREE.SphereGeometry(0.42, 8, 8);
+    // Lamp poles and emissive fixtures share two instanced batches.
+    const height = this.mapId === "spb" ? 4.6 : this.mapId === "sochi" ? 5.3 : 6.5;
+    const poleGeo = new THREE.CylinderGeometry(0.10, this.mapId === "spb" ? 0.25 : 0.17, height, 6);
+    const poleMat = new THREE.MeshStandardMaterial({ color: this.mapId === "sochi" ? 0xa8a8a0 : 0x353b40 });
+    const tipGeo = this.mapId === "tokyo" ? new THREE.SphereGeometry(0.42, 8, 6)
+      : new THREE.CylinderGeometry(0.19, 0.33, 0.61, this.mapId === "spb" ? 4 : 6);
     const tipMat = new THREE.MeshStandardMaterial({
       color: 0xffd9a0,
       emissive: 0xffc070,
@@ -1351,16 +1229,16 @@ export class World {
         const x = a.x + dx * t - dz / length * offset * side;
         const z = a.z + dz * t + dx / length * offset * side;
         if (this.isOnRoad(x, z)) continue;
-        positions.push(new THREE.Vector3(x, 7, z));
+        positions.push(new THREE.Vector3(x, height, z));
       }
     }
     const poles = new THREE.InstancedMesh(poleGeo, poleMat, positions.length);
     const tips = new THREE.InstancedMesh(tipGeo, tipMat, positions.length);
     const m = new THREE.Matrix4();
     positions.forEach((p, i) => {
-      m.makeTranslation(p.x, 3.5, p.z);
+      m.makeTranslation(p.x, height / 2, p.z);
       poles.setMatrixAt(i, m);
-      m.makeTranslation(p.x, 7, p.z);
+      m.makeTranslation(p.x, p.y, p.z);
       tips.setMatrixAt(i, m);
     });
     g.add(poles, tips);
@@ -1369,7 +1247,7 @@ export class World {
       // Neon signs belong to the downtown skyline, not the cargo terminal.
       const signTex = this.makeNeonTexture();
       for (let k = 0; k < 22; k++) {
-        const b = this.buildings[Math.floor(rng() * this.buildings.length)];
+        const b = this.buildings[Math.floor(rng() * this.buildingSites.length)];
         if (!b) continue;
         const hue = rng();
         const color = new THREE.Color().setHSL(hue, 1, 0.6);
@@ -1560,7 +1438,8 @@ export class World {
     const kinds = [0, 1, 2, 3].map((k) => this.makeBladeTexture(k));
     const perKind: THREE.Matrix4[][] = [[], [], [], []];
     const placements: { x: number; z: number; ry: number; y: number }[] = [];
-    for (const b of this.buildings) {
+    for (let index = 0; index < this.buildingSites.length; index++) {
+      const b = this.buildings[index];
       if (this.isHeroSpot(b) || rng() < 0.42) continue;
       const cx = (b.minX + b.maxX) / 2;
       const cz = (b.minZ + b.maxZ) / 2;
@@ -1660,7 +1539,8 @@ export class World {
     const eul = new THREE.Euler();
     const col = new THREE.Color();
     const picked: { x: number; z: number; ry: number; y: number }[] = [];
-    for (const b of this.buildings) {
+    for (let index = 0; index < this.buildingSites.length; index++) {
+      const b = this.buildings[index];
       if (this.isHeroSpot(b) || rng() < 0.5) continue;
       const cx = (b.minX + b.maxX) / 2;
       const cz = (b.minZ + b.maxZ) / 2;
@@ -1779,49 +1659,24 @@ export class World {
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const col = new THREE.Color();
-    for (let bi = 0; bi < this.buildings.length; bi++) {
-      const b = this.buildings[bi];
-      if (this.isHeroSpot(b) || rng() < 0.35) continue;
-      const w = b.maxX - b.minX;
-      const h = b.maxZ - b.minZ;
-      const height = this.buildingHeights[bi];
-      const c = World.NEON[Math.floor(rng() * World.NEON.length)];
-      // vertical corner strips
-      const corners: [number, number][] = [
-        [b.minX, b.minZ],
-        [b.maxX, b.minZ],
-        [b.minX, b.maxZ],
-        [b.maxX, b.maxZ],
-      ];
-      const nv = rng() < 0.5 ? 1 : 2;
-      for (let k = 0; k < nv; k++) {
-        const [x, z] = corners[Math.floor(rng() * 4)];
-        const out = 0.1;
-        const sx = x === b.minX ? -out : out;
-        const sz = z === b.minZ ? -out : out;
-        m.compose(
-          new THREE.Vector3(x + sx, height / 2, z + sz),
-          q.identity(),
-          new THREE.Vector3(0.14, height, 0.14)
-        );
-        mats.push({ m: m.clone(), c });
-      }
-      // roofline strip
-      if (rng() < 0.6) {
-        const horiz = rng() < 0.5;
-        m.compose(
-          new THREE.Vector3(
-            (b.minX + b.maxX) / 2,
-            height,
-            horiz ? b.minZ - 0.1 : (b.minZ + b.maxZ) / 2
-          ),
-          q.identity(),
-          horiz
-            ? new THREE.Vector3(w + 0.2, 0.14, 0.14)
-            : new THREE.Vector3(0.14, 0.14, h + 0.2)
-        );
-        mats.push({ m: m.clone(), c });
-      }
+    const position = new THREE.Vector3(), size = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    for (const [index, site] of this.buildingSites.entries()) {
+      if (this.heroAABBs.includes(this.buildings[index]) || rng() < 0.73) continue;
+      q.setFromAxisAngle(up, cityBuildingMeshYaw(site.rotation));
+      const width = site.width * TOKYO_TOWER_WIDTH[site.variant];
+      const depth = site.depth * TOKYO_TOWER_WIDTH[site.variant];
+      const color = World.NEON[Math.floor(rng() * World.NEON.length)];
+      const side = rng() < 0.5 ? -1 : 1;
+      const append = (x: number, y: number, z: number, w: number, h: number, d: number) => {
+        position.set(x, y, z).applyQuaternion(q);
+        position.x += site.x;
+        position.z += site.z;
+        m.compose(position, q, size.set(w, h, d));
+        mats.push({ m: m.clone(), c: color });
+      };
+      for (const sign of [-1, 1]) append(sign * width / 2, site.height * 0.535, side * depth / 2, 0.12, site.height * 0.67, 0.12);
+      append(0, site.height * 0.87, side * depth / 2, width, 0.12, 0.12);
     }
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const mat = new THREE.MeshBasicMaterial({});
