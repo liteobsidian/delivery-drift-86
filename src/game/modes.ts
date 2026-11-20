@@ -104,12 +104,13 @@ export function timeAttackMedal(course: TimeAttackCourse, elapsed: number): Meda
 }
 
 /** Medal rewards are paid once per completed run; non-medal runs still earn a small purse. */
-export function modeReward(mode: GameMode, medal: MedalTier | null, score: number): number {
+export function modeReward(mode: GameMode, medal: MedalTier | null, score: number, finished = true): number {
+  if (!finished) return 0;
   if (mode === "drift-trial") {
     if (medal === "gold") return 900;
     if (medal === "silver") return 450;
     if (medal === "bronze") return 180;
-    return Math.max(40, Math.min(200, Math.round(score * 0.25)));
+    return score > 0 ? Math.max(40, Math.min(200, Math.round(score * 0.25))) : 0;
   }
   if (medal === "gold") return 1100;
   if (medal === "silver") return 650;

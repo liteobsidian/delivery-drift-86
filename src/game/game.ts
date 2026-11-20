@@ -12,9 +12,10 @@ import {
   CARGO_NAMES,
   ORDER_TITLES,
   WORLD_MAPS,
+  speedKmh,
 } from "./config";
-import type { GameScreen, MapId, Order, Profile } from "./types";
-import { loadProfile, saveProfile } from "./storage";
+import type { ActivityMode, GameScreen, MapId, Order, UpgradeLevels } from "./types";
+import { PROFILE_KEY, ProfileStore, type SaveStatus } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
 import { World } from "./world";
@@ -25,11 +26,16 @@ import { loadGameAssets } from "./assets";
 import type { HeroModelKey, LoadedModel } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
-import { sampleRoadPoint } from "./map-layouts";
+import { sampleDeliveryDestination } from "./delivery-routing";
 import { canUnlockCar, driftMedal, driftMultiplierForSeconds, finalDriftScore, medalRank, modeReward, timeAttackCourse, timeAttackMedal, type TimeAttackCourse } from "./modes";
 import { carThumb, createShowroom } from "./showroom";
-import { completeWeeklyRoute, loadRecords, loadWeeklyProgress, mapAccessFor, markWeeklyEventSeen, saveRecord, utcWeekKey, weeklyEventSeen, weeklyRoutes } from "./retention";
+import {
+  careerMedalPoints, completeWeeklyRoute, mapAccessFor, recordDetails, saveRecord,
+  utcWeekKey, weeklyRouteIds, weeklyRoutes, type WeeklyRoute,
+} from "./retention";
 
+const VERIFICATION = import.meta.env.DEV || import.meta.env.MODE === "verification";
+const WORLD_CACHE_LIMIT = 2;
 const SD = ROAD_W / 2 + 1.6; // stop-line distance from intersection center
 
 function el(tag: string, cls: string, html = ""): HTMLElement {
@@ -50,15 +56,22 @@ export class Game {
   }
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
+  private spawnFrustum = new THREE.Frustum();
+  private spawnViewProjection = new THREE.Matrix4();
+  private spawnSphere = new THREE.Sphere(new THREE.Vector3(), 3);
+  private spawnCameraFrame = -1;
   /** verification-only free camera override [px,py,pz, tx,ty,tz] */
   private freeCam: number[] | null = null;
   private clock = new THREE.Clock();
   private raf = 0;
   private acc = 0;
   private running = false;
+  private disposed = false;
   private tickCount = 0;
 
-  profile: Profile = loadProfile();
+  private profileStore = new ProfileStore();
+  profile = this.profileStore.profile;
+  private saveStatus: SaveStatus = "saved";
   audio = new AudioSystem();
   private input!: Input;
   private worldCache = new Map<MapId, World>();
@@ -70,8 +83,8 @@ export class Game {
 
   screen: GameScreen = "title";
   order: Order | null = null;
-  mode: "delivery" | "drift-trial" | "time-attack" = "delivery";
-  private pendingMode: "delivery" | "drift-trial" | "time-attack" = "delivery";
+  mode: ActivityMode = "delivery";
+  private pendingMode: ActivityMode = "delivery";
   orders: Order[] = [];
   timeLeft = 0;
   driftScore = 0;
@@ -126,14 +139,15 @@ export class Game {
   private hDrift!: HTMLElement;
   private hChase!: HTMLElement;
   private popups!: HTMLElement;
-  private tutorialEl!: HTMLElement;
+  private tutorialEl!: HTMLDialogElement;
+  private saveNotice: HTMLElement;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      preserveDrawingBuffer: true,
+      preserveDrawingBuffer: VERIFICATION,
       powerPreference: "high-performance",
     });
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -173,10 +187,12 @@ export class Game {
     // free downloaded models replace placeholders when they finish loading
     this.assetsReady = false;
     loadGameAssets(this.currentCarSpec().glb as HeroModelKey | undefined, (key, model) => {
+      if (this.disposed) return;
       this.heroModels[key] = model;
       if (this.currentCarSpec().glb === key) this.applyCarSpec();
     })
       .then((assets) => {
+        if (this.disposed) return;
         this.traffic.setCarModels(assets.traffic.map((m) => m.root));
         this.police.setModel(assets.police.root, assets.police.size.y + 0.05);
         this.midriseAsset = { root: assets.midrise.root, size: assets.midrise.size };
@@ -237,13 +253,21 @@ export class Game {
     this.hudEl = el("div", "hud");
     this.hudEl.style.display = "none";
     this.overlay.appendChild(this.hudEl);
+    this.saveNotice = el("section", "save-notice");
+    this.saveNotice.hidden = true;
+    this.saveNotice.setAttribute("aria-live", "polite");
+    this.overlay.appendChild(this.saveNotice);
+    window.addEventListener("storage", this.storageChanged);
+    document.addEventListener("visibilitychange", this.visibilityChanged);
+
 
     this.input = new Input();
     this.buildHud();
     this.input.onPause = () => this.togglePause();
     this.input.onMute = () => this.toggleMute();
     this.input.onConfirm = () => {
-      if (this.screen === "title") this.showScreen("play");
+      if (this.tutorialEl.open || this.saveStatus === "conflict") return;
+      if (this.screen === "title" && !this.screenEl.querySelector(".weekly-event-shade")) this.showScreen("play");
       else if (this.screen === "result") {
         if (this.lastResult.mode) this.startMode(this.lastResult.mode);
         else this.gotoOrders();
@@ -253,141 +277,152 @@ export class Game {
     this.audio.volume = this.profile.volume;
 
     this.showScreen("title");
-    (window as unknown as { __gameProbe: () => { x: number; y: number; z: number } }).__gameProbe =
-      () => ({ x: this.car.pos.x, y: this.car.pos.y, z: this.car.pos.z });
-    // verification hook (not user-facing)
-    (window as unknown as { __gameDebug: unknown }).__gameDebug = {
-      mapId: () => this.world.mapId,
-      roadProbe: (x: number, z: number) => ({
-        onRoad: this.world.isOnRoad(x, z),
-        nearestRoadDist: this.world.nearestRoadDist(x, z),
-        bounds: { ...this.world.layout.bounds },
-      }),
-      layoutSnapshot: () => ({
-        roads: this.world.layout.roads.map((road) => ({ id: road.id, points: road.points.map(({ x, z }) => ({ x, z })) })),
-        signals: this.world.layout.signalJunctions.map(({ x, z }) => ({ x, z })),
-      }),
-      resolveBoundary: (x: number, z: number) => {
-        const pos = new THREE.Vector3(x, 0, z);
-        this.world.collideBuildings(pos, 1, new THREE.Vector3());
-        return { x: pos.x, z: pos.z };
-      },
-      mode: () => this.mode,
-      modeState: () => ({
-        score: this.driftScore,
-        driftMultiplier: this.driftMultiplier,
-        driftChainScore: this.driftChainScore,
-        checkpoint: this.timeAttackCheckpointIndex,
-        course: this.timeAttackCourse,
-        elapsed: this.order ? this.order.timeLimit - this.timeLeft : 0,
-      }),
-      profile: () => ({
-        money: this.profile.money,
-        deliveries: this.profile.deliveries,
-        totalEarn: this.profile.totalEarn,
-        bestEarn: this.profile.bestEarn,
-        unlockedAch: [...this.profile.unlockedAch],
-        timeAttackMedal: this.profile.stats.timeAttackMedal,
-      }),
-      seedDriftChainForTest: (banked: number, active: number) => {
-        this.driftBankedScore = banked;
-        this.driftChainScore = active;
-        this.driftChainTime = active > 0 ? 2 : 0;
-        this.driftMultiplier = active > 0 ? 2 : 1;
-        this.driftScore = banked + active;
-      },
-      setElapsedForTest: (elapsed: number) => {
-        if (this.order) this.timeLeft = Math.max(0, this.order.timeLimit - elapsed);
-      },
-      nitroFuel: () => this.nitroFuel,
-      cityBuildingCount: () => this.world.buildingCount(),
-      finishDelivery: () => { if (this.mode === "delivery" && this.order) this.completeOrder(true, "Тестовая доставка"); },
-      exitMode: () => this.showScreen("title"),
-      weekly: () => weeklyRoutes(new Date(), this.world.mapId).map((route) => route.id),
-      weeklyRoutes: () => weeklyRoutes(new Date(), this.world.mapId),
-      weekKey: (date?: string) => utcWeekKey(date ? new Date(date) : new Date()),
-      finishWeekly: () => { if (this.order?.weeklyId) this.completeOrder(true, "Тестовый финиш"); },
-      weeklyProgress: () => loadWeeklyProgress(),
-      mapAccessFor,
-      setDeliveriesForTest: (deliveries: number) => { this.profile.deliveries = deliveries; saveProfile(this.profile); },
-      weeklyEventSeen: (date?: string) => weeklyEventSeen(date ? new Date(date) : new Date()),
-      markWeeklyEventSeen: (date?: string) => markWeeklyEventSeen(date ? new Date(date) : new Date()),
-      portVisuals: () => {
-        if (this.world.mapId !== "yokohama") return null;
-        const port = this.world.group.getObjectByName("port-warehouses-and-containers");
-        const water = this.world.group.getObjectByName("harbor-water");
-        const cranes = this.world.group.getObjectByName("port-gantry-cranes");
-        const stats = port?.userData.portStats ?? {};
-        return {
-          interiorWater: water?.userData.interiorWater ?? 0,
-          warehouses: stats.warehouses ?? 0,
-          containerStacks: stats.containerStacks ?? 0,
-          containerInstances: stats.containerInstances ?? 0,
-          gantryCranes: cranes?.userData.gantryCranes ?? 0,
-          piers: stats.piers ?? 0,
-          cargoShips: stats.cargoShips ?? 0,
-          tankFarms: stats.tankFarms ?? 0,
-        };
-      },
-      scene: this.scene,
-      teleport: (x: number, z: number, heading?: number) => {
-        this.car.pos.set(x, 0, z);
-        this.car.vel.set(0, 0, 0);
-        if (heading !== undefined) this.car.heading = heading;
-      },
-      cargo: () => this.car.cargo,
-      screen: () => this.screen,
-      orderDest: () =>
-        this.order ? { x: this.order.dest.x, z: this.order.dest.z } : null,
-      destinationVisible: () => this.world.group.getObjectByName("destination-marker")?.visible ?? false,
-      // feature test hooks (verification only)
-      damageTest: () => {
-        this.car.damageCar(75);
-        this.car.loseWheel();
-      },
-      policeTest: () => {
-        this.police.start(this.car.pos.x + 8, this.car.pos.z + 14);
-      },
-      hp: () => this.car.hp,
-      ticks: () => this.tickCount,
-      keys: () => [...this.input.keys],
-      order: () => (this.order ? { x: this.order.dest.x, z: this.order.dest.z } : null),
-      policeActive: () => this.police.active,
-      bonus: () => this.bonusMoney,
-      trafficHits: () => this.trafficHits,
-      wrecked: () => this.car.wrecked,
-      wreckTimer: () => this.wreckTimer,
-      partsLost: () => ({
-        spoiler: this.car.spoilerLost,
-        bumper: this.car.bumperLost,
-        wheel: this.car.wheelLost,
-      }),
-      assetsReady: () => this.assetsReady,
-      heroCount: () => this.world.heroCount(),
-      trafficPos: () => this.traffic.debugPositions(),
-      ramps: () => this.world.ramps.map((r) => ({ x: r.x, z: r.z, dx: r.dx, dz: r.dz })),
-      air: () => ({ airY: this.car.airY, airV: this.car.airV }),
-      freeCam: (a: number[] | null) => {
-        this.freeCam = a;
-      },
-      lightState: () =>
-        this.world.lights.map((l) => ({
-          t: Math.round(l.timer * 100) / 100,
-          xLit: l.lampsX.findIndex((m) => m.emissiveIntensity > 2),
-          zLit: l.lampsZ.findIndex((m) => m.emissiveIntensity > 2),
-        })),
-      speed: () => Math.hypot(this.car.vel.x, this.car.vel.z),
-      tris: () => {
-        let n = 0;
-        this.scene.traverse((o) => {
-          const mesh = o as THREE.Mesh;
-          if (!mesh.isMesh || !mesh.geometry) return;
-          const geo = mesh.geometry;
-          n += (geo.index ? geo.index.count : geo.attributes.position?.count ?? 0) / 3;
-        });
-        return Math.round(n);
-      },
-    };
+    if (!this.profileStore.readable) this.showSaveStatus("unavailable");
+    if (VERIFICATION) {
+      (window as unknown as { __gameProbe: () => { x: number; y: number; z: number } }).__gameProbe =
+        () => ({ x: this.car.pos.x, y: this.car.pos.y, z: this.car.pos.z });
+      // verification hook (not user-facing)
+      (window as unknown as { __gameDebug: unknown }).__gameDebug = {
+        mapId: () => this.world.mapId,
+        roadProbe: (x: number, z: number) => ({
+          onRoad: this.world.isOnRoad(x, z),
+          nearestRoadDist: this.world.nearestRoadDist(x, z),
+          bounds: { ...this.world.layout.bounds },
+        }),
+        layoutSnapshot: () => ({
+          roads: this.world.layout.roads.map((road) => ({ id: road.id, points: road.points.map(({ x, z }) => ({ x, z })) })),
+          signals: this.world.layout.signalJunctions.map(({ x, z }) => ({ x, z })),
+        }),
+        resolveBoundary: (x: number, z: number) => {
+          const pos = new THREE.Vector3(x, 0, z);
+          this.world.collideBuildings(pos, 1, new THREE.Vector3());
+          return { x: pos.x, z: pos.z };
+        },
+        mode: () => this.mode,
+        modeState: () => ({
+          score: this.driftScore,
+          driftMultiplier: this.driftMultiplier,
+          driftChainScore: this.driftChainScore,
+          checkpoint: this.timeAttackCheckpointIndex,
+          course: this.timeAttackCourse,
+          elapsed: this.order ? this.order.timeLimit - this.timeLeft : 0,
+        }),
+        profile: () => ({
+          money: this.profile.money,
+          deliveries: this.profile.deliveries,
+          totalEarn: this.profile.totalEarn,
+          bestEarn: this.profile.bestEarn,
+          unlockedAch: [...this.profile.unlockedAch],
+          timeAttackMedal: this.profile.stats.timeAttackMedal,
+        }),
+        seedDriftChainForTest: (banked: number, active: number) => {
+          this.driftBankedScore = banked;
+          this.driftChainScore = active;
+          this.driftChainTime = active > 0 ? 2 : 0;
+          this.driftMultiplier = active > 0 ? 2 : 1;
+          this.driftScore = banked + active;
+        },
+        setElapsedForTest: (elapsed: number) => {
+          if (this.order) this.timeLeft = Math.max(0, this.order.timeLimit - elapsed);
+        },
+        nitroFuel: () => this.nitroFuel,
+        cityBuildingCount: () => this.world.buildingCount(),
+        finishDelivery: () => { if (this.mode === "delivery" && this.order) this.completeOrder(true, "Тестовая доставка"); },
+        exitMode: () => this.showScreen("title"),
+        weekly: () => weeklyRoutes(new Date(), this.world.mapId).map((route) => route.id),
+        weeklyRoutes: () => weeklyRoutes(new Date(), this.world.mapId),
+        weekKey: (date?: string) => utcWeekKey(date ? new Date(date) : new Date()),
+        finishWeekly: () => { if (this.order?.weekly) this.completeOrder(true, "Тестовый финиш"); },
+        weeklyProgress: () => {
+          const week = utcWeekKey();
+          return { week, completed: this.profile.weeklyCompletions[week] ?? [] };
+        },
+        mapAccessFor,
+        setDeliveriesForTest: (deliveries: number) => { this.profile.deliveries = deliveries; this.persistProfile(); },
+        weeklyEventSeen: (date?: string) => this.profile.weeklyEventWeek === utcWeekKey(date ? new Date(date) : new Date()),
+        markWeeklyEventSeen: (date?: string) => {
+          this.profile.weeklyEventWeek = utcWeekKey(date ? new Date(date) : new Date());
+          this.persistProfile();
+        },
+        worldCacheSize: () => this.worldCache.size,
+        setCargoForTest: (cargo: number) => { this.car.cargo = cargo; },
+        portVisuals: () => {
+          if (this.world.mapId !== "yokohama") return null;
+          const port = this.world.group.getObjectByName("port-warehouses-and-containers");
+          const water = this.world.group.getObjectByName("harbor-water");
+          const cranes = this.world.group.getObjectByName("port-gantry-cranes");
+          const stats = port?.userData.portStats ?? {};
+          return {
+            interiorWater: water?.userData.interiorWater ?? 0,
+            warehouses: stats.warehouses ?? 0,
+            containerStacks: stats.containerStacks ?? 0,
+            containerInstances: stats.containerInstances ?? 0,
+            gantryCranes: cranes?.userData.gantryCranes ?? 0,
+            piers: stats.piers ?? 0,
+            cargoShips: stats.cargoShips ?? 0,
+            tankFarms: stats.tankFarms ?? 0,
+          };
+        },
+        scene: this.scene,
+        teleport: (x: number, z: number, heading?: number) => {
+          this.car.pos.set(x, 0, z);
+          this.car.vel.set(0, 0, 0);
+          if (heading !== undefined) this.car.heading = heading;
+        },
+        cargo: () => this.car.cargo,
+        screen: () => this.screen,
+        orderDest: () =>
+          this.order ? { x: this.order.dest.x, z: this.order.dest.z } : null,
+        destinationVisible: () => this.world.group.getObjectByName("destination-marker")?.visible ?? false,
+        // feature test hooks (verification only)
+        damageTest: () => {
+          this.car.damageCar(75);
+          this.car.loseWheel();
+        },
+        policeTest: () => {
+          this.police.start(this.car.pos.x + 8, this.car.pos.z + 14);
+        },
+        hp: () => this.car.hp,
+        ticks: () => this.tickCount,
+        keys: () => [...this.input.keys],
+        order: () => (this.order ? { x: this.order.dest.x, z: this.order.dest.z } : null),
+        policeActive: () => this.police.active,
+        bonus: () => this.bonusMoney,
+        trafficHits: () => this.trafficHits,
+        wrecked: () => this.car.wrecked,
+        wreckTimer: () => this.wreckTimer,
+        partsLost: () => ({
+          spoiler: this.car.spoilerLost,
+          bumper: this.car.bumperLost,
+          wheel: this.car.wheelLost,
+        }),
+        assetsReady: () => this.assetsReady,
+        heroCount: () => this.world.heroCount(),
+        trafficPos: () => this.traffic.debugPositions(),
+        ramps: () => this.world.ramps.map((r) => ({ x: r.x, z: r.z, dx: r.dx, dz: r.dz })),
+        air: () => ({ airY: this.car.airY, airV: this.car.airV }),
+        freeCam: (a: number[] | null) => {
+          this.freeCam = a;
+        },
+        lightState: () =>
+          this.world.lights.map((l) => ({
+            t: Math.round(l.timer * 100) / 100,
+            xLit: l.lampsX.findIndex((m) => m.emissiveIntensity > 2),
+            zLit: l.lampsZ.findIndex((m) => m.emissiveIntensity > 2),
+          })),
+        speed: () => Math.hypot(this.car.vel.x, this.car.vel.z),
+        tris: () => {
+          let n = 0;
+          this.scene.traverse((o) => {
+            const mesh = o as THREE.Mesh;
+            if (!mesh.isMesh || !mesh.geometry) return;
+            const geo = mesh.geometry;
+            n += (geo.index ? geo.index.count : geo.attributes.position?.count ?? 0) / 3;
+          });
+          return Math.round(n);
+        },
+      };
+    }
   }
 
   // ================= screens =================
@@ -399,8 +434,9 @@ export class Game {
 
   showScreen(s: GameScreen): void {
     this.screen = s;
+    if (s !== "playing" && s !== "paused") this.tutorialEl.close();
     this.hudEl.style.display = s === "playing" ? "block" : "none";
-    this.input.setTouchVisible(s === "playing");
+    this.input.setDriving(s === "playing" && !this.tutorialEl.open && this.saveStatus !== "conflict");
     if (s === "title") this.renderTitle();
     else if (s === "play") this.renderPlay();
     else if (s === "tracks") this.renderTracks();
@@ -415,15 +451,63 @@ export class Game {
     else this.clearScreen();
   }
 
+  private persistProfile(): void {
+    this.showSaveStatus(this.profileStore.save());
+  }
+
+  private showSaveStatus(status: SaveStatus): void {
+    if (status === this.saveStatus) return;
+    this.saveStatus = status;
+    this.saveNotice.hidden = status === "saved";
+    this.saveNotice.classList.toggle("save-conflict", status === "conflict");
+    this.saveNotice.replaceChildren();
+    if (status === "saved") return;
+
+    const conflict = status === "conflict";
+    this.saveNotice.append(
+      el("span", "", conflict
+        ? "Сохранение изменилось в другой вкладке. Загрузи последнюю версию, чтобы продолжить."
+        : "Прогресс пока не сохранился. Разреши сохранение данных сайта или освободи место."),
+      el("button", "btn small", conflict ? "Загрузить сохранение" : "Повторить сохранение"),
+    );
+    const button = this.saveNotice.querySelector("button")!;
+    button.addEventListener("click", () => {
+      if (conflict) window.location.reload();
+      else this.persistProfile();
+    });
+    if (conflict) {
+      this.tutorialEl.close();
+      this.input.setDriving(false);
+      this.audio.stopMusic();
+      this.screenEl.inert = true;
+      this.hudEl.inert = true;
+      button.focus();
+    }
+  }
+
+  private storageChanged = (event: StorageEvent): void => {
+    if ((event.key === PROFILE_KEY || event.key === null) && this.profileStore.changedElsewhere()) {
+      this.showSaveStatus("conflict");
+    }
+  };
+
+  private visibilityChanged = (): void => {
+    if (document.hidden && this.screen === "playing" && !this.tutorialEl.open) this.togglePause();
+  };
+
   private renderTitle(): void {
     const p = this.profile;
     this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades());
     const mapName = WORLD_MAPS.find((map) => map.id === p.mapId)?.name ?? "Неоновый Токио";
-    const weekly = weeklyRoutes(new Date(), this.profile.mapId);
-    const weeklyProgress = loadWeeklyProgress();
-    const featuredWeeklyIndex = weekly.findIndex((route) => !weeklyProgress.completed.includes(route.id));
-    const featuredWeekly = weekly[featuredWeeklyIndex >= 0 ? featuredWeeklyIndex : 0];
-    const showWeeklyEvent = featuredWeeklyIndex >= 0 && !weeklyEventSeen();
+    const now = new Date();
+    const week = utcWeekKey(now);
+    const completed = p.weeklyCompletions[week] ?? [];
+    const featuredWeekly = weeklyRoutes(now, p.mapId).find((route) => !completed.includes(route.id));
+    const showWeeklyEvent = !!featuredWeekly && p.weeklyEventWeek !== week;
+    const dismissWeeklyEvent = () => {
+      p.weeklyEventWeek = week;
+      this.persistProfile();
+    };
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
       <div class="title-box home-box">
@@ -443,20 +527,24 @@ export class Game {
         <p class="fine-print">прогресс хранится в этом браузере (localStorage)</p>
       </div>
       ${showWeeklyEvent && featuredWeekly ? `<div class="weekly-event-shade"><section class="weekly-event-card" role="dialog" aria-modal="true" aria-labelledby="weekly-event-title">
-        <div class="journey-eyebrow">СОБЫТИЕ НЕДЕЛИ · UTC ${weeklyProgress.week}</div>
+        <div class="journey-eyebrow">СОБЫТИЕ НЕДЕЛИ · UTC ${week}</div>
         <h2 id="weekly-event-title">${featuredWeekly.title}</h2>
         <p>Особый маршрут недели уже ждёт. Успей доехать за ${Math.round(featuredWeekly.timeLimit)} секунд.</p>
         <div class="weekly-event-actions"><button class="btn" data-a="event-dismiss">ПОЗЖЕ</button><button class="btn primary" data-a="event-start">НАЧАТЬ ЗАЕЗД →</button></div>
       </section></div>` : ""}`;
+    if (showWeeklyEvent) {
+      this.screenEl.querySelector<HTMLElement>(".home-box")!.inert = true;
+      this.screenEl.querySelector<HTMLButtonElement>('[data-a="event-dismiss"]')?.focus();
+    }
     this.bindScreen({
       play: () => this.showScreen("play"),
       cars: () => this.showScreen("cars"),
       garage: () => this.showScreen("garage"),
       profile: () => this.showScreen("profile"),
-      "event-dismiss": () => { markWeeklyEventSeen(); this.showScreen("title"); },
+      "event-dismiss": () => { dismissWeeklyEvent(); this.showScreen("title"); },
       "event-start": () => {
-        markWeeklyEventSeen();
-        this.startWeeklyRoute(featuredWeeklyIndex >= 0 ? featuredWeeklyIndex : 0);
+        dismissWeeklyEvent();
+        if (featuredWeekly) this.startWeeklyRoute(featuredWeekly);
       },
     });
   }
@@ -478,15 +566,16 @@ export class Game {
   }
 
   private renderTracks(): void {
+    const medalPoints = careerMedalPoints(this.profile.records);
     const cards = WORLD_MAPS.map((map) => {
-      const access = mapAccessFor(map.id, this.profile.deliveries, this.profile.mapId);
+      const access = mapAccessFor(map.id, this.profile.deliveries, this.profile.mapId, medalPoints);
       const locked = !access.unlocked;
       const progress = Math.min(map.unlockDeliveries, this.profile.deliveries);
       return `<button class="map-card track-card ${this.profile.mapId === map.id ? "selected" : ""} ${locked ? "locked" : ""}" data-a="map:${map.id}" ${locked ? "disabled" : ""} aria-pressed="${this.profile.mapId === map.id}">
         <span class="track-art track-${map.id}"><i>${map.badge}</i>${locked ? "<b class='track-lock'>🔒</b>" : ""}</span>
         <b>${map.name}</b>
-        <span>${locked ? `Откроется после ${map.unlockDeliveries} доставок` : map.description}</span>
-        ${locked ? `<span class="track-progress">${progress} / ${map.unlockDeliveries} доставок</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
+        <span>${locked ? "Открывается за доставки или медали" : map.description}</span>
+        ${locked ? `<span class="track-progress">${progress} / ${map.unlockDeliveries} доставок · ${medalPoints} / ${map.unlockMedalPoints} очков медалей</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
       </button>`;
     }).join("");
     const modeName = this.pendingMode === "delivery" ? "Доставка" : this.pendingMode === "drift-trial" ? "Drift Trial" : "Time Attack";
@@ -494,7 +583,7 @@ export class Game {
     this.screenEl.innerHTML = `<div class="panel journey-panel tracks-panel">
       <div class="journey-eyebrow">${modeName.toUpperCase()}</div>
       <h2>ВЫБЕРИ МЕСТО</h2>
-      <p class="dim">Новые районы открываются по мере карьеры.</p>
+      <p class="dim">За лучшую медаль в каждом режиме на каждой карте начисляются очки. Бронза — 1, серебро — 2, золото — 3.</p>
       <div class="map-picker track-picker">${cards}</div>
       <button class="btn" data-a="back">← К РЕЖИМАМ</button>
     </div>`;
@@ -522,7 +611,7 @@ export class Game {
       return `<div class="car-card ${isCur ? "current" : ""}">
         <img class="car-img" src="${carThumb(c, undefined, this.heroFor(c))}" alt="${c.name}">
         <div class="car-name">${c.name}</div>
-        <div class="car-stats">скорость ${c.topSpeed * 3} · разгон ${c.accel} · сцепление ${c.grip}</div>
+        <div class="car-stats">скорость ${speedKmh(c.topSpeed)} км/ч · разгон ${c.accel} · сцепление ${c.grip}</div>
         ${btn}
       </div>`;
     }).join("");
@@ -595,7 +684,7 @@ export class Game {
     if (this.car.hp >= 100 || this.profile.money < cost) return;
     this.profile.money -= cost;
     this.car.repair();
-    saveProfile(this.profile);
+    this.persistProfile();
     this.audio.cash();
     this.renderGarage();
   }
@@ -642,7 +731,7 @@ export class Game {
         if (this.mode === "delivery" && this.order) this.startOrder(this.order);
         else if (this.mode !== "delivery") this.startMode(this.mode);
       },
-      help: () => this.showTutorial(true),
+      help: () => this.showTutorial(),
       settings: () => {
         this.settingsFrom = "paused";
         this.showScreen("settings");
@@ -694,7 +783,7 @@ export class Game {
         this.profile.muted = false;
         this.audio.setMuted(false);
       }
-      saveProfile(this.profile);
+      this.persistProfile();
     });
   }
 
@@ -722,25 +811,26 @@ export class Game {
   }
 
   private renderProfile(): void {
-    const records = loadRecords();
-    const rows = Object.entries(records).sort((a, b) => {
-      const [am, modeA, ac] = a[0].split(":");
-      const [bm, modeB, bc] = b[0].split(":");
-      return am.localeCompare(bm) || modeA.localeCompare(modeB) || ac.localeCompare(bc);
-    });
-    const recordRows = rows.length ? rows.map(([key, value]) => {
-      const [map, mode, car] = key.split(":");
-      const mapName = WORLD_MAPS.find((m) => m.id === map)?.name ?? map;
-      const modeName = mode === "drift-trial" ? "Drift Trial" : mode === "time-attack-course-v1" ? "Time Attack" : "Доставка";
-      const metric = mode === "time-attack-course-v1" ? `${value.toFixed(1)} с` : Math.round(value).toLocaleString("ru-RU");
-      return `<div class="record-row"><b>${modeName}</b><span>${mapName} · ${car.toUpperCase()}</span><strong>${metric}</strong></div>`;
-    }).join("") : `<p class="dim">Пока нет результатов. Заезжай в любой режим — лучший результат сохранится здесь.</p>`;
-    const routes = weeklyRoutes(new Date(), this.world.mapId);
-    const progress = loadWeeklyProgress();
+    const records = this.profile.records;
+    const recordRows = Object.keys(records).sort().flatMap((key) => {
+      const entry = recordDetails(key);
+      if (!entry) return [];
+      const { mapId, mode, car } = entry;
+      const mapName = WORLD_MAPS.find((item) => item.id === mapId)!.name;
+      const modeName = mode === "drift-trial" ? "Drift Trial" : mode === "time-attack" ? "Time Attack" : "Доставка";
+      const value = records[key];
+      const rounded = Math.round(value).toLocaleString("ru-RU");
+      const metric = mode === "time-attack" ? `${value.toFixed(1)} с` : mode === "delivery" ? `₽${rounded}` : `${rounded} очк.`;
+      return [`<div class="record-row"><b>${modeName}</b><span>${mapName} · ${car.name}</span><strong>${metric}</strong></div>`];
+    }).join("") || `<p class="dim">Лучший результат появится здесь после первого завершённого заезда.</p>`;
+    const now = new Date();
+    const week = utcWeekKey(now);
+    const routes = weeklyRoutes(now, this.world.mapId);
+    const completed = this.profile.weeklyCompletions[week] ?? [];
     const routeRows = routes.map((route, i) => {
-      const done = progress.completed.includes(route.id);
+      const done = completed.includes(route.id);
       return `<div class="weekly-row ${done ? "done" : ""}">
-        <div><b>${route.title}</b><span>${Math.round(route.timeLimit)} сек · ${Math.round(Math.hypot(route.dest.x, route.dest.z))} м${done ? " · уже пройден" : ""}</span></div>
+        <div><b>${route.title}</b><span>${route.timeLimit} сек · ${Math.round(route.distance)} м${done ? " · уже пройден" : ""}</span></div>
         <button class="btn small ${done ? "" : "primary"}" data-a="weekly:${i}">${done ? "ПОВТОРИТЬ" : "СТАРТ"}</button>
       </div>`;
     }).join("");
@@ -748,7 +838,7 @@ export class Game {
     this.screenEl.innerHTML = `<div class="panel records-panel">
       <div class="journey-eyebrow">ПРОФИЛЬ · ${this.currentCarSpec().name.replace("Toyota ", "")}</div>
       <h2>ЛИЧНЫЕ РЕКОРДЫ</h2>
-      <p class="dim">Лучшие результаты по карте, режиму и машине · неделя UTC ${progress.week}</p>
+      <p class="dim">Лучшие результаты по карте, режиму и машине · неделя UTC ${week}</p>
       <div class="record-list">${recordRows}</div>
       <h2>НЕДЕЛЬНЫЕ МАРШРУТЫ</h2>
       <p class="dim">Новый набор каждый понедельник по UTC · обычные доставки доступны без ограничений</p>
@@ -759,13 +849,12 @@ export class Game {
     this.bindScreen({
       back: () => this.showScreen("title"),
       achievements: () => this.showScreen("achievements"),
+      ...Object.fromEntries(routes.map((route, i) => [`weekly:${i}`, () => this.startWeeklyRoute(route)])),
     });
   }
 
-  private startWeeklyRoute(index: number): void {
-    const route = weeklyRoutes(new Date(), this.world.mapId)[index];
-    if (!route) return;
-    const distance = Math.hypot(route.dest.x, route.dest.z);
+  private startWeeklyRoute(route: WeeklyRoute): void {
+    const { distance } = route;
     this.startOrder({
       id: this.orderId++,
       title: route.title,
@@ -774,7 +863,7 @@ export class Game {
       timeLimit: route.timeLimit,
       fragility: 1,
       distance,
-      weeklyId: route.id,
+      weekly: { id: route.id, week: route.week },
     });
   }
 
@@ -803,6 +892,7 @@ export class Game {
     this.screenEl.querySelectorAll("[data-a]").forEach((n) => {
       n.addEventListener("click", (e) => {
         e.preventDefault();
+        if (this.saveStatus === "conflict") return;
         this.audio.ensure();
         this.audio.uiClick();
         const a = (n as HTMLElement).dataset.a!;
@@ -816,7 +906,7 @@ export class Game {
           return;
         }
         if (act === "up" && arg) {
-          this.buyUpgrade(arg as keyof Profile["upgrades"]["ae86"]);
+          this.buyUpgrade(arg as keyof UpgradeLevels);
           return;
         }
         if (act === "map" && arg && WORLD_MAPS.some((map) => map.id === arg)) {
@@ -831,31 +921,35 @@ export class Game {
           this.showScreen("tracks");
           return;
         }
-        if (act === "weekly" && arg !== undefined) {
-          this.startWeeklyRoute(Number(arg));
-          return;
-        }
         if (act === "take" && arg !== undefined) {
           this.startOrder(this.orders[Number(arg)]);
           return;
         }
-        actions[act]?.();
+        actions[a]?.();
       });
     });
   }
 
   private selectMap(mapId: MapId): boolean {
-    if (!mapAccessFor(mapId, this.profile.deliveries, this.profile.mapId).unlocked) return false;
+    const points = careerMedalPoints(this.profile.records);
+    if (!mapAccessFor(mapId, this.profile.deliveries, this.profile.mapId, points).unlocked) return false;
     if (this.world.mapId !== mapId) {
-      this.scene.remove(this.world.group);
       let nextWorld = this.worldCache.get(mapId);
       if (!nextWorld) {
         nextWorld = new World(mapId);
-        this.worldCache.set(mapId, nextWorld);
         if (this.midriseAsset) nextWorld.setHeroBuildings(this.midriseAsset.root, this.midriseAsset.size);
+      }
+      this.scene.remove(this.world.group);
+      this.worldCache.delete(mapId);
+      this.worldCache.set(mapId, nextWorld);
+      if (this.worldCache.size > WORLD_CACHE_LIMIT) {
+        const oldest = this.worldCache.keys().next().value!;
+        this.worldCache.get(oldest)!.dispose();
+        this.worldCache.delete(oldest);
       }
       this.world = nextWorld;
       this.scene.add(this.world.group);
+      this.orders = [];
       this.redFinedX.clear();
       this.greenCooldown.clear();
       this.world.hideDestination();
@@ -866,7 +960,7 @@ export class Game {
       this.buildMinimapBase();
       this.police.stop();
       this.profile.mapId = mapId;
-      saveProfile(this.profile);
+      this.persistProfile();
     }
     return true;
   }
@@ -901,9 +995,9 @@ export class Game {
     this.profile.ownedCars.push(id);
     this.profile.carId = id;
     this.applyCarSpec();
-    saveProfile(this.profile);
+    this.grantAchievements(false);
+    this.persistProfile();
     this.audio.cash();
-    this.grantAchievements();
     this.showScreen(this.screen);
   }
 
@@ -911,11 +1005,11 @@ export class Game {
     if (!this.profile.ownedCars.includes(id)) return;
     this.profile.carId = id;
     this.applyCarSpec();
-    saveProfile(this.profile);
+    this.persistProfile();
     this.showScreen(this.screen);
   }
 
-  private buyUpgrade(key: keyof Profile["upgrades"]["ae86"]): void {
+  private buyUpgrade(key: keyof UpgradeLevels): void {
     const up = this.currentUpgrades();
     const lvl = up[key];
     if (lvl >= UPGRADE_MAX) return;
@@ -924,9 +1018,9 @@ export class Game {
     this.profile.money -= cost;
     up[key] = lvl + 1;
     this.applyCarSpec();
-    saveProfile(this.profile);
+    this.grantAchievements(false);
+    this.persistProfile();
     this.audio.cash();
-    this.grantAchievements();
     this.renderGarage();
   }
 
@@ -946,18 +1040,9 @@ export class Game {
     this.orders = [];
     const used = new Set<string>();
     for (let k = 0; k < 3; k++) {
-      let dest = { x: 0, z: 0 };
-      let key = "";
-      let guard = 0;
-      do {
-        dest = sampleRoadPoint(this.world.layout, Math.random);
-        const d = Math.hypot(dest.x, dest.z);
-        key = `${Math.round(dest.x / 10)},${Math.round(dest.z / 10)}`;
-        guard++;
-        if (d > 90 && d < 300 && !used.has(key)) break;
-      } while (guard < 40);
-      used.add(key);
-      const distance = Math.hypot(dest.x, dest.z);
+      const route = sampleDeliveryDestination(this.world.layout, Math.random, used, 90, 300);
+      if (!route) break;
+      const { dest, distance } = route;
       const fragility = 0.8 + Math.random() * 1.0;
       const reward = Math.round(
         180 + distance * 1.1 + fragility * 120 + Math.random() * 80
@@ -977,7 +1062,7 @@ export class Game {
 
   private quickStart(): void {
     this.genOrders();
-    this.startOrder(this.orders[0]);
+    if (this.orders[0]) this.startOrder(this.orders[0]);
   }
 
   private startMode(mode: "drift-trial" | "time-attack"): void {
@@ -1002,7 +1087,7 @@ export class Game {
     this.showScreen("orders");
   }
 
-  private startOrder(o: Order, mode: "delivery" | "drift-trial" | "time-attack" = "delivery"): void {
+  private startOrder(o: Order, mode: ActivityMode = "delivery"): void {
     this.mode = mode;
     this.order = o;
     if (mode !== "time-attack") this.timeAttackCourse = null;
@@ -1039,6 +1124,7 @@ export class Game {
     for (const d of this.debris) {
       this.scene.remove(d);
       d.geometry.dispose();
+      (d.material as THREE.Material).dispose();
     }
     this.debris = [];
     this.wasInPuddle = false;
@@ -1049,28 +1135,29 @@ export class Game {
     this.setTutorialContent(mode);
     this.hCargo.style.display = mode === "delivery" ? "flex" : "none";
     this.audio.ensure();
-    this.audio.startMusic();
     this.showScreen("playing");
+    this.updateHud();
     this.toast(mode === "drift-trial"
-      ? "Drift Trial: 60 секунд · удерживай занос, чтобы поднять множитель"
+      ? "Drift Trial · удерживай занос, чтобы поднять множитель"
       : mode === "time-attack"
-        ? `Time Attack: один круг · контрольная точка 1/${this.timeAttackCourse?.checkpoints.length ?? 5}`
-        : `Заказ: доставьте за ${o.timeLimit} с. Берегите груз!`);
-    if (this.input.isTouch && !this.profile.seenTutorial) {
-      this.showTutorial(true);
-    }
+        ? `Time Attack · контрольная точка 1/${this.timeAttackCourse?.checkpoints.length ?? 5}`
+        : `Доставь заказ за ${o.timeLimit} с. Береги груз!`);
+    if (!this.profile.seenTutorials[mode]) this.showTutorial();
+    else this.audio.startMusic();
   }
 
   private togglePause(): void {
+    if (this.tutorialEl.open || this.saveStatus === "conflict") return;
     if (this.screen === "playing") this.showScreen("paused");
     else if (this.screen === "paused") this.showScreen("playing");
   }
 
   private toggleMute(): void {
+    if (this.tutorialEl.open || this.saveStatus === "conflict") return;
     this.profile.muted = !this.profile.muted;
     this.audio.ensure();
     this.audio.setMuted(this.profile.muted);
-    saveProfile(this.profile);
+    this.persistProfile();
   }
 
   // ================= HUD =================
@@ -1122,17 +1209,22 @@ export class Game {
     pauseBtn.addEventListener("click", () => this.togglePause());
     this.hudEl.appendChild(pauseBtn);
 
-    this.tutorialEl = el("div", "tutorial");
+    this.tutorialEl = document.createElement("dialog");
+    this.tutorialEl.className = "tutorial";
+    this.tutorialEl.setAttribute("aria-labelledby", "tutorial-title");
     this.setTutorialContent("delivery");
-    this.tutorialEl.style.display = "none";
+    this.tutorialEl.addEventListener("cancel", (event) => event.preventDefault());
     this.tutorialEl.addEventListener("click", (event) => {
       if (!(event.target as HTMLElement).closest("[data-a='tut-ok']")) return;
       this.audio.uiClick();
-      this.profile.seenTutorial = true;
-      saveProfile(this.profile);
-      this.tutorialEl.style.display = "none";
+      this.profile.seenTutorials[this.mode] = true;
+      this.persistProfile();
+      this.tutorialEl.close();
+      if (this.screen === "playing" && this.saveStatus !== "conflict") {
+        this.input.setDriving(true);
+        this.audio.startMusic();
+      }
     });
-    // appended to the overlay root (not hud) so it stays visible over menus
     this.overlay.appendChild(this.tutorialEl);
 
     if (this.input?.isTouch) {
@@ -1141,26 +1233,30 @@ export class Game {
     }
   }
 
-  private showTutorial(force: boolean): void {
-    if (!this.input.isTouch && !force) return;
-    this.tutorialEl.style.display = "flex";
+  private showTutorial(): void {
+    if (this.tutorialEl.open || this.saveStatus === "conflict") return;
+    this.input.setDriving(false);
+    this.tutorialEl.showModal();
   }
 
-  private setTutorialContent(mode: "delivery" | "drift-trial" | "time-attack"): void {
+  private setTutorialContent(mode: ActivityMode): void {
+    const controls = this.input.isTouch
+      ? "Газ, задний ход и руль на джойстике. Справа тормоз, ручник и нитро."
+      : "WASD или стрелки для вождения. Пробел включает ручник, Shift включает нитро, Esc ставит игру на паузу.";
     const activity = mode === "delivery"
       ? `<div class="tut-row"><span class="tut-ico">⚠</span><span>Береги груз от ударов и луж; красный сигнал стоит ₽${RED_LIGHT_FINE}.</span></div>
          <div class="tut-row"><span class="tut-ico">₽</span><span>Заказы, трюки и безопасные проезды дают деньги.</span></div>`
       : mode === "drift-trial"
-        ? `<div class="tut-row"><span class="tut-ico">🔥</span><span>Держи занос: множитель растёт до ×5. Если отпустить руль, серия сохранится через 0,7 секунды.</span></div>
+        ? `<div class="tut-row"><span class="tut-ico">🔥</span><span>Держи занос: множитель растёт до ×5. Когда занос закончится, серия сохранится через 0,7 секунды.</span></div>
            <div class="tut-row"><span class="tut-ico">⚠</span><span>Сильный удар сбрасывает незабранные очки серии. За итоговый счёт выдаются медали и ₽.</span></div>`
         : `<div class="tut-row"><span class="tut-ico">🏁</span><span>Пройди контрольные точки строго по порядку и вернись на старт для финиша.</span></div>
            <div class="tut-row"><span class="tut-ico">🥇</span><span>Время круга определяет медаль, выплату и лучший результат трассы.</span></div>`;
     this.tutorialEl.innerHTML = `<div class="tutorial-box">
-      <h3>КАК ИГРАТЬ · ${mode === "delivery" ? "ДОСТАВКА" : mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK"}</h3>
-      <div class="tut-row"><span class="tut-ico wheel">🕹</span><span><b>УПРАВЛЕНИЕ</b> — газ и руль на джойстике; Shift или кнопка справа включает нитро.</span></div>
+      <h3 id="tutorial-title">КАК ИГРАТЬ · ${mode === "delivery" ? "ДОСТАВКА" : mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK"}</h3>
+      <div class="tut-row"><span class="tut-ico wheel">🕹</span><span>${controls}</span></div>
       <div class="tut-row"><span class="tut-ico hb">★</span><span><b>ДРИФТ</b> — ручник и газ помогают начать занос; нитро пополняется за дрифт.</span></div>
       ${activity}
-      <button class="btn primary" data-a="tut-ok">ПОНЯТНО!</button>
+      <button class="btn primary" data-a="tut-ok" autofocus>ПОНЯТНО!</button>
     </div>`;
   }
 
@@ -1290,12 +1386,12 @@ export class Game {
   }
 
   private fixedStep(dt: number): void {
-    this.elapsed += dt;
-    this.world.update(dt);
-    if (this.screen !== "playing" || !this.order) {
+    if (this.screen !== "playing" || !this.order || this.tutorialEl.open || this.saveStatus === "conflict") {
       this.audio.updateEngine(0, 0, 0);
       return;
     }
+    this.elapsed += dt;
+    this.world.update(dt);
     this.driftCrashThisStep = false;
     const inp = this.input.update();
     inp.nitro = inp.nitro && inp.throttle > 0 && this.nitroFuel > 0;
@@ -1324,9 +1420,9 @@ export class Game {
     const protect = spec.cargoProtect;
 
     // lifetime stat: top speed
-    const kmhNow = Math.abs(res.speed) * 3.2;
+    const kmhNow = speedKmh(res.speed);
     if (kmhNow > this.profile.stats.maxSpeedKmh)
-      this.profile.stats.maxSpeedKmh = Math.round(kmhNow);
+      this.profile.stats.maxSpeedKmh = kmhNow;
 
     // traffic
     const tHit = this.traffic.update(
@@ -1334,6 +1430,7 @@ export class Game {
       this.car.pos,
       this.car.vel,
       Math.abs(res.speed),
+      this.trafficSpawnVisible,
     );
     if (tHit > 0 && !this.car.isFlipping) {
       this.driftCrashThisStep = true;
@@ -1494,13 +1591,15 @@ export class Game {
           this.car.pos.z - this.order.dest.z
         )
       : 999;
-    if (this.mode === "delivery" && dDest < 4.2) this.completeOrder(true, "Точка назначения достигнута");
-    else if (this.mode === "delivery" && this.car.cargo <= 0)
+    if (this.mode === "delivery" && this.car.cargo <= 0) {
       this.completeOrder(false, "Груз разбит вдребезги");
-    else if (this.mode === "time-attack" && dDest < 8.5) this.advanceTimeAttackCheckpoint();
-    else if (this.timeLeft <= 0) {
+    } else if (this.timeLeft <= 0) {
       if (this.mode === "drift-trial") this.completeOrder(true, "60 секунд истекли");
       else this.completeOrder(false, this.mode === "time-attack" ? "Время вышло до финиша" : "Время вышло — клиент ушёл");
+    } else if (this.mode === "delivery" && dDest < 4.2) {
+      this.completeOrder(true, "Точка назначения достигнута");
+    } else if (this.mode === "time-attack" && dDest < 8.5) {
+      this.advanceTimeAttackCheckpoint();
     }
 
     // toast fade
@@ -1517,6 +1616,21 @@ export class Game {
       this.updateHud();
     }
   }
+
+  private trafficSpawnVisible = (x: number, z: number): boolean => {
+    if (this.spawnCameraFrame !== this.tickCount) {
+      this.spawnViewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+      this.spawnFrustum.setFromProjectionMatrix(this.spawnViewProjection);
+      this.spawnCameraFrame = this.tickCount;
+    }
+    this.spawnSphere.center.set(x, 1, z);
+    if (this.spawnFrustum.intersectsSphere(this.spawnSphere)) return true;
+    // Keep clear of the new driving direction while the chase camera catches up after a turn.
+    const dx = x - this.car.pos.x;
+    const dz = z - this.car.pos.z;
+    const heading = this.car.heading;
+    return dx * Math.sin(heading) + dz * Math.cos(heading) > Math.hypot(dx, dz) * 0.7;
+  };
 
   private checkRedLight(prevX: number, prevZ: number): void {
     if (this.mode !== "delivery" || !this.order || this.car.isFlipping) return;
@@ -1641,10 +1755,10 @@ export class Game {
   }
 
   /** Unlock newly completed achievements, announce them and persist. */
-  private grantAchievements(): void {
+  private grantAchievements(save = true): void {
     const fresh = checkAchievements(this.profile);
     if (fresh.length === 0) return;
-    saveProfile(this.profile);
+    if (save) this.persistProfile();
     for (const a of fresh) this.toast(`🏆 Ачивка: ${a.icon} ${a.name}`);
     this.audio.cash();
   }
@@ -1668,18 +1782,19 @@ export class Game {
         : ok && this.timeAttackCourse ? timeAttackMedal(this.timeAttackCourse, elapsed) : null;
       const record = ok
         ? this.mode === "drift-trial"
-          ? saveRecord(this.profile.mapId, this.mode, this.profile.carId, driftScore)
-          : saveRecord(this.profile.mapId, this.mode, this.profile.carId, elapsed)
+          ? saveRecord(p.records, p.mapId, this.mode, p.carId, driftScore)
+          : saveRecord(p.records, p.mapId, this.mode, p.carId, elapsed)
         : null;
-      const reward = this.mode === "drift-trial"
-        ? modeReward(this.mode, medal, driftScore)
-        : ok ? modeReward(this.mode, medal, 0) : 0;
+      const reward = modeReward(this.mode, medal, driftScore, ok);
       const medalLabel = medal ? `${medal === "gold" ? "🥇 золото" : medal === "silver" ? "🥈 серебро" : "🥉 бронза"}` : "без медали";
       const lines = this.mode === "drift-trial"
         ? [`${reason}.`, `Счёт: ${driftScore} · ${medalLabel}`]
-        : [`${reason}.`, `Время круга: ${elapsed.toFixed(1)} с · ${medalLabel}`];
+        : ok
+          ? [`${reason}.`, `Время круга: ${elapsed.toFixed(1)} с · ${medalLabel}`]
+          : [`${reason}.`, `Время до схода: ${elapsed.toFixed(1)} с`];
       if (this.mode === "time-attack" && this.timeAttackCourse) {
-        lines.push(`Трасса: ${this.timeAttackCourse.name} · контрольных точек: ${this.timeAttackCourse.checkpoints.length}`);
+        lines.push(this.timeAttackCourse.name);
+        lines.push(`Пройдено контрольных точек: ${this.timeAttackCheckpointIndex}/${this.timeAttackCourse.checkpoints.length}`);
       }
       if (record !== null) lines.push(this.mode === "drift-trial" ? `Лучший счёт: ${Math.round(record)}` : `Лучшее время: ${record.toFixed(1)} с`);
       if (this.mode === "time-attack" && medal) {
@@ -1689,8 +1804,8 @@ export class Game {
       p.totalEarn += reward;
       p.bestEarn = Math.max(p.bestEarn, reward);
       lines.push(`<b class="gold">Выплата за заезд: ₽${reward}</b>`);
-      this.grantAchievements();
-      saveProfile(p);
+      this.grantAchievements(false);
+      this.persistProfile();
       this.lastResult = { ok, lines, mode: this.mode, title };
       this.order = null;
       this.police.stop();
@@ -1725,12 +1840,12 @@ export class Game {
       p.totalEarn += total;
       p.bestEarn = Math.max(p.bestEarn, total);
       if (this.car.cargo >= 99.5) p.stats.perfectDeliveries += 1;
-      const record = saveRecord(this.profile.mapId, "delivery", this.profile.carId, total);
+      const record = saveRecord(p.records, p.mapId, "delivery", p.carId, total);
       lines.push(`Личный рекорд доставки: ₽${Math.round(record)}`);
-      if (o.weeklyId) {
-        const weekly = completeWeeklyRoute(o.weeklyId);
-        const completedOnMap = weeklyRoutes(new Date(), this.profile.mapId).filter((route) => weekly.completed.includes(route.id)).length;
-        lines.push(`<span class="gold">Недельный маршрут пройден: ${completedOnMap}/3</span>`);
+      if (o.weekly) {
+        const completed = completeWeeklyRoute(p.weeklyCompletions, o.weekly);
+        const completedOnMap = weeklyRouteIds(o.weekly.week, p.mapId).filter((id) => completed.includes(id)).length;
+        lines.push(`<span class="gold">Маршруты недели от ${o.weekly.week}: ${completedOnMap}/3</span>`);
       }
       this.audio.success();
     } else {
@@ -1744,8 +1859,8 @@ export class Game {
       }
       this.audio.fail();
     }
-    this.grantAchievements();
-    saveProfile(p);
+    this.grantAchievements(false);
+    this.persistProfile();
     this.lastResult = { ok, lines };
     this.order = null;
     this.police.stop();
@@ -1769,7 +1884,7 @@ export class Game {
     this.hCargoBar.classList.toggle("low", cargo < 35);
     this.hCargoText.textContent = `груз ${cargo.toFixed(0)}%`;
     this.hCargo.style.display = this.mode === "delivery" ? "flex" : "none";
-    this.hSpeed.innerHTML = `${Math.round(Math.abs(this.car.speed) * 3.2)}<small>км/ч</small>`;
+    this.hSpeed.innerHTML = `${speedKmh(this.car.speed)}<small>км/ч</small>`;
     const speed = Math.abs(this.car.speed);
     this.hMoney.textContent = `₽${this.profile.money}${this.orderFines ? ` (−${this.orderFines})` : ""}`;
     this.hDrift.textContent = this.mode === "drift-trial"
@@ -1785,7 +1900,7 @@ export class Game {
   // ================= render =================
 
   private renderFrame(dt: number): void {
-    if (!this.readyFlagged) {
+    if (VERIFICATION && !this.readyFlagged) {
       this.readyFlagged = true;
       (window as unknown as { __GAME_READY__: boolean }).__GAME_READY__ = true;
     }
@@ -1855,7 +1970,10 @@ export class Game {
   };
 
   dispose(): void {
+    this.disposed = true;
     this.stop();
+    document.removeEventListener("visibilitychange", this.visibilityChanged);
+    window.removeEventListener("storage", this.storageChanged);
     window.removeEventListener("resize", this.resize);
     this.audio.dispose();
     this.input.dispose();
@@ -1863,17 +1981,17 @@ export class Game {
     this.traffic.dispose();
     this.police.dispose();
     this.effects.dispose();
-    for (const world of this.worldCache.values()) {
-      world.group.traverse((o) => {
-        const mesh = o as THREE.Mesh;
-        mesh.geometry?.dispose();
-        const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
-        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-        else mat?.dispose();
-      });
-    }
+    for (const world of this.worldCache.values()) world.dispose();
+    this.worldCache.clear();
     this.renderer.dispose();
     this.screenEl.remove();
     this.hudEl.remove();
+    this.tutorialEl.remove();
+    this.saveNotice.remove();
+    if (VERIFICATION) {
+      Reflect.deleteProperty(window, "__gameProbe");
+      Reflect.deleteProperty(window, "__gameDebug");
+      Reflect.deleteProperty(window, "__GAME_READY__");
+    }
   }
 }

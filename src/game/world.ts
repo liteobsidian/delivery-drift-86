@@ -114,6 +114,7 @@ export class World {
     [];
   /** AABBs reserved for real mid-rise models — no neon/signs placed there */
   private heroAABBs: AABB[] = [];
+  private heroBuildings = new THREE.Group();
   /** tall buildings that get rooftop billboards */
   private roofSpots: { x: number; z: number; w: number; h: number; d: number }[] =
     [];
@@ -1211,6 +1212,7 @@ export class World {
   /** drop loaded mid-rise models onto the reserved spots (call once, after assets load) */
   setHeroBuildings(model: THREE.Group, modelSize: THREE.Vector3): void {
     const rng = mulberry32(4242);
+    this.heroBuildings.clear();
     for (const s of this.heroSpots) {
       const clone = model.clone(true);
       const fit = Math.min(
@@ -1221,8 +1223,36 @@ export class World {
       clone.scale.setScalar(fit);
       clone.position.set(s.x, 0, s.z);
       clone.rotation.y = Math.floor(rng() * 4) * (Math.PI / 2);
-      this.group.add(clone);
+      this.heroBuildings.add(clone);
     }
+    this.group.add(this.heroBuildings);
+  }
+
+  dispose(): void {
+    // The model library owns the resources shared by these clones.
+    this.heroBuildings.removeFromParent();
+    this.heroBuildings.clear();
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    const textures = new Set<THREE.Texture>();
+    this.group.traverse((node) => {
+      if (node instanceof THREE.InstancedMesh) node.dispose();
+      const mesh = node as THREE.Mesh;
+      if (mesh.geometry) geometries.add(mesh.geometry);
+      if (!mesh.material) return;
+      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        materials.add(material);
+      }
+    });
+    for (const material of materials) {
+      for (const property of Object.values(material)) {
+        if (property instanceof THREE.Texture) textures.add(property);
+      }
+      material.dispose();
+    }
+    for (const texture of textures) texture.dispose();
+    for (const geometry of geometries) geometry.dispose();
+    this.group.clear();
   }
 
   heroCount(): number {

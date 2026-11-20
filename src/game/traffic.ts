@@ -205,7 +205,7 @@ export class Traffic {
     car.mesh.rotation.y = Math.atan2(-car.dx, -car.dz);
   }
 
-  private spawn(): void {
+  private spawn(isVisible?: (x: number, z: number) => boolean): void {
     const car = this.cars.find((c) => !c.active);
     if (!car || !this.routes.length) return;
     let positionFound = false;
@@ -225,6 +225,7 @@ export class Traffic {
       const playerDx = car.x - this.lastPlayerX;
       const playerDz = car.z - this.lastPlayerZ;
       if (playerDx * playerDx + playerDz * playerDz < SPAWN_CLEARANCE * SPAWN_CLEARANCE) continue;
+      if (isVisible?.(car.x, car.z)) continue;
       positionFound = true;
       break;
     }
@@ -295,13 +296,16 @@ export class Traffic {
   }
 
   /** advance traffic; returns closing speed if any car hit the player this step */
-  update(dt: number, playerPos: THREE.Vector3, playerVel: THREE.Vector3, playerSpeed: number): number {
+  update(
+    dt: number, playerPos: THREE.Vector3, playerVel: THREE.Vector3, playerSpeed: number,
+    isVisible?: (x: number, z: number) => boolean,
+  ): number {
     this.lastPlayerX = playerPos.x;
     this.lastPlayerZ = playerPos.z;
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
       this.spawnTimer = SPAWN_INTERVAL;
-      this.spawn();
+      this.spawn(isVisible);
     }
     const laneLeaders = this.buildLaneLeaders();
     let hit = 0;

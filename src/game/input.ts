@@ -26,6 +26,7 @@ export class Input {
   onMute: (() => void) | null = null;
   onConfirm: (() => void) | null = null;
 
+  private driving = false;
   private touchRoot: HTMLDivElement | null = null;
   private joyEl: HTMLDivElement | null = null;
   private joyKnob: HTMLDivElement | null = null;
@@ -51,17 +52,18 @@ export class Input {
   }
 
   private keyDown = (e: KeyboardEvent): void => {
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+    const target = e.target;
+    if (target instanceof Element && target.closest("button, input, select, textarea, a[href], [contenteditable], dialog[open]")) return;
     const c = e.code;
-    if (
-      ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(c)
-    ) {
-      e.preventDefault();
+    if (this.driving) {
+      if (c.startsWith("Arrow") || c === "Space") e.preventDefault();
+      if (!e.repeat) this.keys.add(c);
     }
     if (e.repeat) return;
-    this.keys.add(c);
     if (c === "Escape") this.onPause?.();
     if (c === "KeyM") this.onMute?.();
-    if (c === "Space" || c === "Enter") this.onConfirm?.();
+    if (!this.driving && (c === "Space" || c === "Enter")) this.onConfirm?.();
   };
 
   private keyUp = (e: KeyboardEvent): void => {
@@ -79,6 +81,7 @@ export class Input {
     this.nitroTouch = null;
     this.hb = false;
     this.joyKnob?.style.setProperty("transform", "translate(0px, 0px)");
+    this.touchRoot?.querySelectorAll(".on").forEach((button) => button.classList.remove("on"));
   };
 
   update(): InputState {
@@ -105,8 +108,10 @@ export class Input {
     return this.state;
   }
 
-  setTouchVisible(v: boolean): void {
-    if (this.touchRoot) this.touchRoot.style.display = v ? "block" : "none";
+  setDriving(active: boolean): void {
+    this.driving = active;
+    if (!active) this.clear();
+    if (this.touchRoot) this.touchRoot.style.display = active ? "block" : "none";
   }
 
   private buildTouch(): void {
@@ -144,6 +149,7 @@ export class Input {
     ) => {
       let activeId: number | null = null;
       el.addEventListener("pointerdown", (e) => {
+        if (!this.driving || activeId !== null && el.hasPointerCapture(activeId)) return;
         e.preventDefault();
         try {
           el.setPointerCapture(e.pointerId);
@@ -170,17 +176,18 @@ export class Input {
         });
       }
       const release = (e: PointerEvent) => {
-        if (activeId !== null && e.pointerId !== activeId) return;
+        if (e.pointerId !== activeId) return;
+        activeId = null;
         try {
           if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
         } catch {
           /* synthetic pointers */
         }
-        activeId = null;
         up?.();
       };
       el.addEventListener("pointerup", release);
       el.addEventListener("pointercancel", release);
+      el.addEventListener("lostpointercapture", release);
     };
 
     const applyJoy = (x: number, y: number): void => {

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { cityLayoutFor } from "./map-layouts";
+import { cityLayoutFor, isOnLayoutRoad } from "./map-layouts";
+import { MAP_IDS } from "./types";
 import { Traffic, trafficLanePosition, smoothedRouteTangent, type RouteData } from "./traffic";
 import type { World } from "./world";
 
@@ -86,6 +87,30 @@ describe("NPC traffic regressions", () => {
       expect(Math.hypot(car.x - player.x, car.z - player.z)).toBeGreaterThanOrEqual(100);
     }
     traffic.dispose();
+  });
+
+  it("spawns during play outside the forward view and keeps traffic on all five road networks", () => {
+    const player = new THREE.Vector3();
+    const velocity = new THREE.Vector3();
+    const visible = (x: number, z: number) => Math.abs(x) < -z * 0.55;
+    for (const id of MAP_IDS) {
+      const layout = cityLayoutFor(id);
+      const traffic = new Traffic({ layout, lights: [] } as unknown as World, player);
+      const seen = new Set(traffic.debugPositions().map((car) => car.id));
+      const initialCount = seen.size;
+      for (let step = 0; step < 1500; step++) {
+        traffic.update(1 / 60, player, velocity, 0, visible);
+        for (const car of traffic.debugPositions()) {
+          expect(isOnLayoutRoad(layout, car.x, car.z), id).toBe(true);
+          if (seen.has(car.id)) continue;
+          expect(visible(car.x, car.z), id).toBe(false);
+          expect(Math.hypot(car.x, car.z)).toBeGreaterThanOrEqual(99);
+          seen.add(car.id);
+        }
+      }
+      expect(seen.size, id).toBeGreaterThan(initialCount);
+      traffic.dispose();
+    }
   });
 
   it("repositions traffic around the exact start point without rebuilding routes", () => {

@@ -6,14 +6,18 @@ export const ROAD_W = 14; // road width
 export const GRID_N = 7; // road lines per axis (GRID_N-1 blocks)
 export const WORLD_HALF = ((GRID_N - 1) * CELL) / 2; // 174
 
-export const WORLD_MAPS: { id: MapId; name: string; description: string; badge: string; unlockDeliveries: number }[] = [
-  { id: "tokyo", name: "Неоновый Токио", description: "Дрифт-кольцо и ночные улицы", badge: "東京", unlockDeliveries: 0 },
-  { id: "yokohama", name: "Порт Ёкохама", description: "Контейнеры, краны и вода у дорог", badge: "横浜", unlockDeliveries: 8 },
-  { id: "spb", name: "Белые ночи · Петербург", description: "Набережные, мосты и длинный проспект", badge: "СПБ", unlockDeliveries: 16 },
-  { id: "kazan", name: "Кремлёвский вираж · Казань", description: "Широкие улицы, кольцо и речной берег", badge: "КЗН", unlockDeliveries: 24 },
-  { id: "sochi", name: "Черноморский серпантин · Сочи", description: "Береговая петля и горные связки", badge: "СОЧ", unlockDeliveries: 32 },
+export const WORLD_MAPS: { id: MapId; name: string; description: string; badge: string; unlockDeliveries: number; unlockMedalPoints: number }[] = [
+  { id: "tokyo", name: "Неоновый Токио", description: "Дрифт-кольцо и ночные улицы", badge: "東京", unlockDeliveries: 0, unlockMedalPoints: 0 },
+  { id: "yokohama", name: "Порт Ёкохама", description: "Контейнеры, краны и вода у дорог", badge: "横浜", unlockDeliveries: 8, unlockMedalPoints: 3 },
+  { id: "spb", name: "Белые ночи · Петербург", description: "Набережные, мосты и длинный проспект", badge: "СПБ", unlockDeliveries: 16, unlockMedalPoints: 6 },
+  { id: "kazan", name: "Кремлёвский вираж · Казань", description: "Широкие улицы, кольцо и речной берег", badge: "КЗН", unlockDeliveries: 24, unlockMedalPoints: 9 },
+  { id: "sochi", name: "Черноморский серпантин · Сочи", description: "Береговая петля и горные связки", badge: "СОЧ", unlockDeliveries: 32, unlockMedalPoints: 12 },
 ];
 export const SIDEWALK_W = 3.2;
+
+export function speedKmh(speed: number): number {
+  return Math.round(Math.abs(speed) * 3.2);
+}
 
 /** Fixed timestep. */
 export const DT = 1 / 60;
