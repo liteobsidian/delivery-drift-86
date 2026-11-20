@@ -655,7 +655,8 @@ await secondTab.getByRole("heading", { name: "Игра открыта в дру�
 await secondTab.getByRole("button", { name: "Ждать освобождения" }).click();
 await mobile.close();
 await secondTab.locator(".home-career").waitFor();
-if (!(await secondTab.locator(".home-career").textContent()).includes(`₽ ${saved.money}`)) fail("The next tab did not load the latest progress");
+const displayedMoney = await secondTab.locator(".home-career > span").first().textContent();
+if (Number(displayedMoney.replace(/[^\d]/g, "")) !== saved.money) fail("The next tab did not load the latest progress");
 if (await secondTab.locator('[data-a="event-dismiss"]').isVisible()) await secondTab.locator('[data-a="event-dismiss"]').tap();
 await secondTab.locator('[data-a="profile"]').tap();
 const row = secondTab.locator(".record-row").filter({ hasText: "Drift Trial" });
