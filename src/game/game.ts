@@ -1,4 +1,9 @@
 import * as THREE from "three";
+import tokyoPreview from "../assets/map-previews/tokyo.webp";
+import yokohamaPreview from "../assets/map-previews/yokohama.webp";
+import spbPreview from "../assets/map-previews/spb.webp";
+import kazanPreview from "../assets/map-previews/kazan.webp";
+import sochiPreview from "../assets/map-previews/sochi.webp";
 import {
   CARS,
   tunedSpec,
@@ -19,6 +24,7 @@ import { PROFILE_KEY, ProfileStore, type SaveStatus } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
 import { World } from "./world";
+import { CITY_STYLE } from "./city-style";
 import { Car } from "./car";
 import { trafficLanePosition, Traffic } from "./traffic";
 import { Police } from "./police";
@@ -42,6 +48,9 @@ const NEVA_CAR = CARS.find(({ id }) => id === NEVA_CONTRACT.carId)!;
 const STOCK_UPGRADES: UpgradeLevels = { engine: 0, tires: 0, turbo: 0, suspension: 0 };
 const { start: NEVA_START, finish: NEVA_FINISH } = NEVA_CONTRACT;
 const SD = ROAD_W / 2 + 1.6; // stop-line distance from intersection center
+const MAP_PREVIEWS: Record<MapId, string> = {
+  tokyo: tokyoPreview, yokohama: yokohamaPreview, spb: spbPreview, kazan: kazanPreview, sochi: sochiPreview,
+};
 
 function el(tag: string, cls: string, html = ""): HTMLElement {
   const e = document.createElement(tag);
@@ -60,6 +69,9 @@ export class Game {
     return car.glb ? this.heroModels[car.glb as HeroModelKey] : undefined;
   }
   private scene = new THREE.Scene();
+  private readonly ambientLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 1.5);
+  private readonly keyLight = new THREE.DirectionalLight();
+  private readonly accentLight = new THREE.DirectionalLight();
   private camera: THREE.PerspectiveCamera;
   private spawnFrustum = new THREE.Frustum();
   private spawnViewProjection = new THREE.Matrix4();
@@ -169,17 +181,10 @@ export class Game {
     this.resize();
     window.addEventListener("resize", this.resize);
 
-    // --- scene lighting: night city ---
-    this.scene.background = new THREE.Color(0x0b1026);
-    this.scene.fog = new THREE.FogExp2(0x0b1026, 0.0028);
-    const hemi = new THREE.HemisphereLight(0x7385bd, 0x302b3d, 1.5);
-    this.scene.add(hemi);
-    const moon = new THREE.DirectionalLight(0xb4c8ff, 1.5);
-    moon.position.set(-120, 200, -80);
-    this.scene.add(moon);
-    const pink = new THREE.DirectionalLight(0xff5cae, 0.32);
-    pink.position.set(100, 60, 120);
-    this.scene.add(pink);
+    this.keyLight.position.set(-120, 200, -80);
+    this.accentLight.position.set(100, 60, 120);
+    this.scene.add(this.ambientLight, this.keyLight, this.accentLight);
+    this.applyCityLight(this.world.mapId);
 
     this.scene.add(this.world.group);
     this.worldCache.set(this.world.mapId, this.world);
@@ -637,7 +642,10 @@ export class Game {
       const locked = !access.unlocked;
       const progress = Math.min(map.unlockDeliveries, this.profile.deliveries);
       return `<button class="map-card track-card ${this.profile.mapId === map.id ? "selected" : ""} ${locked ? "locked" : ""}" data-a="map:${map.id}" ${locked ? "disabled" : ""} aria-pressed="${this.profile.mapId === map.id}">
-        <span class="track-art track-${map.id}"><i>${map.badge}</i>${locked ? "<b class='track-lock'>🔒</b>" : ""}</span>
+        <span class="track-art">
+          <img src="${MAP_PREVIEWS[map.id]}" alt="" width="456" height="384" loading="lazy" decoding="async">
+          ${locked ? "<b class='track-lock' aria-hidden='true'>🔒</b>" : ""}
+        </span>
         <b>${map.name}</b>
         <span>${locked ? "Открывается за доставки или медали" : map.description}</span>
         ${locked ? `<span class="track-progress">${progress} / ${map.unlockDeliveries} доставок · ${medalPoints} / ${map.unlockMedalPoints} очков медалей</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
@@ -1040,6 +1048,18 @@ export class Game {
     return true;
   }
 
+  private applyCityLight(mapId: MapId): void {
+    const style = CITY_STYLE[mapId];
+    this.scene.background = new THREE.Color(style.horizon);
+    this.scene.fog = new THREE.FogExp2(style.horizon, style.fog);
+    this.ambientLight.color.setHex(style.fill);
+    this.ambientLight.groundColor.setHex(style.bounce);
+    this.keyLight.color.setHex(style.sun);
+    this.keyLight.intensity = style.sunIntensity;
+    this.accentLight.color.setHex(style.accent);
+    this.accentLight.intensity = style.accentIntensity;
+  }
+
   private useWorld(mapId: MapId): void {
     if (this.world.mapId !== mapId) {
       let nextWorld = this.worldCache.get(mapId);
@@ -1056,6 +1076,7 @@ export class Game {
         this.worldCache.delete(oldest);
       }
       this.world = nextWorld;
+      this.applyCityLight(mapId);
       this.scene.add(this.world.group);
       this.orders = [];
       this.redFinedX.clear();

@@ -34,7 +34,7 @@ mkdirSync(SHOTS, { recursive: true });
 // Must match <canvas id="..."> in src/pages/Home.tsx. Change both together.
 const CANVAS_ID = "game-canvas";
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".json": "application/json", ".wasm": "application/wasm" };
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".webp": "image/webp", ".json": "application/json", ".wasm": "application/wasm" };
 
 const server = createServer(async (req, res) => {
   try {
@@ -142,6 +142,11 @@ for (const mode of ["delivery", "drift-trial", "time-attack"]) {
   if (await page.locator(`[data-a="activity:${mode}"]`).count() !== 1) fail(`Activity picker is missing ${mode}`);
 }
 await page.locator('[data-a="activity:delivery"]').click();
+await page.waitForFunction(() => {
+  const images = [...document.querySelectorAll(".track-art img")];
+  return images.length === 5 && images.every((image) => image.complete && image.naturalWidth === 456) &&
+    new Set(images.map((image) => image.src)).size === 5;
+});
 const lockedPortMap = page.locator('[data-a="map:yokohama"]');
 if (await lockedPortMap.count() !== 1) fail("Yokohama Port is missing from the tracks screen");
 if (!(await lockedPortMap.isDisabled())) fail("Yokohama opened before the delivery threshold");
@@ -447,26 +452,41 @@ if (!(nitroAfter < nitroBefore && nitroAfter >= 0)) fail("Shift did not consume 
 
 // 3) Check direction without assuming a fixed frame rate on software-rendered CI.
 async function checkDirection(key, axis, direction, distance = 0.05) {
-  const before = await page.evaluate(() => window.__gameProbe());
+  const before = await page.evaluate(() => ({ position: window.__gameProbe(), elapsed: window.__gameDebug.modeState().elapsed }));
+  let passed = false;
   await page.keyboard.down(key);
   try {
-    await page.waitForFunction(
-      ({ start, axis, direction, distance }) => (window.__gameProbe()[axis] - start) * direction > distance,
-      { start: before[axis], axis, direction, distance },
-      { timeout: 4000 },
+    const result = await page.waitForFunction(
+      ({ before, axis, direction, distance }) => {
+        const moved = (window.__gameProbe()[axis] - before.position[axis]) * direction > distance;
+        const elapsed = window.__gameDebug.modeState().elapsed - before.elapsed;
+        return moved || elapsed >= 1.5 ? { passed: moved && elapsed <= 1.5 } : false;
+      },
+      { before, axis, direction, distance },
+      { timeout: 12000 },
     );
-    return true;
+    passed = (await result.jsonValue()).passed;
   } catch (error) {
     if (error.name !== "TimeoutError") throw error;
-    return false;
   } finally {
     await page.keyboard.up(key);
   }
+  if (!passed) {
+    const state = await page.evaluate(() => ({
+      position: window.__gameProbe(), elapsed: window.__gameDebug.modeState().elapsed,
+      speed: window.__gameDebug.speed(), screen: window.__gameDebug.screen(),
+    }));
+    console.error(`${key} did not travel ${distance} on ${axis}: ${JSON.stringify({ before, after: state })}`);
+  }
+  return passed;
 }
 
 const probe = await page.evaluate(() => !!window.__gameProbe);
 if (probe) {
+  // Test reverse from a stop independently of the nitro run above.
+  await page.evaluate(() => window.__gameDebug.teleport(0, 0, Math.PI));
   if (!await checkDirection("KeyS", "z", 1, 0.75)) fail("S did not move the car backwards at a useful speed");
+  await page.evaluate(() => window.__gameDebug.teleport(0, 0, Math.PI));
   if (!await checkDirection("KeyW", "z", -1)) fail("W did not move forward");
   // Steering changes heading while gas keeps the car moving.
   await page.keyboard.down("KeyW");
@@ -496,19 +516,43 @@ await page.evaluate(() => {
   window.__gameDebug.exitMode();
   window.__gameDebug.setDeliveriesForTest(32);
 });
-for (const city of ["spb", "kazan", "sochi", "tokyo"]) {
+const cityLandmarks = {
+  tokyo: ["shrine-gate", "tokyo-radio-tower"],
+  yokohama: ["marine-observation-tower"],
+  spb: ["admiralty-spire", "palace-embankment", "central-neva-bridge"],
+  kazan: ["soyembika-tower", "kul-sharif-mosque", "kazan-family-centre"],
+  sochi: ["fisht-stadium", "marine-terminal", "seaside-palms"],
+};
+const cityPalettes = new Set();
+for (const [city, landmarks] of Object.entries(cityLandmarks)) {
   await page.locator('[data-a="play"]').click();
   await page.locator('[data-a="activity:delivery"]').click();
   await page.locator(`[data-a="map:${city}"]`).click();
   const state = await page.evaluate(() => {
     const debug = window.__gameDebug;
-    return { city: debug.mapId(), cache: debug.worldCacheSize(), buildings: debug.cityBuildingCount(), traffic: debug.trafficPos().length };
+    const mapId = debug.mapId();
+    const world = debug.scene.getObjectByName(`world-${mapId}`);
+    const batches = world.getObjectByName("city-buildings").children.filter((mesh) => mesh.isInstancedMesh);
+    const atlas = batches[0]?.material.map;
+    return {
+      city: mapId, cache: debug.worldCacheSize(), buildings: debug.cityBuildingCount(), traffic: debug.trafficPos().length,
+      landmarks: world.getObjectByName(`landmarks-${mapId}`).children.map((mesh) => mesh.name),
+      batches: batches.length, instanceCount: batches.reduce((count, mesh) => count + mesh.count, 0),
+      sharedAtlas: !!atlas && atlas.image.width === 512 && batches.every((mesh) => mesh.material.map === atlas),
+      fog: debug.scene.fog.color.getHex(),
+    };
   });
-  if (state.city !== city || state.cache > 2 || state.buildings < 400 || state.traffic < 5) {
+  if (state.city !== city || state.cache > 2 || state.buildings < (city === "yokohama" ? 350 : 400) || state.traffic < 5) {
     fail(`Unexpected world after switching to ${city}: ${JSON.stringify(state)}`);
   }
+  if (state.batches !== 2 || state.instanceCount !== state.buildings || !state.sharedAtlas ||
+      !landmarks.every((name) => state.landmarks.includes(name))) {
+    fail(`Missing landmark or architecture batch in ${city}: ${JSON.stringify(state)}`);
+  }
+  cityPalettes.add(state.fog);
   await page.evaluate(() => window.__gameDebug.exitMode());
 }
+if (cityPalettes.size !== Object.keys(cityLandmarks).length) fail("Cities reuse the same scene lighting palette");
 
 await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="activity:delivery"]').click();

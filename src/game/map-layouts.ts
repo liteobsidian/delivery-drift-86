@@ -12,7 +12,7 @@ export interface CityParcel {
   zone: "downtown" | "port";
 }
 export interface WaterArea { id: string; points: CityPoint[] }
-export type CityLandmarkKind = "spire" | "kremlin" | "mosque" | "stadium" | "palm-row" | "bridge";
+export type CityLandmarkKind = "spire" | "palace" | "kremlin" | "mosque" | "cauldron" | "stadium" | "palm-row" | "marina" | "bridge" | "torii" | "radio-tower" | "port-tower";
 export interface CityLandmark {
   id: string;
   kind: CityLandmarkKind;
@@ -94,7 +94,10 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
     ],
     waterAreas: [],
     portSites: [],
-    landmarks: [],
+    landmarks: [
+      { id: "shrine-gate", kind: "torii", x: 18, z: 18, width: 12, depth: 12, rotation: 0 },
+      { id: "tokyo-radio-tower", kind: "radio-tower", x: 87, z: 87, width: 20, depth: 20, rotation: 0 },
+    ],
   },
   yokohama: {
     id: "yokohama",
@@ -194,7 +197,9 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
       { id: "east-loading-pier", kind: "pier", x: 103, z: 85, width: 30, depth: 50, rotation: 0 },
       { id: "moored-cargo-ship", kind: "cargo-ship", x: 90, z: 125, width: 60, depth: 17, rotation: 0 },
     ],
-    landmarks: [],
+    landmarks: [
+      { id: "marine-observation-tower", kind: "port-tower", x: 135, z: 55, width: 12, depth: 12, rotation: 0 },
+    ],
   },
   spb: {
     id: "spb",
@@ -209,15 +214,25 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
         { x: 0, z: 0 }, { x: 38, z: 31 }, { x: 78, z: 62 }, { x: 116, z: 82 }, { x: 145, z: 95 },
       ], 14),
       road("spb-west-avenue", [{ x: -116, z: -116 }, { x: -116, z: 145 }], 11),
-      road("spb-west-grid", [{ x: -58, z: -116 }, { x: -58, z: 95 }], 11),
+      road("spb-west-grid", [
+        { x: -60, z: -116 }, { x: -55, z: -90 }, { x: -70, z: -63 },
+        { x: -64, z: -38 }, { x: -58, z: 0 }, { x: -58, z: 95 },
+      ], 11),
       road("spb-central-avenue", [{ x: 0, z: -116 }, { x: 0, z: 145 }], 13),
-      road("spb-east-grid", [{ x: 58, z: -116 }, { x: 58, z: 95 }], 11),
+      road("spb-east-grid", [
+        { x: 64, z: -116 }, { x: 70, z: -72 }, { x: 61, z: -49 },
+        { x: 58, z: 0 }, { x: 58, z: 95 },
+      ], 11),
       road("spb-east-avenue", [{ x: 116, z: -116 }, { x: 116, z: 145 }], 11),
       road("spb-south-embankment", [{ x: -145, z: -58 }, { x: 145, z: -58 }], 11),
       road("spb-sadovaya-street", [{ x: -145, z: 0 }, { x: 145, z: 0 }], 11),
       road("spb-palace-street", [{ x: -145, z: 58 }, { x: 145, z: 58 }], 11),
       road("spb-riverfront-road", [{ x: -145, z: 145 }, { x: 145, z: 145 }], 12),
       road("spb-palace-ring", circularRoadPoints(0, 0, 38, 0, Math.PI * 2, 48), 12),
+      road("spb-backstreets", [
+        { x: -145, z: -83 }, { x: -116, z: -80 }, { x: -96, z: -75 },
+        { x: -70, z: -63 }, { x: -41, z: -72 }, { x: -20, z: -70 }, { x: 0, z: -58 },
+      ], 9.5),
     ],
     trafficRoutes: [],
     signalJunctions: [{ x: 0, z: -58 }, { x: 58, z: 58 }],
@@ -230,7 +245,8 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
     }],
     portSites: [],
     landmarks: [
-      { id: "golden-spire", kind: "spire", x: 30, z: 78, width: 14, depth: 14, rotation: 0 },
+      { id: "admiralty-spire", kind: "spire", x: 29, z: 78, width: 34, depth: 16, rotation: 0 },
+      { id: "palace-embankment", kind: "palace", x: -29, z: 78, width: 37, depth: 18, rotation: 0 },
       { id: "west-neva-bridge", kind: "bridge", x: -116, z: 118, width: 13, depth: 54, rotation: 0 },
       { id: "central-neva-bridge", kind: "bridge", x: 0, z: 118, width: 15, depth: 54, rotation: 0 },
       { id: "east-neva-bridge", kind: "bridge", x: 116, z: 118, width: 13, depth: 54, rotation: 0 },
@@ -244,8 +260,30 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
         { x: -145, z: -145 }, { x: 145, z: -145 }, { x: 145, z: 145 },
         { x: -145, z: 145 }, { x: -145, z: -145 },
       ], 13),
-      ...[-116, -58, 0, 58, 116].map((x, index) => road(`kazan-north-south-${index}`, [{ x, z: -145 }, { x, z: 145 }], index === 2 ? 13 : 11)),
-      ...[-116, -58, 0, 58, 116].map((z, index) => road(`kazan-east-west-${index}`, [{ x: -145, z }, { x: 145, z }], index === 2 ? 13 : 11)),
+      road("kazan-university-boulevard", [
+        { x: -145, z: -8 }, { x: -92, z: -9 }, { x: -58, z: 0 }, { x: 0, z: 0 },
+        { x: 62, z: 0 }, { x: 112, z: -12 }, { x: 145, z: -25 },
+      ], 13),
+      road("kazan-central-prospect", [
+        { x: -15, z: -145 }, { x: -11, z: -77 }, { x: 0, z: -37 }, { x: 0, z: 0 },
+        { x: 0, z: 58 }, { x: -11, z: 110 }, { x: -30, z: 145 },
+      ], 13),
+      road("kazan-volga-prospect", [
+        { x: 116, z: -145 }, { x: 116, z: -58 }, { x: 122, z: -3 },
+        { x: 132, z: 45 }, { x: 130, z: 102 }, { x: 145, z: 134 },
+      ], 11),
+      road("kazan-market-street", [
+        { x: -145, z: -99 }, { x: -116, z: -85 }, { x: -90, z: -55 }, { x: -92, z: -9 },
+        { x: -78, z: 28 }, { x: -63, z: 71 }, { x: -93, z: 116 }, { x: -110, z: 145 },
+      ], 10),
+      road("kazan-old-town", [
+        { x: -145, z: 76 }, { x: -111, z: 68 }, { x: -71, z: 70 }, { x: -39, z: 58 },
+        { x: 0, z: 58 }, { x: 24, z: 55 }, { x: 73, z: 57 }, { x: 118, z: 65 }, { x: 145, z: 76 },
+      ], 10),
+      road("kazan-university-lane", [
+        { x: -13, z: -107 }, { x: 19, z: -103 }, { x: 47, z: -85 },
+        { x: 86, z: -70 }, { x: 116, z: -58 }, { x: 145, z: -58 },
+      ], 11),
       road("kazan-kremlin-diagonal", [
         { x: -145, z: -145 }, { x: -106, z: -98 }, { x: -54, z: -52 }, { x: 0, z: 0 },
         { x: 45, z: 48 }, { x: 94, z: 99 }, { x: 145, z: 145 },
@@ -257,7 +295,7 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
       road("kazan-central-ring", circularRoadPoints(0, 0, 37, 0, Math.PI * 2, 48), 12),
     ],
     trafficRoutes: [],
-    signalJunctions: [{ x: 0, z: 58 }, { x: -58, z: 0 }, { x: 116, z: -58 }],
+    signalJunctions: [{ x: 0, z: 58 }, { x: -92, z: -9 }, { x: 116, z: -58 }],
     parcels: [],
     waterAreas: [{
       id: "volga-riverbank",
@@ -267,8 +305,9 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
     }],
     portSites: [],
     landmarks: [
-      { id: "kremlin-tower", kind: "kremlin", x: 28, z: 86, width: 30, depth: 25, rotation: -0.1 },
-      { id: "blue-dome-mosque", kind: "mosque", x: 88, z: 22, width: 30, depth: 24, rotation: 0.1 },
+      { id: "soyembika-tower", kind: "kremlin", x: 28, z: 86, width: 31, depth: 23, rotation: -0.1 },
+      { id: "kul-sharif-mosque", kind: "mosque", x: 88, z: 23, width: 29, depth: 24, rotation: 0.1 },
+      { id: "kazan-family-centre", kind: "cauldron", x: 130, z: -96, width: 12, depth: 15, rotation: 0 },
     ],
   },
   sochi: {
@@ -295,6 +334,10 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
         { x: 40, z: 80 }, { x: 75, z: 92 }, { x: 110, z: 95 },
       ], 11),
       road("sochi-olympic-ring", circularRoadPoints(62, -60, 38, 0, Math.PI * 2, 40), 12),
+      road("sochi-seaside-promenade", [
+        { x: -103, z: -117 }, { x: -109, z: -135 }, { x: -99, z: -147 }, { x: -70, z: -151 },
+        { x: -30, z: -152 }, { x: 16, z: -151 }, { x: 45, z: -147 }, { x: 64, z: -138 },
+      ], 9.5),
       road("sochi-park-connector", [{ x: 98, z: 28 }, { x: 90, z: -6 }, { x: 86, z: -37 }], 10),
     ],
     trafficRoutes: [],
@@ -308,8 +351,10 @@ export const CITY_LAYOUTS: Record<MapId, CityLayout> = {
     }],
     portSites: [],
     landmarks: [
-      { id: "olympic-stadium", kind: "stadium", x: 62, z: -60, width: 32, depth: 27, rotation: 0 },
-      { id: "promenade-palms", kind: "palm-row", x: -70, z: -76, width: 18, depth: 12, rotation: 0.15 },
+      { id: "fisht-stadium", kind: "stadium", x: 62, z: -60, width: 45, depth: 35, rotation: 0 },
+      { id: "marine-terminal", kind: "marina", x: -78, z: -104, width: 29, depth: 16, rotation: 0 },
+      { id: "promenade-palms", kind: "palm-row", x: -70, z: -76, width: 18, depth: 10, rotation: 0.15 },
+      { id: "seaside-palms", kind: "palm-row", x: -83, z: -139, width: 16, depth: 5, rotation: -0.06 },
     ],
   },
 };

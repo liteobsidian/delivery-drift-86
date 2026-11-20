@@ -1,7 +1,9 @@
 import type { CityLayout, CityParcel } from "./map-layouts";
+import { buildingVariant, districtBuildingHeight } from "./city-style";
 
 export interface CityBuildingSite extends CityParcel {
   height: number;
+  variant: 0 | 1;
 }
 
 interface Rect {
@@ -293,17 +295,19 @@ export function generateCityBuildingSites(layout: CityLayout): CityBuildingSite[
     const depth = 6.3 + hash(column, row, salt + 31) * 0.6;
     const rotation = roadIndex.nearestAngle(x, z);
     const rect: Rect = { x, z, width, depth, rotation };
+    const variant = buildingVariant(layout.id, x, z, hash(column, row, salt + 157));
     const footprint: CityBuildingSite = {
       ...rect,
       zone: layout.id === "yokohama" ? "port" : "downtown",
-      height: layout.id === "yokohama" ? 5 + hash(column, row, salt + 97) * 5 : 8 + hash(column, row, salt + 97) * 30,
+      variant,
+      height: districtBuildingHeight(layout.id, variant, hash(column, row, salt + 97), z),
     };
     const footprintCorners = corners(rect);
     if (footprintCorners.some((point) => point.x < minX || point.x > maxX || point.z < minZ || point.z > maxZ)) continue;
     if (!roadIndex.clearOfRoads(footprint, 1)) continue;
     if (layout.waterAreas.some((water) => overlapsWater(rect, water.points))) continue;
     if (portSites.some((site) => rectanglesOverlap(rect, site, 2))) continue;
-    if (layout.landmarks.some((site) => rectanglesOverlap(rect, site, site.kind === "palm-row" || site.kind === "bridge" ? 14 : 22))) continue;
+    if (layout.landmarks.some((site) => rectanglesOverlap(rect, site, site.kind === "bridge" ? 9 : site.kind === "palm-row" ? 6 : 10))) continue;
     let overlapsAcceptedSite = false;
     const cellX = Math.floor(x / 16);
     const cellZ = Math.floor(z / 16);

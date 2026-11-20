@@ -88,8 +88,7 @@ describe("hand-authored city layouts", () => {
     }
   });
 
-  it("connects every Yokohama street to the same drivable network", () => {
-    const roads = cityLayoutFor("yokohama").roads;
+  it.each(Object.values(CITY_LAYOUTS))("connects every $id street to the same drivable network", ({ roads }) => {
     const samples = roads.map((item) => item.points.slice(0, -1).flatMap((point, index) => {
       const next = item.points[index + 1];
       const length = Math.hypot(next.x - point.x, next.z - point.z);
@@ -112,6 +111,16 @@ describe("hand-authored city layouts", () => {
       }
     }
     expect([...reached]).toHaveLength(roads.length);
+  });
+
+  it("keeps landmark footprints clear of driving lanes except for bridges", () => {
+    for (const layout of Object.values(CITY_LAYOUTS)) for (const landmark of layout.landmarks) {
+      if (landmark.kind === "bridge") {
+        expect(isOnLayoutRoad(layout, landmark.x, landmark.z), landmark.id).toBe(true);
+      } else {
+        expect(parcelClearOfRoads(layout, { ...landmark, zone: "downtown" }, 0.3), landmark.id).toBe(true);
+      }
+    }
   });
 
   it("places signals only where a horizontal and vertical arterial meet", () => {

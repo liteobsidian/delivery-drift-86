@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { cityLayoutFor, parcelClearOfRoads } from "./map-layouts";
+import { CITY_LAYOUTS, cityLayoutFor, parcelClearOfRoads } from "./map-layouts";
 import { circleOrientedRectContact, cityBuildingMeshYaw, generateCityBuildingSites } from "./city-building-layout";
+import { createBuildingGeometry } from "./city-architecture";
+
+const expectedInfill = {
+  tokyo: [635, "9863f6cd"],
+  yokohama: [355, "b6855651"],
+  spb: [682, "8d381dad"],
+  kazan: [566, "c37ee54c"],
+  sochi: [667, "dad57e46"],
+} as const;
 
 function siteSignature(sites: ReturnType<typeof generateCityBuildingSites>): string {
   let hash = 2166136261;
-  const source = sites.map((site) => [site.x, site.z, site.width, site.depth, site.rotation, site.height]
+  const source = sites.map((site) => [site.x, site.z, site.width, site.depth, site.rotation, site.height, site.variant]
     .map((value) => Number(value.toFixed(6))).join(",")).join(";");
   for (let i = 0; i < source.length; i++) hash = Math.imul(hash ^ source.charCodeAt(i), 16777619) >>> 0;
   return hash.toString(16).padStart(8, "0");
@@ -40,19 +49,20 @@ function rectsOverlap(
 }
 
 describe("generated city infill", () => {
-  it("fills both maps with hundreds of deterministic buildings", () => {
-    for (const id of ["tokyo", "yokohama"] as const) {
-      const layout = cityLayoutFor(id);
+  it("fills every map with hundreds of deterministic buildings in both local styles", () => {
+    for (const layout of Object.values(CITY_LAYOUTS)) {
+      const id = layout.id;
       const first = generateCityBuildingSites(layout);
-      expect(first.length, `${id} building count`).toBe(id === "tokyo" ? 663 : 368);
-      expect(siteSignature(first), `${id} site transforms`).toBe(id === "tokyo" ? "b84c691e" : "18543cfa");
+      expect(first.length, `${id} building count`).toBe(expectedInfill[id][0]);
+      expect(siteSignature(first), `${id} site transforms`).toBe(expectedInfill[id][1]);
+      expect(new Set(first.map((site) => site.variant))).toEqual(new Set([0, 1]));
       expect(generateCityBuildingSites(layout)).toEqual(first);
     }
   });
 
-  it("keeps building footprints off roads and harbor water", () => {
-    for (const id of ["tokyo", "yokohama"] as const) {
-      const layout = cityLayoutFor(id);
+  it("keeps building footprints off roads and water", () => {
+    for (const layout of Object.values(CITY_LAYOUTS)) {
+      const id = layout.id;
       for (const site of generateCityBuildingSites(layout)) {
         expect(parcelClearOfRoads(layout, {
           ...site,
@@ -71,6 +81,21 @@ describe("generated city infill", () => {
           expect(corners.some(([x, z]) => pointInPolygon(x, z, water.points)), `${id} site at ${site.x},${site.z} overlaps water`).toBe(false);
         }
       }
+    }
+  });
+
+  it("fits each low-poly building model within its road-cleared footprint", () => {
+    for (const { id } of Object.values(CITY_LAYOUTS)) for (const variant of [0, 1] as const) {
+      const geometry = createBuildingGeometry(id, variant);
+      const bounds = geometry.boundingBox!;
+      expect(geometry.attributes.position.count / 3, `${id} model budget`).toBeLessThanOrEqual(60);
+      expect(bounds.min.x).toBeGreaterThanOrEqual(-0.5);
+      expect(bounds.min.z).toBeGreaterThanOrEqual(-0.5);
+      expect(bounds.max.x).toBeLessThanOrEqual(0.5);
+      expect(bounds.max.z).toBeLessThanOrEqual(0.5);
+      expect(bounds.min.y).toBeCloseTo(0);
+      expect(bounds.max.y).toBeCloseTo(1);
+      geometry.dispose();
     }
   });
 
