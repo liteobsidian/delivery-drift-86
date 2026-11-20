@@ -534,12 +534,27 @@ for (const [city, landmarks] of Object.entries(cityLandmarks)) {
     const world = debug.scene.getObjectByName(`world-${mapId}`);
     const batches = world.getObjectByName("city-buildings").children.filter((mesh) => mesh.isInstancedMesh);
     const atlas = batches[0]?.material.map;
+    const ground = world.getObjectByName("city-ground");
+    const decks = [];
+    world.traverse((object) => { if (object.name === "road-deck") decks.push(object); });
+    let clearCrossing = true;
+    if (mapId === "sochi") {
+      const texture = ground.material.map.image;
+      const size = ground.geometry.parameters.width;
+      const pixels = texture.getContext("2d");
+      const toPixel = (value) => Math.floor((value / size + 0.5) * texture.width);
+      clearCrossing = [[5.85, 2], [-5.85, -2], [2, 5.35], [-2, -5.35]].every(([x, z]) => {
+        const [r, g, b] = pixels.getImageData(toPixel(x), toPixel(z), 1, 1).data;
+        return Math.max(r, g, b) < 130;
+      });
+    }
     return {
       city: mapId, cache: debug.worldCacheSize(), buildings: debug.cityBuildingCount(), traffic: debug.trafficPos().length,
       landmarks: world.getObjectByName(`landmarks-${mapId}`).children.map((mesh) => mesh.name),
       batches: batches.length, instanceCount: batches.reduce((count, mesh) => count + mesh.count, 0),
       sharedAtlas: !!atlas && atlas.image.width === 512 && batches.every((mesh) => mesh.material.map === atlas),
       fog: debug.scene.fog.color.getHex(),
+      decks: decks.length, sharedDeckSurface: decks.every((deck) => deck.material === ground.material), clearCrossing,
     };
   });
   if (state.city !== city || state.cache > 2 || state.buildings < (city === "yokohama" ? 350 : 400) || state.traffic < 5) {
@@ -548,6 +563,9 @@ for (const [city, landmarks] of Object.entries(cityLandmarks)) {
   if (state.batches !== 2 || state.instanceCount !== state.buildings || !state.sharedAtlas ||
       !landmarks.every((name) => state.landmarks.includes(name))) {
     fail(`Missing landmark or architecture batch in ${city}: ${JSON.stringify(state)}`);
+  }
+  if (state.decks !== (city === "yokohama" || city === "spb" ? 3 : 0) || !state.sharedDeckSurface || !state.clearCrossing) {
+    fail(`Broken roadway paint or deck transition in ${city}: ${JSON.stringify(state)}`);
   }
   cityPalettes.add(state.fog);
   await page.evaluate(() => window.__gameDebug.exitMode());

@@ -5,10 +5,10 @@ import { createBuildingGeometry } from "./city-architecture";
 
 const expectedInfill = {
   tokyo: [635, "9863f6cd"],
-  yokohama: [355, "b6855651"],
-  spb: [682, "8d381dad"],
+  yokohama: [364, "aba81db8"],
+  spb: [694, "3bfc9fd7"],
   kazan: [566, "c37ee54c"],
-  sochi: [667, "dad57e46"],
+  sochi: [632, "13fdde24"],
 } as const;
 
 function siteSignature(sites: ReturnType<typeof generateCityBuildingSites>): string {

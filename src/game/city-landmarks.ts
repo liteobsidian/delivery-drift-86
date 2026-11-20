@@ -250,7 +250,7 @@ function palms(b: Sculpture, width: number): void {
 }
 
 function bridge(b: Sculpture, w: number, d: number): void {
-  b.box(0, 0.075, 0, w, 0.15, d, 0x474952);
+  b.box(0, -0.27, 0, w, 0.64, d, 0x474952);
   for (const side of [-1, 1]) {
     const x = side * (w / 2 - 0.26);
     b.box(x, 0.5, 0, 0.56, 0.9, d, 0x718581);
@@ -264,7 +264,6 @@ function bridge(b: Sculpture, w: number, d: number): void {
       b.box(x, 4.67, z, 0.45, 0.55, 0.45, 0xffe4ab);
     }
   }
-  for (let z = -d / 2 + 5; z < d / 2 - 2; z += 9) b.box(0, 0.16, z, 0.27, 0.035, 3.4, 0xe3d6bb);
 }
 
 function torii(b: Sculpture): void {
