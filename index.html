@@ -1,12 +1,103 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%238df0c1'/></svg>" />
     <title>Delivery Drift 86</title>
+    <style>
+      #startup-loading {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        box-sizing: border-box;
+        color: #edf5ff;
+        background:
+          radial-gradient(ellipse at 76% 16%, #193654 0, transparent 53%),
+          radial-gradient(ellipse at 12% 96%, #331a3b 0, transparent 54%),
+          #0b1220;
+        font: 400 16px/1.4 system-ui, -apple-system, sans-serif;
+      }
+      #startup-loading[hidden] { display: none; }
+      .startup-panel { width: min(100%, 460px); }
+      #startup-brand {
+        margin: 0 0 clamp(18px, 6vh, 36px);
+        font-size: clamp(32px, 7.5vw, 54px);
+        line-height: .94;
+        font-weight: 900;
+        font-style: italic;
+        letter-spacing: -.045em;
+      }
+      #startup-brand span { color: #ff498e; }
+      #startup-brand em { color: #73e5fa; }
+      .startup-readout {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 9px;
+        color: #cbd9ef;
+        font-size: 14px;
+      }
+      #startup-status { margin: 0; }
+      #startup-percent { color: #9bebf8; font-variant-numeric: tabular-nums; }
+      #startup-progress {
+        appearance: none;
+        box-sizing: border-box;
+        width: 100%;
+        height: 8px;
+        display: block;
+        border: 0;
+        border-radius: 5px;
+        overflow: hidden;
+        background: #2c3950;
+      }
+      #startup-progress[hidden] { display: none; }
+      #startup-progress::-webkit-progress-bar { background: transparent; }
+      #startup-progress::-webkit-progress-value { background: linear-gradient(90deg, #489bc8, #76edf5); }
+      #startup-progress::-moz-progress-bar { background: linear-gradient(90deg, #489bc8, #76edf5); }
+      #startup-progress:indeterminate {
+        background: linear-gradient(100deg, #2c3950 25%, #6ddae9 50%, #2c3950 75%);
+        background-size: 250% 100%;
+        animation: startup-scan 1.7s linear infinite;
+      }
+      #startup-progress:indeterminate::-moz-progress-bar { background: transparent; }
+      @keyframes startup-scan {
+        from { background-position: 100% 0; }
+        to { background-position: 0 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #startup-progress:indeterminate { animation: none; }
+      }
+      #startup-action {
+        margin-top: 20px;
+        padding: 10px 16px;
+        border: 1px solid #4b6685;
+        border-radius: 8px;
+        background: #192b43;
+        color: #edf5ff;
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      #startup-action:focus-visible { outline: 2px solid #76edf5; outline-offset: 3px; }
+    </style>
   </head>
   <body>
+    <div id="startup-loading" role="region" aria-labelledby="startup-brand">
+      <div class="startup-panel">
+        <h1 id="startup-brand" lang="en">DELIVERY <span>DRIFT</span> <em>86</em></h1>
+        <div class="startup-readout">
+          <p id="startup-status" role="status">Запускаем игру…</p>
+          <output id="startup-percent" aria-hidden="true"></output>
+        </div>
+        <progress id="startup-progress" aria-label="Загрузка игры"></progress>
+        <button id="startup-action" type="button" hidden>Играть сейчас</button>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

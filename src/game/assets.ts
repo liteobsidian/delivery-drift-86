@@ -36,8 +36,8 @@ export interface LoadedModel {
 export interface GameAssets {
   /** civilian cars for traffic */
   traffic: LoadedModel[];
-  police: LoadedModel;
-  midrise: LoadedModel;
+  police: LoadedModel | null;
+  midrise: LoadedModel | null;
 }
 
 type CreateAsset = (
@@ -102,6 +102,8 @@ const TRAFFIC_GLBS: { url: string; noseRotY: number; len: number }[] = [
   { url: tSedanUrl, noseRotY: Math.PI, len: 4.6 },
   { url: tCoupeUrl, noseRotY: Math.PI, len: 4.45 },
 ];
+
+export const WORLD_MODEL_COUNT = TRAFFIC_GLBS.length + 2;
 
 /**
  * The packed payloads ship as base64 text (the publishing channel is
@@ -211,12 +213,16 @@ export function loadHeroModel(key: HeroModelKey): Promise<LoadedModel> {
   return loadGlbModel(url, { noseRotY, targetLength: len });
 }
 
-export async function loadGameAssets(): Promise<GameAssets> {
-  const mod = await loadAssetModule();
+export async function loadGameAssets(onSettled: () => void): Promise<GameAssets> {
+  const track = (asset: Promise<LoadedModel>) => asset.catch((error: unknown) => {
+    console.warn("World model unavailable", error);
+    return null;
+  }).finally(onSettled);
+
   const [midrise, traffic, police] = await Promise.all([
-    loadModel(mod.assets, "midrise", 0, (s) => 26 / s.y),
-    Promise.all(TRAFFIC_GLBS.map(({ url, noseRotY, len }) => loadGlbModel(url, { noseRotY, targetLength: len }))),
-    loadGlbModel(policeGlbUrl, { noseRotY: 0, targetLength: 4.9 }),
+    track(loadAssetModule().then((mod) => loadModel(mod.assets, "midrise", 0, (s) => 26 / s.y))),
+    Promise.all(TRAFFIC_GLBS.map(({ url, noseRotY, len }) => track(loadGlbModel(url, { noseRotY, targetLength: len })))),
+    track(loadGlbModel(policeGlbUrl, { noseRotY: 0, targetLength: 4.9 })),
   ]);
-  return { traffic, police, midrise };
+  return { traffic: traffic.filter((model) => model !== null), police, midrise };
 }
