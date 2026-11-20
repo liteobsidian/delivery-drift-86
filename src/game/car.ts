@@ -117,6 +117,20 @@ export class Car {
     return 0;
   }
 
+  resetPose(x: number, z: number, heading: number): void {
+    this.pos.set(x, 0, z);
+    this.vel.set(0, 0, 0);
+    this.heading = heading;
+    this.airY = 0;
+    this.airV = 0;
+    this.flipT = -1;
+    this.curbBump = 0;
+    this.body.position.y = 0;
+    this.body.rotation.x = 0;
+    this.body.rotation.z = 0;
+    this.syncMesh(0);
+  }
+
   /** Damage the car body; updates visual damage stages. */
   damageCar(amount: number): void {
     if (this.hp <= 0) return;

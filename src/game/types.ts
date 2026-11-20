@@ -10,6 +10,7 @@ export type GameScreen =
   | "title"
   | "play"
   | "tracks"
+  | "neva-contract"
   | "profile"
   | "garage"
   | "cars"
@@ -63,6 +64,7 @@ export interface Profile {
   records: Record<string, number>;
   weeklyCompletions: Record<string, string[]>;
   weeklyEventWeek: string | null;
+  neva: { bestScore: number; mastered: boolean; seenHelp: boolean };
 }
 
 export interface CarSpec {

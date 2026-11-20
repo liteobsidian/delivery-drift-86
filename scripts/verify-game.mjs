@@ -38,7 +38,8 @@ const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css
 
 const server = createServer(async (req, res) => {
   try {
-    const raw = req.url === "/" ? "/index.html" : req.url.split("?")[0];
+    const pathname = req.url.split("?")[0];
+    const raw = pathname === "/" ? "/index.html" : pathname;
     // Decode: request paths are percent-encoded, so an asset named "level 1.png" arrives as
     // "level%201.png" and would 404 (surfacing later as a bogus console-error failure).
     let path;
@@ -590,6 +591,88 @@ if (!(await row.getByText(/Toyota AE86 Sprinter/).isVisible()) || !(await row.ge
 }
 if (await secondTab.locator(".record-row").filter({ hasText: "Time Attack" }).count()) fail("Malformed time record reached the UI");
 await mobileContext.close();
+
+// A fresh career can play the authored contract, share it, and return to its own car.
+const nevaPage = await browser.newPage({ viewport: { width: 1000, height: 650 } });
+nevaPage.on("pageerror", (error) => consoleErrors.push(String(error)));
+await nevaPage.goto(`http://127.0.0.1:${port}/`);
+await nevaPage.locator('[data-a="event-dismiss"]').click();
+await nevaPage.locator('[data-a="play"]').click();
+await nevaPage.locator('[data-a="neva"]').click();
+await nevaPage.locator(".neva-brief").waitFor();
+await nevaPage.screenshot({ path: join(SHOTS, "neva-briefing.png") });
+await nevaPage.locator('[data-a="start-neva"]').click();
+await nevaPage.locator("dialog.tutorial[open]").waitFor();
+const trial = await nevaPage.evaluate(() => {
+  const debug = window.__gameDebug;
+  const save = JSON.parse(localStorage.getItem("delivery-drift-86-save-v2"));
+  return { map: debug.mapId(), car: debug.neva()?.car, selected: save.mapId, elapsed: debug.modeState().elapsed };
+});
+if (trial.map !== "spb" || trial.car !== "vaz2107turbo" || trial.selected !== "tokyo" || trial.elapsed !== 0) {
+  fail(`The fresh career did not receive an isolated contract car and route: ${JSON.stringify(trial)}`);
+}
+await nevaPage.locator('[data-a="tut-ok"]').click();
+await nevaPage.screenshot({ path: join(SHOTS, "neva-course.png") });
+
+await nevaPage.evaluate(() => {
+  const debug = window.__gameDebug;
+  // These samples exercise both gate transitions and the persisted finish separately from input timing.
+  for (const [[x0, z0], bend, exit] of [[[17, 58], [0, 58], [0, 74]], [[0, 133], [0, 145], [-15, 145]]]) {
+    let x = x0;
+    let z = z0;
+    for (const [tx, tz] of [bend, exit]) {
+      const fromX = x;
+      const fromZ = z;
+      for (let i = 1; i <= 30; i++) {
+        const nx = fromX + (tx - fromX) * i / 30;
+        const nz = fromZ + (tz - fromZ) * i / 30;
+        debug.driveNevaStepForTest(x, z, nx, nz, 12, 7, true);
+        x = nx;
+        z = nz;
+      }
+    }
+  }
+  debug.setElapsedForTest(15);
+  const dest = debug.orderDest();
+  debug.teleport(dest.x, dest.z);
+});
+await nevaPage.locator(".result.ok").waitFor();
+if (!(await nevaPage.getByText(/за занос \+₽320/).isVisible())) fail("Both clean sectors did not pay their bonus");
+const resultSave = await nevaPage.evaluate(() => JSON.parse(localStorage.getItem("delivery-drift-86-save-v2")));
+if (resultSave.deliveries !== 1 || !resultSave.neva.mastered || !resultSave.unlockedAch.includes("neva-master") ||
+    resultSave.carId !== "ae86" || resultSave.ownedCars.includes("vaz2107turbo")) fail("The contract did not save its reward and preserve the original garage");
+await nevaPage.locator('[data-a="share-neva"]').click();
+const shared = await nevaPage.getByRole("textbox", { name: "Ссылка на вызов" }).inputValue();
+const link = new URL(shared);
+if (link.searchParams.get("challenge") !== "neva-v1" || Number(link.searchParams.get("score")) !== resultSave.neva.bestScore) {
+  fail("The share link did not carry the contract version and score");
+}
+await nevaPage.locator('[data-a="replay"]').click();
+if ((await nevaPage.evaluate(() => window.__gameDebug.neva()?.cleanSectors)) !== 0 ||
+    await nevaPage.locator("dialog.tutorial[open]").count()) fail("Contract replay did not reset its sectors or repeated the tutorial");
+await nevaPage.evaluate(() => window.__gameDebug.setCargoForTest(0));
+await nevaPage.locator(".result.bad").waitFor();
+if ((await nevaPage.evaluate(() => window.__gameDebug.profile().money)) !== resultSave.money) fail("Failed contract paid a bonus");
+await nevaPage.locator('[data-a="garage"]').click();
+if ((await nevaPage.evaluate(() => window.__gameDebug.mapId())) !== "tokyo" ||
+    !(await nevaPage.locator(".garage").getByText(/Toyota AE86 Sprinter/).first().isVisible())) fail("Leaving the contract did not restore the career car and world");
+await nevaPage.close();
+
+const rival = await browser.newPage({ hasTouch: true, isMobile: true, viewport: { width: 844, height: 390 } });
+rival.on("pageerror", (error) => consoleErrors.push(String(error)));
+await rival.goto(link.href);
+await rival.getByText(`Результат друга · ${resultSave.neva.bestScore} очк.`).waitFor();
+await rival.locator('[data-a="start-neva"]').tap();
+await rival.locator('[data-a="tut-ok"]').tap();
+await rival.evaluate(() => {
+  const debug = window.__gameDebug;
+  const dest = debug.orderDest();
+  debug.setElapsedForTest(20);
+  debug.teleport(dest.x, dest.z);
+});
+await rival.locator(".result.ok").waitFor();
+if (!(await rival.getByText(/До результата друга/).isVisible())) fail("The mobile challenge did not compare the safe finish with its target");
+await rival.close();
 
 // 5) Zero console errors
 if (consoleErrors.length) fail(`${consoleErrors.length} console error(s): ${consoleErrors[0]}`);

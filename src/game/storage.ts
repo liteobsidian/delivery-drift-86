@@ -1,4 +1,5 @@
 import { CARS, UPGRADE_DEFS, UPGRADE_MAX } from "./config";
+import { NEVA_CONTRACT } from "./neva-contract";
 import { recordDetails, weeklyRouteIds } from "./retention";
 import { ACTIVITY_MODES, MAP_IDS, type Profile } from "./types";
 
@@ -61,6 +62,7 @@ export function defaultProfile(): Profile {
     records: {},
     weeklyCompletions: {},
     weeklyEventWeek: null,
+    neva: { bestScore: 0, mastered: false, seenHelp: false },
   };
 }
 
@@ -108,6 +110,10 @@ export function mergeProfileData(input: unknown): Profile {
     profile.weeklyCompletions[week] = strings(completions[week]).filter((id) => validIds.has(id));
   }
   if (weekKey(saved.weeklyEventWeek)) profile.weeklyEventWeek = saved.weeklyEventWeek;
+  const neva = object(saved.neva);
+  profile.neva.bestScore = Math.floor(number(neva.bestScore, 0, NEVA_CONTRACT.maxScore));
+  profile.neva.mastered = neva.mastered === true;
+  profile.neva.seenHelp = neva.seenHelp === true;
   return profile;
 }
 

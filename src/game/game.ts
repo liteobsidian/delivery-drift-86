@@ -26,6 +26,8 @@ import { loadGameAssets } from "./assets";
 import type { HeroModelKey, LoadedModel } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
+import { NEVA_CONTRACT, NEVA_SECTORS, NevaRun, nevaChallengeLink, nevaChallengeTarget, nevaResult } from "./neva-contract";
+import { buildNevaMarkings, drawNevaPreview, drawNevaRoute } from "./neva-visuals";
 import { sampleDeliveryDestination } from "./delivery-routing";
 import { canUnlockCar, driftMedal, driftMultiplierForSeconds, finalDriftScore, medalRank, modeReward, timeAttackCourse, timeAttackMedal, type TimeAttackCourse } from "./modes";
 import { carThumb, createShowroom } from "./showroom";
@@ -36,6 +38,9 @@ import {
 
 const VERIFICATION = import.meta.env.DEV || import.meta.env.MODE === "verification";
 const WORLD_CACHE_LIMIT = 2;
+const NEVA_CAR = CARS.find(({ id }) => id === NEVA_CONTRACT.carId)!;
+const STOCK_UPGRADES: UpgradeLevels = { engine: 0, tires: 0, turbo: 0, suspension: 0 };
+const { start: NEVA_START, finish: NEVA_FINISH } = NEVA_CONTRACT;
 const SD = ROAD_W / 2 + 1.6; // stop-line distance from intersection center
 
 function el(tag: string, cls: string, html = ""): HTMLElement {
@@ -77,6 +82,11 @@ export class Game {
   private worldCache = new Map<MapId, World>();
   world = new World(this.profile.mapId);
   car: Car;
+  private readonly careerCar: Car;
+  private nevaCar: Car | null = null;
+  private nevaMarkings: ReturnType<typeof buildNevaMarkings> | null = null;
+  private nevaRun: NevaRun | null = null;
+  private nevaTarget = nevaChallengeTarget(window.location.search);
   traffic: Traffic;
   private midriseAsset: { root: THREE.Group; size: THREE.Vector3 } | null = null;
   effects = new Effects();
@@ -116,6 +126,9 @@ export class Game {
   private wreckTimer = -1; // >=0 while the burning wreck is counting down to order fail
   assetsReady = false; // downloaded models swapped in
   private camPos = new THREE.Vector3(0, 5, 55);
+  private camForward = new THREE.Vector3();
+  private camDesired = new THREE.Vector3();
+  private camLook = new THREE.Vector3();
   private toastTimer = 0;
   private hudTimer = 0;
   nitroFuel = 100;
@@ -170,13 +183,14 @@ export class Game {
 
     this.scene.add(this.world.group);
     this.worldCache.set(this.world.mapId, this.world);
-    this.car = new Car(tunedSpec(this.currentCarSpec(), this.currentUpgrades()));
-    this.car.onSmoke = (x, z, strong) => this.effects.spawnSmoke(x, z, strong);
+    this.careerCar = new Car(tunedSpec(this.currentCarSpec(), this.currentUpgrades()));
+    this.configureCar(this.careerCar);
+    this.car = this.careerCar;
     this.scene.add(this.car.group);
     this.traffic = new Traffic(this.world, this.car.pos);
     this.traffic.onNearMiss = () => {
       if (this.screen !== "playing") return;
-      if (this.mode === "delivery") {
+      if (this.mode === "delivery" && !this.nevaRun) {
         this.addBonus(60, "Впритирку!");
         this.audio.uiClick();
       }
@@ -204,48 +218,6 @@ export class Game {
         this.assetsReady = true;
       })
       .catch((err) => console.warn("asset load failed, placeholders stay:", err));
-    this.car.onWheelLost = (x, z) => {
-      const geo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 12);
-      geo.rotateZ(Math.PI / 2);
-      const m = new THREE.Mesh(
-        geo,
-        new THREE.MeshStandardMaterial({ color: 0x0a0a0c })
-      );
-      m.position.set(x, 0.34, z);
-      this.scene.add(m);
-      this.debris.push(m);
-      this.toast("Отвалилась колесо! Машина ведёт в сторону", true);
-      this.audio.thud(0.7);
-    };
-    this.car.onPartLost = (x, z, kind) => {
-      const dark = new THREE.MeshStandardMaterial({ color: 0x17191f });
-      const part =
-        kind === "spoiler"
-          ? new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.07, 0.4), dark)
-          : new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.2, 0.34), dark);
-      part.position.set(x, kind === "spoiler" ? 0.5 : 0.36, z);
-      part.rotation.y = Math.random() * Math.PI;
-      this.scene.add(part);
-      this.debris.push(part);
-      this.toast(kind === "spoiler" ? "Отвалился спойлер!" : "Отвалился бампер!", true);
-      this.audio.thud(0.5);
-    };
-
-    // blob shadow under car
-    const blob = new THREE.Mesh(
-      new THREE.CircleGeometry(1.9, 16),
-      new THREE.MeshBasicMaterial({
-        color: 0x000000,
-        transparent: true,
-        opacity: 0.4,
-        depthWrite: false,
-      })
-    );
-    blob.rotation.x = -Math.PI / 2;
-    blob.position.y = 0.02;
-    blob.name = "blob-shadow";
-    this.car.group.add(blob);
-
     // --- UI ---
     this.overlay = document.getElementById("ui-overlay")!;
     this.screenEl = el("div", "screen-wrap");
@@ -268,15 +240,17 @@ export class Game {
     this.input.onConfirm = () => {
       if (this.tutorialEl.open || this.saveStatus === "conflict") return;
       if (this.screen === "title" && !this.screenEl.querySelector(".weekly-event-shade")) this.showScreen("play");
+      else if (this.screen === "neva-contract") this.startNevaContract();
       else if (this.screen === "result") {
-        if (this.lastResult.mode) this.startMode(this.lastResult.mode);
+        if (this.nevaRun) this.startNevaContract();
+        else if (this.lastResult.mode) this.startMode(this.lastResult.mode);
         else this.gotoOrders();
       }
     };
     this.audio.muted = this.profile.muted;
     this.audio.volume = this.profile.volume;
 
-    this.showScreen("title");
+    this.showScreen(this.nevaTarget === null ? "title" : "neva-contract");
     if (!this.profileStore.readable) this.showSaveStatus("unavailable");
     if (VERIFICATION) {
       (window as unknown as { __gameProbe: () => { x: number; y: number; z: number } }).__gameProbe =
@@ -345,6 +319,16 @@ export class Game {
           this.persistProfile();
         },
         worldCacheSize: () => this.worldCache.size,
+        neva: () => this.nevaRun && {
+          cleanSectors: this.nevaRun.cleanSectors,
+          activeSector: this.nevaRun.activeSector(),
+          target: this.nevaTarget,
+          car: this.car.spec.id,
+          careerHp: this.careerCar.hp,
+        },
+        driveNevaStepForTest: (x: number, z: number, nextX: number, nextZ: number, speed: number, slip: number, clean: boolean) => {
+          this.nevaRun?.update(x, z, nextX, nextZ, 1 / 60, speed, slip, clean);
+        },
         setCargoForTest: (cargo: number) => { this.car.cargo = cargo; },
         portVisuals: () => {
           if (this.world.mapId !== "yokohama") return null;
@@ -425,6 +409,51 @@ export class Game {
     }
   }
 
+  private configureCar(car: Car): void {
+    car.onSmoke = (x, z, strong) => this.effects.spawnSmoke(x, z, strong);
+    car.onWheelLost = (x, z) => {
+      const geo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 12);
+      geo.rotateZ(Math.PI / 2);
+      const m = new THREE.Mesh(
+        geo,
+        new THREE.MeshStandardMaterial({ color: 0x0a0a0c })
+      );
+      m.position.set(x, 0.34, z);
+      this.scene.add(m);
+      this.debris.push(m);
+      this.toast("Отвалилась колесо! Машина ведёт в сторону", true);
+      this.audio.thud(0.7);
+    };
+    car.onPartLost = (x, z, kind) => {
+      const dark = new THREE.MeshStandardMaterial({ color: 0x17191f });
+      const part =
+        kind === "spoiler"
+          ? new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.07, 0.4), dark)
+          : new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.2, 0.34), dark);
+      part.position.set(x, kind === "spoiler" ? 0.5 : 0.36, z);
+      part.rotation.y = Math.random() * Math.PI;
+      this.scene.add(part);
+      this.debris.push(part);
+      this.toast(kind === "spoiler" ? "Отвалился спойлер!" : "Отвалился бампер!", true);
+      this.audio.thud(0.5);
+    };
+
+    // blob shadow under car
+    const blob = new THREE.Mesh(
+      new THREE.CircleGeometry(1.9, 16),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+      })
+    );
+    blob.rotation.x = -Math.PI / 2;
+    blob.position.y = 0.02;
+    blob.name = "blob-shadow";
+    car.group.add(blob);
+  }
+
   // ================= screens =================
 
   private clearScreen(): void {
@@ -433,12 +462,20 @@ export class Game {
   }
 
   showScreen(s: GameScreen): void {
+    if (s !== "playing" && s !== "paused" && s !== "settings" && s !== "result") {
+      if (this.nevaRun) this.exitNevaContract();
+      else if (this.screen === "neva-contract" && s !== "neva-contract") this.clearNevaTarget();
+    }
+    if (this.screen === "neva-contract" && s === "play") {
+      this.showroom.setCar(this.currentCarSpec(), this.currentUpgrades(), this.heroFor(this.currentCarSpec()));
+    }
     this.screen = s;
     if (s !== "playing" && s !== "paused") this.tutorialEl.close();
     this.hudEl.style.display = s === "playing" ? "block" : "none";
     this.input.setDriving(s === "playing" && !this.tutorialEl.open && this.saveStatus !== "conflict");
     if (s === "title") this.renderTitle();
     else if (s === "play") this.renderPlay();
+    else if (s === "neva-contract") this.renderNevaContract();
     else if (s === "tracks") this.renderTracks();
     else if (s === "profile") this.renderProfile();
     else if (s === "garage") this.renderGarage();
@@ -555,6 +592,10 @@ export class Game {
       <div class="journey-eyebrow">НОЧНОЙ КУРЬЕР · ${WORLD_MAPS.find((map) => map.id === this.profile.mapId)?.name}</div>
       <h2>ВЫБЕРИ ЗАЕЗД</h2>
       <p class="dim">Сначала выбери, как хочешь провести эту гонку.</p>
+      <button type="button" class="neva-feature activity-card" data-a="neva">
+        <b>ДОСТАВЬ КРАСИВО</b><span>Петербург · турбожига · два поворота с премией за занос</span>
+        <i aria-hidden="true">→</i>
+      </button>
       <div class="activity-picker journey-activities">
         <button class="activity-card" data-a="activity:delivery"><b>ДОСТАВКА</b><span>Бесконечные заказы, деньги и развитие гаража</span><i>Выбрать →</i></button>
         <button class="activity-card" data-a="activity:drift-trial"><b>DRIFT TRIAL</b><span>60 секунд · комбо до ×5 · ₽ за очки · Silvia за серебро</span><i>Выбрать →</i></button>
@@ -562,7 +603,31 @@ export class Game {
       </div>
       <button class="btn" data-a="back">← НАЗАД</button>
     </div>`;
-    this.bindScreen({ back: () => this.showScreen("title") });
+    this.bindScreen({ back: () => this.showScreen("title"), neva: () => this.showScreen("neva-contract") });
+  }
+
+  private renderNevaContract(): void {
+    this.showroom.setCar(NEVA_CAR, STOCK_UPGRADES);
+    const best = this.profile.neva.bestScore;
+    this.screenEl.style.display = "flex";
+    this.screenEl.innerHTML = `<section class="panel neva-brief">
+      <div class="neva-brief-copy">
+        <div class="journey-eyebrow">ПЕТЕРБУРГ · КОНТРАКТ</div>
+        <h2>${NEVA_CONTRACT.title}</h2>
+        <p>Доставь груз через Неву на турбожиге. Пройди в заносе между золотыми линиями, чтобы заработать ₽${NEVA_CONTRACT.sectorBonus} за поворот.</p>
+        <p class="neva-goal">${this.nevaTarget === null ? `Лимит ${NEVA_CONTRACT.timeLimit} с` : `Результат друга · ${this.nevaTarget} очк.`}${best ? ` · Твой рекорд ${best}` : ""}</p>
+        <div class="neva-actions">
+          <button class="btn primary" data-a="start-neva">НАЧАТЬ ЗАЕЗД</button>
+          <button class="btn" data-a="back">К РЕЖИМАМ</button>
+        </div>
+      </div>
+      <figure class="neva-route">
+        <canvas width="350" height="235" role="img" aria-label="Маршрут через Неву с двумя поворотами"></canvas>
+        <figcaption>1 · Дворцовый поворот <span>2 · Съезд с моста</span></figcaption>
+      </figure>
+    </section>`;
+    drawNevaPreview(this.screenEl.querySelector("canvas")!);
+    this.bindScreen({ "start-neva": () => this.startNevaContract(), back: () => this.showScreen("play") });
   }
 
   private renderTracks(): void {
@@ -719,7 +784,7 @@ export class Game {
       <div class="panel pause">
         <h2>ПАУЗА</h2>
         <button class="btn primary" data-a="resume">ПРОДОЛЖИТЬ</button>
-        <button class="btn" data-a="retry">${this.mode === "delivery" ? "ЗАНОВО ЗАКАЗ" : "ЗАНОВО ЗАЕЗД"}</button>
+        <button class="btn" data-a="retry">${this.mode === "delivery" && !this.nevaRun ? "ЗАНОВО ЗАКАЗ" : "ЗАНОВО ЗАЕЗД"}</button>
         <button class="btn" data-a="help">❓ КАК ИГРАТЬ</button>
         <button class="btn" data-a="settings">⚙ НАСТРОЙКИ</button>
         <button class="btn" data-a="sound">${this.profile.muted ? "🔇 ВКЛ ЗВУК" : "🔊 ВЫКЛ ЗВУК"}</button>
@@ -728,7 +793,8 @@ export class Game {
     this.bindScreen({
       resume: () => this.togglePause(),
       retry: () => {
-        if (this.mode === "delivery" && this.order) this.startOrder(this.order);
+        if (this.nevaRun) this.startNevaContract();
+        else if (this.mode === "delivery" && this.order) this.startOrder(this.order);
         else if (this.mode !== "delivery") this.startMode(this.mode);
       },
       help: () => this.showTutorial(),
@@ -812,7 +878,7 @@ export class Game {
 
   private renderProfile(): void {
     const records = this.profile.records;
-    const recordRows = Object.keys(records).sort().flatMap((key) => {
+    const rows = Object.keys(records).sort().flatMap((key) => {
       const entry = recordDetails(key);
       if (!entry) return [];
       const { mapId, mode, car } = entry;
@@ -822,7 +888,11 @@ export class Game {
       const rounded = Math.round(value).toLocaleString("ru-RU");
       const metric = mode === "time-attack" ? `${value.toFixed(1)} с` : mode === "delivery" ? `₽${rounded}` : `${rounded} очк.`;
       return [`<div class="record-row"><b>${modeName}</b><span>${mapName} · ${car.name}</span><strong>${metric}</strong></div>`];
-    }).join("") || `<p class="dim">Лучший результат появится здесь после первого завершённого заезда.</p>`;
+    });
+    if (this.profile.neva.bestScore) rows.unshift(
+      `<div class="record-row"><b>${NEVA_CONTRACT.title}</b><span>Петербург · LADA 2107 Turbo</span><strong>${this.profile.neva.bestScore} очк.</strong></div>`,
+    );
+    const recordRows = rows.join("") || `<p class="dim">Лучший результат появится здесь после первого завершённого заезда.</p>`;
     const now = new Date();
     const week = utcWeekKey(now);
     const routes = weeklyRoutes(now, this.world.mapId);
@@ -867,25 +937,54 @@ export class Game {
     });
   }
 
-  private lastResult: { ok: boolean; lines: string[]; mode?: "drift-trial" | "time-attack"; title?: string } = { ok: false, lines: [] };
+  private lastResult: {
+    ok: boolean; lines: string[]; mode?: "drift-trial" | "time-attack"; title?: string; nevaScore?: number;
+  } = { ok: false, lines: [] };
 
   private renderResult(): void {
     const r = this.lastResult;
+    const share = r.nevaScore === undefined ? "" : `
+      <button class="btn" data-a="share-neva">БРОСИТЬ ВЫЗОВ ДРУГУ</button>
+      <div class="neva-share" hidden>
+        <input aria-label="Ссылка на вызов" readonly>
+        <small role="status"></small>
+      </div>`;
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
       <div class="panel result ${r.ok ? "ok" : "bad"}">
         <h2>${r.title ?? (r.ok ? "ДОСТАВЛЕНО!" : "ЗАКАЗ ПРОВАЛЕН")}</h2>
         <div class="result-lines">${r.lines.map((l) => `<div>${l}</div>`).join("")}</div>
-        ${r.mode ? `<button class="btn primary" data-a="replay">ПОВТОРИТЬ ЗАЕЗД</button>` : `<button class="btn primary" data-a="more">ЕЩЁ ЗАКАЗ <kbd>ПРОБЕЛ</kbd></button>`}
+        ${r.mode || this.nevaRun ? `<button class="btn primary" data-a="replay">ПОВТОРИТЬ ЗАЕЗД</button>` : `<button class="btn primary" data-a="more">ЕЩЁ ЗАКАЗ <kbd>ПРОБЕЛ</kbd></button>`}
+        ${share}
         <button class="btn" data-a="garage">В ГАРАЖ</button>
         <button class="btn" data-a="menu">В МЕНЮ</button>
       </div>`;
     this.bindScreen({
       more: () => this.gotoOrders(),
-      replay: () => this.lastResult.mode && this.startMode(this.lastResult.mode),
+      replay: () => {
+        if (this.nevaRun) this.startNevaContract();
+        else if (r.mode) this.startMode(r.mode);
+      },
+      "share-neva": () => { if (r.nevaScore !== undefined) void this.shareNeva(r.nevaScore); },
       garage: () => this.showScreen("garage"),
       menu: () => this.showScreen("title"),
     });
+  }
+
+  private async shareNeva(score: number): Promise<void> {
+    const box = this.screenEl.querySelector<HTMLElement>(".neva-share")!;
+    const field = box.querySelector<HTMLInputElement>("input")!;
+    const status = box.querySelector("small")!;
+    field.value = nevaChallengeLink(window.location.href, score);
+    box.hidden = false;
+    try {
+      await navigator.clipboard.writeText(field.value);
+      status.textContent = "Ссылка скопирована";
+    } catch {
+      field.focus();
+      field.select();
+      status.textContent = "Скопируй ссылку из поля";
+    }
   }
 
   private bindScreen(actions: Record<string, () => void>): void {
@@ -933,13 +1032,22 @@ export class Game {
   private selectMap(mapId: MapId): boolean {
     const points = careerMedalPoints(this.profile.records);
     if (!mapAccessFor(mapId, this.profile.deliveries, this.profile.mapId, points).unlocked) return false;
+    if (this.world.mapId !== mapId) this.useWorld(mapId);
+    if (this.profile.mapId !== mapId) {
+      this.profile.mapId = mapId;
+      this.persistProfile();
+    }
+    return true;
+  }
+
+  private useWorld(mapId: MapId): void {
     if (this.world.mapId !== mapId) {
       let nextWorld = this.worldCache.get(mapId);
       if (!nextWorld) {
         nextWorld = new World(mapId);
         if (this.midriseAsset) nextWorld.setHeroBuildings(this.midriseAsset.root, this.midriseAsset.size);
       }
-      this.scene.remove(this.world.group);
+      this.world.group.removeFromParent();
       this.worldCache.delete(mapId);
       this.worldCache.set(mapId, nextWorld);
       if (this.worldCache.size > WORLD_CACHE_LIMIT) {
@@ -953,16 +1061,11 @@ export class Game {
       this.redFinedX.clear();
       this.greenCooldown.clear();
       this.world.hideDestination();
-      this.car.pos.set(0, 0, 0);
-      this.car.vel.set(0, 0, 0);
-      this.car.heading = Math.PI;
+      this.car.resetPose(0, 0, Math.PI);
       this.traffic.setWorld(this.world, this.car.pos);
-      this.buildMinimapBase();
       this.police.stop();
-      this.profile.mapId = mapId;
-      this.persistProfile();
     }
-    return true;
+    this.buildMinimapBase();
   }
 
   // ================= profile / economy =================
@@ -1027,11 +1130,11 @@ export class Game {
   private applyCarSpec(): void {
     const up = this.currentUpgrades();
     const hero = this.heroFor(this.currentCarSpec());
-    this.car.setSpec(tunedSpec(this.currentCarSpec(), up));
-    this.car.setHeroModel(hero ?? null);
-    this.car.setUpgrades(up);
-    // title/garage background shows the current car
-    this.showroom.setCar(this.currentCarSpec(), up, hero);
+    this.careerCar.setSpec(tunedSpec(this.currentCarSpec(), up));
+    this.careerCar.setHeroModel(hero ?? null);
+    this.careerCar.setUpgrades(up);
+    // The contract briefing displays the same car that the player will borrow.
+    if (this.screen !== "neva-contract") this.showroom.setCar(this.currentCarSpec(), up, hero);
   }
 
   // ================= orders =================
@@ -1087,25 +1190,77 @@ export class Game {
     this.showScreen("orders");
   }
 
+  private startNevaContract(): void {
+    if (!this.nevaCar) {
+      this.nevaCar = new Car(NEVA_CAR);
+      this.configureCar(this.nevaCar);
+    }
+    const trial = this.nevaCar;
+    if (this.car !== trial) {
+      this.careerCar.group.removeFromParent();
+      this.car = trial;
+      this.scene.add(trial.group);
+    }
+    if (trial.hp < 100 || trial.wrecked || trial.wheelLost || trial.spoilerLost || trial.bumperLost) trial.repair();
+    const firstAttempt = !this.nevaRun;
+    this.nevaRun = new NevaRun();
+    if (firstAttempt) {
+      this.useWorld(NEVA_CONTRACT.mapId);
+      this.nevaMarkings ??= buildNevaMarkings();
+      this.scene.add(this.nevaMarkings);
+    }
+    for (const [i, light] of this.world.lights.entries()) {
+      light.timer = i * 1.7;
+      light.phaseId = 0;
+    }
+    this.world.update(0);
+    this.nitroFuel = 100;
+    this.startOrder({
+      id: this.orderId++, title: NEVA_CONTRACT.title, dest: NEVA_FINISH,
+      reward: NEVA_CONTRACT.reward, timeLimit: NEVA_CONTRACT.timeLimit,
+      fragility: 0.8, distance: NEVA_CONTRACT.distance,
+    });
+  }
+
+  private exitNevaContract(): void {
+    this.world.hideDestination();
+    this.nevaRun = null;
+    this.order = null;
+    this.nevaMarkings?.removeFromParent();
+    this.nevaCar?.group.removeFromParent();
+    this.car = this.careerCar;
+    this.scene.add(this.careerCar.group);
+    this.useWorld(this.profile.mapId);
+    this.clearNevaTarget();
+  }
+
+  private clearNevaTarget(): void {
+    if (this.nevaTarget === null) return;
+    this.nevaTarget = null;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("challenge");
+    url.searchParams.delete("score");
+    window.history.replaceState(window.history.state, "", url);
+  }
+
   private startOrder(o: Order, mode: ActivityMode = "delivery"): void {
     this.mode = mode;
     this.order = o;
     if (mode !== "time-attack") this.timeAttackCourse = null;
     this.timeAttackCheckpointIndex = 0;
     this.orders = this.orders.filter((x) => x.id !== o.id);
-    this.car.pos.set(0, 0, 0);
-    this.car.vel.set(0, 0, 0);
-    this.car.heading = Math.PI;
-    if (mode === "time-attack" && this.timeAttackCourse) {
+    if (this.nevaRun) {
+      this.car.resetPose(NEVA_START.x, NEVA_START.z, NEVA_START.heading);
+      this.camPos.set(NEVA_START.x + 9, 4.2, NEVA_START.z);
+    } else if (mode === "time-attack" && this.timeAttackCourse) {
       const tangent = { x: Math.sin(this.timeAttackCourse.heading), z: Math.cos(this.timeAttackCourse.heading) };
       const start = trafficLanePosition(this.timeAttackCourse.start, tangent, ROAD_W / 4);
-      this.car.pos.set(start.x, 0, start.z);
-      this.car.heading = this.timeAttackCourse.heading;
+      this.car.resetPose(start.x, start.z, this.timeAttackCourse.heading);
+    } else {
+      this.car.resetPose(0, 0, Math.PI);
     }
-    this.traffic.resetForPlayer(this.car.pos);
+    this.traffic.resetForPlayer(this.car.pos, this.nevaRun ? NEVA_CONTRACT.trafficSeed : undefined);
     this.car.cargo = 100;
-    this.car.airY = 0;
-    this.car.airV = 0;
     this.timeLeft = o.timeLimit;
     this.driftScore = 0;
     this.driftBankedScore = 0;
@@ -1137,12 +1292,12 @@ export class Game {
     this.audio.ensure();
     this.showScreen("playing");
     this.updateHud();
-    this.toast(mode === "drift-trial"
+    this.toast(this.nevaRun ? "Следуй к мосту по линии на миникарте" : mode === "drift-trial"
       ? "Drift Trial · удерживай занос, чтобы поднять множитель"
       : mode === "time-attack"
         ? `Time Attack · контрольная точка 1/${this.timeAttackCourse?.checkpoints.length ?? 5}`
         : `Доставь заказ за ${o.timeLimit} с. Береги груз!`);
-    if (!this.profile.seenTutorials[mode]) this.showTutorial();
+    if (!(this.nevaRun ? this.profile.neva.seenHelp : this.profile.seenTutorials[mode])) this.showTutorial();
     else this.audio.startMusic();
   }
 
@@ -1217,7 +1372,8 @@ export class Game {
     this.tutorialEl.addEventListener("click", (event) => {
       if (!(event.target as HTMLElement).closest("[data-a='tut-ok']")) return;
       this.audio.uiClick();
-      this.profile.seenTutorials[this.mode] = true;
+      if (this.nevaRun) this.profile.neva.seenHelp = true;
+      else this.profile.seenTutorials[this.mode] = true;
       this.persistProfile();
       this.tutorialEl.close();
       if (this.screen === "playing" && this.saveStatus !== "conflict") {
@@ -1243,7 +1399,10 @@ export class Game {
     const controls = this.input.isTouch
       ? "Газ, задний ход и руль на джойстике. Справа тормоз, ручник и нитро."
       : "WASD или стрелки для вождения. Пробел включает ручник, Shift включает нитро, Esc ставит игру на паузу.";
-    const activity = mode === "delivery"
+    const activity = this.nevaRun
+      ? `<div class="tut-row"><span class="tut-ico">◆</span><span>Начни занос между золотыми линиями и выезжай через вторую. Удар или выезд с дороги лишает премии за этот поворот.</span></div>
+         <div class="tut-row"><span class="tut-ico">📦</span><span>Довези груз за ${NEVA_CONTRACT.timeLimit} с. Целый груз, запас времени и чистые повороты дают очки.</span></div>`
+      : mode === "delivery"
       ? `<div class="tut-row"><span class="tut-ico">⚠</span><span>Береги груз от ударов и луж; красный сигнал стоит ₽${RED_LIGHT_FINE}.</span></div>
          <div class="tut-row"><span class="tut-ico">₽</span><span>Заказы, трюки и безопасные проезды дают деньги.</span></div>`
       : mode === "drift-trial"
@@ -1252,7 +1411,7 @@ export class Game {
         : `<div class="tut-row"><span class="tut-ico">🏁</span><span>Пройди контрольные точки строго по порядку и вернись на старт для финиша.</span></div>
            <div class="tut-row"><span class="tut-ico">🥇</span><span>Время круга определяет медаль, выплату и лучший результат трассы.</span></div>`;
     this.tutorialEl.innerHTML = `<div class="tutorial-box">
-      <h3 id="tutorial-title">КАК ИГРАТЬ · ${mode === "delivery" ? "ДОСТАВКА" : mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK"}</h3>
+      <h3 id="tutorial-title">КАК ИГРАТЬ · ${this.nevaRun ? NEVA_CONTRACT.title : mode === "delivery" ? "ДОСТАВКА" : mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK"}</h3>
       <div class="tut-row"><span class="tut-ico wheel">🕹</span><span>${controls}</span></div>
       <div class="tut-row"><span class="tut-ico hb">★</span><span><b>ДРИФТ</b> — ручник и газ помогают начать занос; нитро пополняется за дрифт.</span></div>
       ${activity}
@@ -1262,7 +1421,7 @@ export class Game {
 
   /** Floating "+₽" bonus popup. */
   private addBonus(amount: number, label: string): void {
-    if (this.mode !== "delivery") return;
+    if (this.mode !== "delivery" || this.nevaRun) return;
     this.bonusMoney += amount;
     const p = el("div", "bonus-pop", `${label} <b>+₽${amount}</b>`);
     p.style.left = `${42 + Math.random() * 16}%`;
@@ -1318,6 +1477,7 @@ export class Game {
       g.lineWidth = road.width * scale;
       g.stroke();
     }
+    if (this.nevaRun) drawNevaRoute(g, u, v);
   }
 
   private drawMinimap(): void {
@@ -1452,7 +1612,7 @@ export class Game {
     }
 
     // police pursuit
-    if (this.mode === "delivery" && this.police.active) {
+    if (this.mode === "delivery" && !this.nevaRun && this.police.active) {
       this.chaseTimedOut += dt;
       const caught = this.police.update(
         dt,
@@ -1483,7 +1643,7 @@ export class Game {
         this.grantAchievements();
         this.police.stop();
       }
-    } else if (this.mode === "delivery" && !this.chaseTriggered && (this.redLightRuns >= 2 || this.trafficHits >= 2)) {
+    } else if (this.mode === "delivery" && !this.nevaRun && !this.chaseTriggered && (this.redLightRuns >= 2 || this.trafficHits >= 2)) {
       this.chaseTriggered = true;
       this.police.start(this.car.pos.x, this.car.pos.z);
       this.chaseTimedOut = 0;
@@ -1567,8 +1727,16 @@ export class Game {
       }
     }
 
-    // Delivery keeps its flat drift tips; Drift Trial uses a bankable combo chain.
-    if (this.mode === "drift-trial") {
+    if (this.nevaRun) {
+      const clean = !res.offRoad && !res.airborne && !res.rolled && !this.car.isFlipping && !this.car.wrecked
+        && res.impact <= 3 && tHit <= 0;
+      const i = this.nevaRun.update(prevX, prevZ, this.car.pos.x, this.car.pos.z, dt, res.speed, res.drift, clean);
+      if (i >= 0) {
+        const points = this.nevaRun.pointsAt(i);
+        this.toast(points ? `${NEVA_SECTORS[i].name} · чистый занос +₽${NEVA_CONTRACT.sectorBonus}` : `${NEVA_SECTORS[i].name} · без премии`);
+        if (points) this.audio.uiClick();
+      }
+    } else if (this.mode === "drift-trial") {
       this.updateDriftChain(res.drift, res.speed, dt);
     } else if (this.mode === "delivery" && res.drift > 5 && Math.abs(res.speed) > 8) {
       this.driftScore += res.drift * Math.abs(res.speed) * dt * 0.09;
@@ -1633,7 +1801,7 @@ export class Game {
   };
 
   private checkRedLight(prevX: number, prevZ: number): void {
-    if (this.mode !== "delivery" || !this.order || this.car.isFlipping) return;
+    if (this.mode !== "delivery" || this.nevaRun || !this.order || this.car.isFlipping) return;
     const x = this.car.pos.x;
     const z = this.car.pos.z;
     const spd = Math.abs(this.car.speed);
@@ -1769,6 +1937,10 @@ export class Game {
     this.world.hideDestination();
     this.audio.stopMusic();
     this.audio.updateEngine(0, 0, 0);
+    if (this.nevaRun) {
+      this.completeNevaContract(this.nevaRun, ok, reason);
+      return;
+    }
     const p = this.profile;
     if (this.mode === "drift-trial") this.bankDriftChain();
     const driftScore = finalDriftScore(this.driftScore);
@@ -1868,10 +2040,54 @@ export class Game {
     this.showScreen("result");
   }
 
+  private completeNevaContract(run: NevaRun, ok: boolean, reason: string): void {
+    const p = this.profile;
+    const lines = [reason + "."];
+    let score: number | undefined;
+    if (ok) {
+      const value = nevaResult(this.car.cargo, this.timeLeft, run.cleanSectors);
+      const payout = value.base + value.timeBonus + value.driftBonus;
+      const duration = NEVA_CONTRACT.timeLimit - this.timeLeft;
+      score = value.score;
+      const isRecord = score > p.neva.bestScore;
+      p.neva.bestScore = Math.max(p.neva.bestScore, score);
+      p.neva.mastered ||= value.mastered;
+      p.deliveries++;
+      p.money += payout;
+      p.totalEarn += payout;
+      p.bestEarn = Math.max(p.bestEarn, payout);
+      if (this.car.cargo >= 99.5) p.stats.perfectDeliveries++;
+      lines.push(
+        `<b class="neva-score">${score} очк.${isRecord ? " · НОВЫЙ РЕКОРД" : ""}</b>`,
+        `Груз ${Math.round(this.car.cargo)}% · ${duration.toFixed(1)} с · Чистые повороты ${run.cleanSectors}/${NEVA_SECTORS.length}`,
+        `Оплата ₽${value.base} · за время +₽${value.timeBonus} · за занос +₽${value.driftBonus}`,
+        `<b class="gold">Итого ₽${payout}</b>`,
+      );
+      if (run.bestSector >= 0) lines.push(`Лучший поворот · ${NEVA_SECTORS[run.bestSector].name}, ${run.pointsAt(run.bestSector)} очк. заноса`);
+      if (this.nevaTarget !== null) {
+        const difference = score - this.nevaTarget;
+        lines.push(difference > 0
+          ? `Результат друга побит на ${difference} очк.`
+          : difference === 0 ? "Результат друга повторён" : `До результата друга ${-difference} очк.`);
+      }
+    } else {
+      lines.push(`Чистые повороты ${run.cleanSectors}/${NEVA_SECTORS.length}`);
+    }
+    if (ok) this.audio.success();
+    else this.audio.fail();
+    this.grantAchievements(false);
+    this.persistProfile();
+    this.lastResult = { ok, lines, title: NEVA_CONTRACT.title, nevaScore: score };
+    this.order = null;
+    this.police.stop();
+    this.bonusMoney = 0;
+    this.showScreen("result");
+  }
+
   private updateHud(): void {
     if (!this.order) return;
     const o = this.order;
-    this.hOrder.textContent = this.mode === "delivery"
+    this.hOrder.textContent = this.nevaRun ? NEVA_CONTRACT.title : this.mode === "delivery"
       ? `📦 ${CARGO_NAMES[o.id % CARGO_NAMES.length]} · ₽${o.reward}`
       : this.mode === "drift-trial" ? "DRIFT TRIAL · комбо до ×5" : `TIME ATTACK · КП ${Math.min(this.timeAttackCheckpointIndex + 1, this.timeAttackCourse?.checkpoints.length ?? 5)}/${this.timeAttackCourse?.checkpoints.length ?? 5}`;
     const t = Math.max(0, this.timeLeft);
@@ -1886,8 +2102,13 @@ export class Game {
     this.hCargo.style.display = this.mode === "delivery" ? "flex" : "none";
     this.hSpeed.innerHTML = `${speedKmh(this.car.speed)}<small>км/ч</small>`;
     const speed = Math.abs(this.car.speed);
-    this.hMoney.textContent = `₽${this.profile.money}${this.orderFines ? ` (−${this.orderFines})` : ""}`;
-    this.hDrift.textContent = this.mode === "drift-trial"
+    this.hMoney.textContent = this.nevaRun && this.nevaTarget !== null
+      ? `Цель ${this.nevaTarget} очк.`
+      : `₽${this.profile.money}${this.orderFines ? ` (−${this.orderFines})` : ""}`;
+    const sector = this.nevaRun?.activeSector() ?? -1;
+    this.hDrift.textContent = this.nevaRun
+      ? sector >= 0 ? `ЗОНА ЗАНОСА · ${NEVA_SECTORS[sector].name}` : `Чистые повороты ${this.nevaRun.cleanSectors}/${NEVA_SECTORS.length}`
+      : this.mode === "drift-trial"
       ? `дрифт ${Math.round(this.driftScore)} · ×${this.driftMultiplier}${this.driftChainScore > 0 ? ` · серия ${Math.round(this.driftChainScore)}` : ""}`
       : this.mode === "delivery" && this.driftScore > 50 && speed > 8
         ? `дрифт +${Math.round(this.driftScore)}`
@@ -1909,6 +2130,7 @@ export class Game {
       this.screen === "title" ||
       this.screen === "play" ||
       this.screen === "tracks" ||
+      this.screen === "neva-contract" ||
       this.screen === "profile" ||
       this.screen === "garage" ||
       this.screen === "orders" ||
@@ -1920,11 +2142,11 @@ export class Game {
       return;
     }
     // camera follow
-    const fwd = this.car.forwardVec;
+    const fwd = this.car.forward(this.camForward);
     const portrait = window.innerHeight > window.innerWidth;
     const dist = portrait ? 11.5 : 9;
     const height = portrait ? 5.6 : 4.2;
-    const desired = new THREE.Vector3(
+    const desired = this.camDesired.set(
       this.car.pos.x - fwd.x * dist,
       height,
       this.car.pos.z - fwd.z * dist
@@ -1937,7 +2159,7 @@ export class Game {
       this.camera.position.y += (Math.random() - 0.5) * this.shake * 0.35;
       this.camera.position.z += (Math.random() - 0.5) * this.shake * 0.5;
     }
-    const look = new THREE.Vector3(
+    const look = this.camLook.set(
       this.car.pos.x + fwd.x * 6,
       1.1,
       this.car.pos.z + fwd.z * 6
@@ -1977,7 +2199,12 @@ export class Game {
     window.removeEventListener("resize", this.resize);
     this.audio.dispose();
     this.input.dispose();
-    this.car.dispose();
+    this.careerCar.dispose();
+    this.nevaCar?.dispose();
+    if (this.nevaMarkings) {
+      this.nevaMarkings.geometry.dispose();
+      this.nevaMarkings.material.dispose();
+    }
     this.traffic.dispose();
     this.police.dispose();
     this.effects.dispose();

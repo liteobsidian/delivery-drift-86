@@ -115,6 +115,7 @@ export class Traffic {
   private routes: RouteData[] = [];
   private spawnTimer = SPAWN_INTERVAL;
   private rngState = 12345;
+  private fixedFleet = false;
 
   constructor(private world: World, playerPosition = new THREE.Vector3()) {
     this.lastPlayerX = playerPosition.x;
@@ -140,7 +141,9 @@ export class Traffic {
   }
 
   /** Reposition traffic around a new race start without rebuilding unchanged route data. */
-  resetForPlayer(playerPosition: THREE.Vector3): void {
+  resetForPlayer(playerPosition: THREE.Vector3, fixedSeed?: number): void {
+    this.fixedFleet = fixedSeed !== undefined;
+    if (fixedSeed !== undefined) this.rngState = fixedSeed;
     this.lastPlayerX = playerPosition.x;
     this.lastPlayerZ = playerPosition.z;
     this.cars.forEach((car) => { car.active = false; car.mesh.visible = false; });
@@ -232,6 +235,7 @@ export class Traffic {
     if (!positionFound) return;
     car.speed = 9 + this.rnd() * 5;
     car.actualSpeed = car.speed * 0.4;
+    car.hitCooldown = car.nearCooldown = 0;
     car.active = true;
     car.mesh.visible = true;
     this.place(car);
@@ -302,10 +306,12 @@ export class Traffic {
   ): number {
     this.lastPlayerX = playerPos.x;
     this.lastPlayerZ = playerPos.z;
-    this.spawnTimer -= dt;
-    if (this.spawnTimer <= 0) {
-      this.spawnTimer = SPAWN_INTERVAL;
-      this.spawn(isVisible);
+    if (!this.fixedFleet) {
+      this.spawnTimer -= dt;
+      if (this.spawnTimer <= 0) {
+        this.spawnTimer = SPAWN_INTERVAL;
+        this.spawn(isVisible);
+      }
     }
     const laneLeaders = this.buildLaneLeaders();
     let hit = 0;
