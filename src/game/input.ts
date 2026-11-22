@@ -133,7 +133,7 @@ export class Input {
     brake.textContent = "ТОРМОЗ";
     const hb = document.createElement("div");
     hb.id = "tc-hb";
-    hb.textContent = "ДРИФТ";
+    hb.textContent = "РУЧНИК";
     root.appendChild(brake);
     root.appendChild(hb);
     const nitro = document.createElement("div");
