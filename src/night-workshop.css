@@ -49,11 +49,26 @@
 #tc-wheel{border:2px solid #bdd6d080;background:radial-gradient(circle,#a6c0bf24,#15232988);box-shadow:inset 0 0 0 6px #ffffff0b}
 #tc-wheel-knob{background:radial-gradient(circle at 30% 22%,#c2d2ce,#526369 70%);border-color:#d1dbd6aa}
 #tc-brake,#tc-hb{bottom:calc(18px + env(safe-area-inset-bottom));box-sizing:border-box}
-#tc-brake{right:calc(104px + env(safe-area-inset-right));height:56px;width:76px;border:2px solid #c4cdcb;border-radius:9px;align-items:flex-end;padding-bottom:4px;color:white;text-shadow:0 1px 3px black;background:repeating-linear-gradient(115deg,transparent 0 7px,#192428 8px 11px) center 7px/72% 18px no-repeat,linear-gradient(145deg,#aab8b9,#39484d 72%);box-shadow:0 4px 0 #111c20}
-#tc-brake.on{translate:0 3px;filter:brightness(1.35)}
-#tc-hb{right:calc(17px + env(safe-area-inset-right));width:74px;height:91px;border:0;border-radius:7px;align-items:flex-end;padding-bottom:2px;color:#ffbc75;background:linear-gradient(transparent 73%,#152329ed 74%)}
-#tc-hb::before{content:"";position:absolute;bottom:21px;left:25px;width:12px;height:62px;border-radius:5px;background:linear-gradient(#ff9a42 0 49%,#d29148 50% 54%,#8d9999 55% 91%,#354548 92%);box-shadow:1px 1px 3px #141e20;transform-origin:50% 97%;transform:rotate(23deg);transition:transform 100ms}
-#tc-hb.on::before{transform:rotate(-12deg)}
+#tc-brake {
+  right:calc(128px + env(safe-area-inset-right));width:81px;height:76px;
+  align-items:flex-end;padding-bottom:13px;background:transparent url("./assets/ui/brake-pedal.webp") center/100% 100% no-repeat;
+  border:0;border-radius:0;box-shadow:none;color:#161917;text-shadow:0 1px #ddded5;
+  font:bold italic 13px/1 system-ui;letter-spacing:-.5px;
+}
+#tc-brake.on {transform:perspective(180px) rotateX(-13deg) translateY(3px);transform-origin:bottom}
+#tc-hb {
+  right:calc(12px + env(safe-area-inset-right));width:104px;height:99px;
+  isolation:isolate;align-items:flex-end;padding:0 0 1px;border:0;border-radius:0;
+  background:none;color:#ffb362;text-shadow:0 1px 2px #000;font:bold italic 11px/1 system-ui;
+}
+#tc-hb::before,#tc-hb::after {
+  content:"";position:absolute;inset:0 0 7px;z-index:-1;
+  background:url("./assets/ui/hydraulic-brake.webp") center/100% 100% no-repeat;
+}
+#tc-hb::before {clip-path:polygon(0 100%,0 83%,17% 76%,28% 73%,54% 65%,65% 53%,100% 53%,100% 100%)}
+#tc-hb::after {clip-path:polygon(8% 83%,9% 77%,85% 0,100% 0,100% 12%,31% 71%,22% 86%,14% 89%);transform-origin:18% 82%;transition:transform 110ms ease-out}
+#tc-hb.on::after {transform:rotate(-16deg)}
+@media(prefers-reduced-motion:reduce){#tc-hb::after{transition:none}}
 #tc-nitro{right:calc(18px + env(safe-area-inset-right));bottom:calc(120px + env(safe-area-inset-bottom));width:72px;height:44px;border-radius:9px;color:#9af4e9;background:#102f36c9}
 @media(prefers-reduced-motion:reduce){#tc-hb::before,.btn,.garage-tab,.garage-arrow{transition:none}}
 @media(min-aspect-ratio:1.01/1){
@@ -74,3 +89,18 @@
 .home-settings{position:absolute;inset:0 0 auto auto;min-width:44px;min-height:44px;padding:0}
 .screen-wrap .home-box{position:relative}.home-box .logo-sub{padding-right:40px}
 @media(min-aspect-ratio:1.01/1){.home-settings{inset:4px 4px auto auto}}
+/* Landscape title overlays follow the open space around the parked car. */
+@media (min-aspect-ratio:1.25/1) {
+  .screen-wrap[data-screen=title] .home-box {
+    grid-area:auto;position:absolute;inset:max(12px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left));
+    width:auto;max-width:none;padding:0;background:none;border:0;pointer-events:none;
+  }
+  .home-box .btn {pointer-events:auto}
+  .home-box .logo {position:absolute;top:0;left:0;margin:0;max-width:38%;font-size:clamp(27px,4.3vw,66px);line-height:.9;text-shadow:0 3px 8px #060e11}
+  .home-box .logo-sub,.home-box .tagline {display:none}
+  .home-box .home-actions {position:absolute;bottom:0;right:0;width:min(39%,410px);margin:0;gap:7px}
+  .home-box .home-career {position:absolute;right:54px;top:3px;align-items:center;gap:9px;margin:0;padding:8px 12px;border-radius:6px;background:#0a171bdb;color:#e5ede8}
+  .home-box .home-place {position:absolute;bottom:0;left:0;margin:0;background:#0a171bd9;padding:6px 11px;border-left:2px solid var(--aqua)}
+  .home-box .home-play {color:#21180f;min-height:47px;font-style:italic}
+  .home-box .home-links .btn {background:#122329ed}
+}
