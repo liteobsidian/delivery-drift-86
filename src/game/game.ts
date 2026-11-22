@@ -2616,7 +2616,7 @@ export class Game {
         stage.clientWidth,
         stage.clientHeight,
       );
-      this.showroom.frame(stage.clientWidth / stage.clientHeight, this.screen === "title" && this.viewportWidth > this.viewportHeight);
+      this.showroom.frame(stage.clientWidth / stage.clientHeight, this.screen === "title" && this.viewportWidth > this.viewportHeight, this.screen === "garage" || this.screen === "cars");
     } else {
       this.showroomViewport = null;
       this.showroom.frame(this.viewportWidth / this.viewportHeight);

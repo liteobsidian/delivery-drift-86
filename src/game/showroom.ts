@@ -56,10 +56,11 @@ export function createShowroom() {
     camera,
     carGroup,
     clearCar,
-    frame(aspect: number, streetMenu = false): void {
+    frame(aspect: number, streetMenu = false, workshopView = false): void {
       camera.aspect = aspect;
       const fit = Math.max(1, 1.27 / aspect);
       camera.position.set(-3.8 * fit, 1.38 * fit, -5.4 * fit);
+      if (workshopView) camera.position.set(-6.1 * fit, 1.38 * fit, -2.8 * fit);
       camera.lookAt(0, 1.06, 0);
       camera.clearViewOffset();
       if (streetMenu && aspect > 1) camera.setViewOffset(aspect, 1, aspect * .17, 0, aspect, 1);
@@ -100,11 +101,12 @@ export function createShowroom() {
       weatherGroup.visible = outside && autoRotate;
       weatherGroup.rotation.y = ground.group.rotation.y = carGroup.rotation.y;
       ground.group.visible = !!car;
+      ground.rails.visible = !outside;
       if (weatherGroup.visible) weather.update(dt);
       if (outside) return;
       if (!car || !autoRotate) return;
       if (resumeAfter > 0) resumeAfter -= dt;
-      else carGroup.rotation.y += dt * 0.52;
+      else carGroup.rotation.y += dt * 0.15;
     },
     dispose(): void {
       clearCar();
