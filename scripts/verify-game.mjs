@@ -158,11 +158,7 @@ if (await page.locator('[data-a="drift-trial"]').count()) fail("Activity modes s
 if (await page.locator('[data-a="records"]').count()) fail("Records are still a top-level home button");
 await page.screenshot({ path: join(SHOTS, "02-home-desktop.png") });
 await page.setViewportSize({ width: 390, height: 844 });
-const mobileHomeFits = await page.evaluate(() => {
-  const box = document.querySelector(".home-box")?.getBoundingClientRect();
-  return Boolean(box && box.left >= 0 && box.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth);
-});
-if (!mobileHomeFits) fail("Home screen overflows the mobile viewport");
+await page.locator("#turn-phone:modal").waitFor();
 await page.screenshot({ path: join(SHOTS, "03-home-mobile.png") });
 await page.setViewportSize({ width: 1280, height: 720 });
 await page.locator('[data-a="play"]').click();
@@ -657,6 +653,14 @@ await mobile.waitForFunction((start) => window.__gameDebug.ticks() > start + 8, 
 if (await mobile.evaluate(() => window.__gameDebug.modeState().elapsed) !== 0) fail("Mobile tutorial consumed race time");
 await touchTutorial.locator('[data-a="tut-ok"]').tap();
 if (!(await mobile.locator("#touch-controls").isVisible())) fail("Touch controls were not enabled after the tutorial");
+await mobile.setViewportSize({width:390,height:844});
+await mobile.locator("#turn-phone:modal").waitFor();
+const frozenTime = await mobile.evaluate(() => window.__gameDebug.modeState().elapsed);
+await mobile.waitForTimeout(350);
+if (await mobile.evaluate(() => window.__gameDebug.modeState().elapsed) !== frozenTime) fail("Portrait consumed race time");
+await mobile.setViewportSize({width:844,height:390});
+await mobile.locator("#turn-phone").waitFor({state:"hidden"});
+await mobile.waitForFunction(t => window.__gameDebug.modeState().elapsed > t, frozenTime);
 await mobile.clock.setFixedTime(new Date("2026-11-23T00:00:02Z"));
 await mobile.evaluate(() => {
   window.denyProfileWrite = true;

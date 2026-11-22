@@ -19,6 +19,21 @@ export function startGame(canvas: HTMLCanvasElement): void {
   let game: Game | undefined;
   let slowTimer: number | undefined;
 
+  const portrait = matchMedia("(orientation: portrait)");
+  const turn = document.querySelector<HTMLDialogElement>("#turn-phone")!;
+  const syncOrientation = () => {
+    const blocked = portrait.matches && loading.hidden;
+    if (blocked && !turn.open) {
+      game?.suspendForRotation();
+      turn.showModal();
+    } else if (!blocked && turn.open) {
+      turn.close();
+      if (loading.hidden) game?.resumeAfterRotation();
+    }
+  };
+  turn.addEventListener("cancel", e => e.preventDefault(), { signal });
+  portrait.addEventListener("change", syncOrientation, { signal });
+
   const waiting = document.createElement("div");
   waiting.className = "screen-wrap";
   waiting.innerHTML = `
@@ -46,6 +61,7 @@ export function startGame(canvas: HTMLCanvasElement): void {
   const launch = async () => {
     waiting.remove();
     loading.hidden = false;
+    syncOrientation();
     root.inert = true;
     progress.hidden = false;
     progress.removeAttribute("value");
@@ -78,6 +94,7 @@ export function startGame(canvas: HTMLCanvasElement): void {
       loading.hidden = true;
       root.inert = false;
       overlay.querySelector<HTMLButtonElement>('[data-a="event-dismiss"]')?.focus({ preventScroll: true });
+      syncOrientation();
       await released;
     } catch (error) {
       window.clearTimeout(slowTimer);
@@ -96,6 +113,7 @@ export function startGame(canvas: HTMLCanvasElement): void {
         root.inert = false;
         overlay.appendChild(waiting);
         waiting.querySelector("button")!.focus();
+        syncOrientation();
       }
     }).catch((error: unknown) => {
       if (signal.aborted) return;
@@ -116,6 +134,7 @@ export function startGame(canvas: HTMLCanvasElement): void {
 
   disposeSession = () => {
     controller.abort();
+    turn.close();
     window.clearTimeout(slowTimer);
     game?.dispose();
     waiting.remove();
