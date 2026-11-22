@@ -788,16 +788,16 @@ export class Game {
   }
 
   private renderCars(): void {
-    const roster = CARS.map((car) => `<button type="button" class="garage-tab" data-a="inspect:${car.id}" aria-pressed="false">
-      <i aria-hidden="true" style="--paint:#${car.color.toString(16).padStart(6, "0")}"></i>
+    const roster = CARS.map(car => `<button type="button" class="garage-tab" data-a="inspect:${car.id}" aria-pressed="false">
+      <img src="${new URL(`../assets/ui/roster/${car.id}.webp`, import.meta.url).href}" alt="">
       <span>${car.name.split(" «")[0]}</span>
     </button>`).join("");
     this.screenEl.style.display = "grid";
     this.screenEl.innerHTML = `
       <section class="motor-garage" aria-labelledby="garage-title">
         <header class="garage-header">
-          <button class="btn small" type="button" data-a="back">← Назад</button>
-          <h2 id="garage-title">Машины</h2>
+          <button class="btn small" type="button" data-a="back">‹ Назад</button>
+          <h2 id="garage-title">Выбор машины</h2>
           <span class="garage-balance" aria-label="Баланс">₽${rubles.format(this.profile.money)}</span>
         </header>
         <div class="garage-display">
@@ -1008,16 +1008,10 @@ export class Game {
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
       <div class="panel settings">
-        <h2>НАСТРОЙКИ</h2>
-        <div class="set-row">
-          <div class="set-info"><b>Громкость звука</b><span id="vol-label">${Math.round(p.volume * 100)}%</span></div>
-          <input type="range" id="vol-slider" aria-label="Громкость звука" min="0" max="100" value="${Math.round(p.volume * 100)}">
-        </div>
-        <div class="set-row">
-          <div class="set-info"><b>Звук</b><span>${p.muted ? "выключен" : "включён"}</span></div>
-          <button class="btn small" data-a="sound">${p.muted ? "🔇 ВКЛ" : "🔊 ВЫКЛ"}</button>
-        </div>
-        <button class="btn" data-a="back">← НАЗАД</button>
+        <header class="station-head"><button data-a="back" aria-label="Назад">‹</button><h2>Настройки</h2></header>
+        <div class="audio-console"><div class="volume-face"><small>ГРОМКОСТЬ</small><strong id="vol-label">${Math.round(p.volume * 100)}%</strong></div>
+        <div class="audio-controls"><label for="vol-slider">Общая громкость</label><input type="range" id="vol-slider" min="0" max="100" value="${Math.round(p.volume * 100)}">
+        <button class="sound-switch" role="switch" aria-checked="${!p.muted}" data-a="sound"><span>Звук</span><b>${p.muted ? "Выкл" : "Вкл"}</b></button></div></div>
       </div>`;
     this.bindScreen({
       back: () => this.showScreen(this.settingsFrom === "paused" ? "paused" : "title"),
@@ -1036,6 +1030,9 @@ export class Game {
       if (this.profile.muted && v > 0) {
         this.profile.muted = false;
         this.audio.setMuted(false);
+        const toggle = this.screenEl.querySelector(".sound-switch");
+        toggle?.setAttribute("aria-checked", "true");
+        if (toggle) toggle.querySelector("b")!.textContent = "Вкл";
       }
       this.persistProfile();
     });
@@ -1048,7 +1045,7 @@ export class Game {
       const prog = a.progress(p);
       const tierLabel = a.tier === "bronze" ? "БРОНЗА" : a.tier === "silver" ? "СЕРЕБРО" : a.tier === "gold" ? "ЗОЛОТО" : "";
       return `<div class="ach-row ${got ? "got" : ""} ${a.tier ? `tier-${a.tier}` : ""}">
-        <div class="ach-ico ${a.tier ? `tier-${a.tier}` : ""}">${got ? a.icon : "🔒"}</div>
+        <div class="ach-ico ${a.tier ? `tier-${a.tier}` : ""}">${a.icon}</div>
         <div class="ach-info"><div class="ach-title"><b>${a.name}</b>${tierLabel ? `<small class="ach-tier ${a.tier}">${tierLabel}</small>` : ""}</div><span>${a.desc}</span></div>
         <div class="ach-prog">${prog ?? ""}</div>
       </div>`;
@@ -1056,10 +1053,9 @@ export class Game {
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
       <div class="panel achievements">
-        <h2>АЧИВКИ</h2>
-        <div class="money-line">Открыто: <b class="gold">${p.unlockedAch.length}/${ACHIEVEMENTS.length}</b></div>
+        <header class="station-head"><button data-a="back" aria-label="Назад в профиль">‹</button><h2>Достижения</h2><span>Открыто ${p.unlockedAch.length} / ${ACHIEVEMENTS.length}</span></header>
+        <progress class="trophy-meter" aria-label="Открытые достижения" value="${p.unlockedAch.length}" max="${ACHIEVEMENTS.length}"></progress>
         <div class="ach-list">${rows}</div>
-        <button class="btn" data-a="back">← НАЗАД</button>
       </div>`;
     this.bindScreen({ back: () => this.showScreen("profile") });
   }
@@ -1872,6 +1868,18 @@ export class Game {
       this.renderFrame(dt);
     };
     this.raf = requestAnimationFrame(loop);
+  }
+
+  suspendForRotation(): void {
+    this.input.setDriving(false);
+    this.audio.updateEngine(0, 0, 0);
+    this.stop();
+  }
+
+  resumeAfterRotation(): void {
+    this.input.setDriving(this.screen === "playing" && !this.tutorialEl.open && this.saveStatus !== "conflict");
+    this.acc = 0;
+    this.start();
   }
 
   stop(): void {
