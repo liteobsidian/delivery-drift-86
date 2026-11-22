@@ -863,52 +863,69 @@ export class Game {
     }
   }
 
-  private renderGarage(): void {
-    const p = this.profile;
-    const cur = this.currentCarSpec();
-    const up = this.currentUpgrades();
-    const upRows = UPGRADE_DEFS.map((d) => {
-      const lvl = up[d.key];
-      const maxed = lvl >= UPGRADE_MAX;
-      const cost = maxed ? 0 : UPGRADE_COST[lvl];
-      const pips = Array.from({ length: UPGRADE_MAX }, (_, i) =>
-        `<span class="pip ${i < lvl ? "on" : ""}"></span>`
-      ).join("");
-      return `<div class="up-row">
-        <div class="up-info"><b>${d.name}</b><span>${d.desc}</span></div>
-        <div class="pips">${pips}</div>
-        ${maxed
-          ? `<button class="btn small" disabled>МАКС</button>`
-          : `<button class="btn small ${p.money >= cost ? "primary" : ""}" data-a="up:${d.key}" ${p.money < cost ? "disabled" : ""}>₽${cost}</button>`}
-      </div>`;
-    }).join("");
+  private garagePart: keyof UpgradeLevels | "body" = "engine";
 
-    this.screenEl.style.display = "flex";
+  private renderGarage(): void {
+    const parts = [...UPGRADE_DEFS, { key: "body" as const, name: "Кузов" }];
+    this.screenEl.style.display = "grid";
     this.screenEl.innerHTML = `
-      <div class="showroom-stage tuning-stage" data-showroom-stage>${this.showroomStatus()}</div><div class="panel garage">
-        <h2>ГАРАЖ</h2>
-        <div class="money-line">Баланс: <b>₽${p.money}</b> · доставок: ${p.deliveries}</div>
-        <div class="garage-car-line">Сейчас: <b>${cur.name}</b>
-          <button class="btn small" data-a="cars">СМЕНИТЬ МАШИНУ</button>
-        </div>
-        <h3>Прокачка: ${cur.name.replace("Toyota ", "")}</h3>
-        <div class="up-list">${upRows}</div>
-        <h3>Состояние кузова</h3>
-        <div class="cond-row">
-          <div class="cond-bar"><div class="cond-fill" style="transform:scaleX(${this.car.hp / 100})"></div></div>
-          <span class="${this.car.hp < 50 ? "neg" : ""}">${Math.round(this.car.hp)}%</span>
-          <button class="btn small ${this.car.hp < 100 && p.money >= this.repairCost ? "primary" : ""}" data-a="repair" ${this.car.hp >= 100 || p.money < this.repairCost ? "disabled" : ""}>
-            ${this.car.hp >= 100 ? "ИСПРАВНА" : `РЕМОНТ ₽${this.repairCost}`}
-          </button>
-        </div>
-        <p class="dim" style="font-size:11px">Удары сминают бамперы, трескают стёкла. При сильных повреждениях отваливается колесо.</p>
-        <button class="btn" data-a="back">← НАЗАД</button>
-      </div>`;
+      <section class="garage pit">
+        <div class="showroom-stage pit-stage" data-showroom-stage>${this.showroomStatus()}</div>
+        <header class="pit-head">
+          <button data-a="back" aria-label="Назад в меню">‹</button>
+          <strong>ГАРАЖ</strong><span>₽ ${rubles.format(this.profile.money)}</span>
+        </header>
+        <div class="pit-car"><h2>${this.currentCarSpec().name}</h2><button data-a="cars">Сменить машину ›</button></div>
+        <article class="pit-detail" aria-live="polite"></article>
+        <nav class="pit-rack" aria-label="Оборудование машины">${parts.map(part => `
+          <button data-a="part:${part.key}" data-part="${part.key}"><i></i><span>${part.name}</span></button>`).join("")}</nav>
+      </section>`;
     this.bindScreen({
       back: () => this.showScreen("title"),
       cars: () => this.showScreen("cars"),
-      repair: () => this.repairCar(),
+      ...Object.fromEntries(parts.map(part => [`part:${part.key}`, () => {
+        this.garagePart = part.key;
+        this.renderGaragePart();
+      }])),
     });
+    this.renderGaragePart();
+  }
+
+  private renderGaragePart(): void {
+    const key = this.garagePart;
+    const def = UPGRADE_DEFS.find(item => item.key === key);
+    const upgrade = this.currentUpgrades();
+    const car = this.currentCarSpec();
+    const current = tunedSpec(car, upgrade);
+    const body = key === "body";
+    const level = body ? 0 : upgrade[key];
+    const complete = body ? this.car.hp >= 100 : level >= UPGRADE_MAX;
+    const next = tunedSpec(car, body ? upgrade : { ...upgrade, [key]: Math.min(level + 1, UPGRADE_MAX) });
+    const values = {
+      engine: [speedKmh(current.topSpeed), speedKmh(next.topSpeed), "км/ч", "Макс. скорость"],
+      tires: [current.grip.toFixed(1), next.grip.toFixed(1), "", "Сцепление"],
+      suspension: [Math.round(current.cargoProtect * 100), Math.round(next.cargoProtect * 100), "%", "Защита груза"],
+      turbo: [current.accel.toFixed(1), next.accel.toFixed(1), "", "Разгон"],
+      body: [Math.round(this.car.hp), 100, "%", "Состояние кузова"],
+    };
+    const [from, to, unit, metric] = values[key];
+    const cost = body ? this.repairCost : UPGRADE_COST[level];
+    const missing = complete ? 0 : Math.max(0, cost - this.profile.money);
+    const detail = this.screenEl.querySelector<HTMLElement>(".pit-detail")!;
+    detail.dataset.part = key;
+    detail.innerHTML = `
+      <small>${body ? "ОБСЛУЖИВАНИЕ" : `ТЮНИНГ / УРОВЕНЬ ${level} ИЗ ${UPGRADE_MAX}`}</small>
+      <h3>${def?.name ?? "Кузов"}</h3>
+      <div class="pit-stat"><span>${metric}</span><b>${from}${complete ? "" : ` <em>→ ${to}</em>`} ${unit}</b></div>
+      <button class="pit-install" data-a="${body ? "repair" : `up:${key}`}" ${complete || missing ? "disabled" : ""}>
+        ${complete ? (body ? "Кузов исправен" : "Макс. уровень") : `${body ? "Ремонт" : "Установить"} <b>₽ ${rubles.format(cost)}</b>`}</button>
+      ${missing ? `<span class="pit-missing">Не хватает ₽ ${rubles.format(missing)}</span>` : ""}`;
+    this.bindScreen({ repair: () => this.repairCar() }, detail);
+    for (const tab of this.screenEl.querySelectorAll<HTMLButtonElement>(".pit-rack button")) {
+      const selected = tab.dataset.a === `part:${key}`;
+      tab.setAttribute("aria-pressed", String(selected));
+      if (selected) tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
   }
 
   private get repairCost(): number {

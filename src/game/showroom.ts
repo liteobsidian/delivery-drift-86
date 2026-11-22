@@ -98,6 +98,12 @@ export function createShowroom() {
     },
     update(dt: number, autoRotate: boolean, outside: boolean): void {
       scene.background = outside ? street : workshop;
+      // Preserve the workshop photograph's proportions even on a tall phone.
+      if (!outside && workshop.image?.width) {
+        const ratio = camera.aspect / (workshop.image.width / workshop.image.height);
+        workshop.repeat.set(Math.min(1, ratio), Math.min(1, 1 / ratio));
+        workshop.offset.set((1 - workshop.repeat.x) / 2, (1 - workshop.repeat.y) / 2);
+      }
       weatherGroup.visible = outside && autoRotate;
       weatherGroup.rotation.y = ground.group.rotation.y = carGroup.rotation.y;
       ground.group.visible = !!car;
