@@ -62,3 +62,15 @@
  .screen-wrap[data-screen=title] .home-box{position:relative;grid-column:2;z-index:1;box-sizing:border-box;width:100%;padding:clamp(12px,2.2vw,30px);border:1px solid #98b9b74d;border-radius:12px;background:linear-gradient(120deg,#0b171de8,#10232ae8)}
  .home-box .logo{font-size:clamp(28px,4vw,65px)}
 }
+@media(pointer:coarse) and (orientation:landscape){
+ #tc-wheel{bottom:calc(18px + env(safe-area-inset-bottom));width:106px;height:106px}
+ #minimap{bottom:auto;top:max(10px,env(safe-area-inset-top));width:clamp(72px,20dvh,104px);height:auto;aspect-ratio:1}
+ .hud .hud-right{bottom:auto;top:max(12px,env(safe-area-inset-top));right:calc(60px + env(safe-area-inset-right))}
+ .hud .hud-speed{font-size:clamp(20px,6dvh,32px)}.hud .hud-heading{width:min(48vw,520px)}
+}
+@media(pointer:coarse) and (orientation:portrait){
+ .hud .hud-right,.hud[data-mode="radio-silence"] .hud-right{bottom:calc(185px + env(safe-area-inset-bottom))}
+}
+.home-settings{position:absolute;inset:0 0 auto auto;min-width:44px;min-height:44px;padding:0}
+.screen-wrap .home-box{position:relative}.home-box .logo-sub{padding-right:40px}
+@media(min-aspect-ratio:1.01/1){.home-settings{inset:4px 4px auto auto}}

@@ -672,6 +672,7 @@ export class Game {
     this.screenEl.style.display = "grid";
     this.screenEl.innerHTML = `
       <div class="title-box home-box">
+        <button class="btn home-settings" data-a="settings" aria-label="Настройки">⚙</button>
         <div class="logo-sub">НОЧНОЙ КУРЬЕР · ${mapName.toUpperCase()}</div>
         <h1 class="logo">DELIVERY<span> DRIFT</span> <em>86</em></h1>
         <p class="tagline">Доставляй быстро. Дрифти жёстко. Не разбей груз.</p>
@@ -702,6 +703,7 @@ export class Game {
     }
     this.bindScreen({
       play: () => this.showScreen("play"),
+      settings: () => { this.settingsFrom = "title"; this.showScreen("settings"); },
       cars: () => this.showScreen("cars"),
       garage: () => this.showScreen("garage"),
       profile: () => this.showScreen("profile"),
