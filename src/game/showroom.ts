@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { showroomGround } from "./showroom-ground";
 import { showroomRain } from "./showroom-rain";
 import type { LoadedModel } from "./assets";
 import { applyUpgradeLooks, buildHeroMesh, disposeCarVisual } from "./car";
@@ -31,24 +32,14 @@ export function createShowroom() {
   };
   const street = background(new URL("../assets/ui/night-street.webp", import.meta.url).href);
   const workshop = background(new URL("../assets/ui/workshop.webp", import.meta.url).href);
-  const shadowCanvas = document.createElement("canvas");
-  shadowCanvas.width = shadowCanvas.height = 64;
-  const ctx = shadowCanvas.getContext("2d")!;
-  const shade = ctx.createRadialGradient(32,32,4,32,32,32);
-  shade.addColorStop(0,"rgba(0,0,0,.85)");
-  shade.addColorStop(1,"transparent");
-  ctx.fillStyle = shade;
-  ctx.fillRect(0,0,64,64);
-  const shadowTexture = new THREE.CanvasTexture(shadowCanvas);
-  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.4,5.7),new THREE.MeshBasicMaterial({map:shadowTexture,transparent:true,depthWrite:false}));
-  shadow.rotation.x=-Math.PI/2;
-  scene.add(shadow);
+  const ground = showroomGround();
+  scene.add(ground.group);
   const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 80);
   let car: THREE.Group | undefined;
   let activeModel: LoadedModel | undefined;
   let activeTune = "";
   let resumeAfter = 0;
-  let tuneReveal = 0;
+
 
   function clearCar(): void {
     if (car) {
@@ -68,8 +59,8 @@ export function createShowroom() {
     frame(aspect: number, streetMenu = false): void {
       camera.aspect = aspect;
       const fit = Math.max(1, 1.27 / aspect);
-      camera.position.set(-4.45 * fit, 2.35 * fit, -5.9 * fit);
-      camera.lookAt(0, 0.72, 0);
+      camera.position.set(-3.8 * fit, 1.38 * fit, -5.4 * fit);
+      camera.lookAt(0, 1.06, 0);
       camera.clearViewOffset();
       if (streetMenu && aspect > 1) camera.setViewOffset(aspect, 1, aspect * .17, 0, aspect, 1);
       camera.updateProjectionMatrix();
@@ -78,11 +69,20 @@ export function createShowroom() {
       const tune = `${up.engine}${up.tires}${up.suspension}${up.turbo}`;
       if (activeModel === model && activeTune === tune) return;
       const changedCar = activeModel !== model;
-      tuneReveal = changedCar ? 0 : .38;
+
       clearCar();
       activeModel = model;
       activeTune = tune;
-      car = buildHeroMesh(spec, model);
+      const wheels: THREE.Mesh[] = [];
+      car = buildHeroMesh(spec, model, wheels);
+      const box = new THREE.Box3().setFromObject(car.children[0], true);
+      const center = box.getCenter(new THREE.Vector3());
+      const contacts = wheels.map(wheel => new THREE.Box3().setFromObject(wheel, true));
+      const bottom = contacts.length ? Math.min(...contacts.map(contact => contact.min.y)) : box.min.y;
+      car.position.set(-center.x, -bottom, -center.z);
+      ground.fit(box, contacts.map(contact => contact.getCenter(new THREE.Vector3()).add(car!.position)));
+      const glow = car.getObjectByName("hero-underglow");
+      if (glow) glow.visible = false;
       applyUpgradeLooks(car, up);
       carGroup.add(car);
       weather.sample(car);
@@ -98,12 +98,9 @@ export function createShowroom() {
     update(dt: number, autoRotate: boolean, outside: boolean): void {
       scene.background = outside ? street : workshop;
       weatherGroup.visible = outside && autoRotate;
-      weatherGroup.rotation.y = shadow.rotation.z = carGroup.rotation.y;
+      weatherGroup.rotation.y = ground.group.rotation.y = carGroup.rotation.y;
+      ground.group.visible = !!car;
       if (weatherGroup.visible) weather.update(dt);
-      if (tuneReveal > 0) {
-        tuneReveal = Math.max(0, tuneReveal-dt);
-        carGroup.position.y = autoRotate ? Math.sin(tuneReveal/.38*Math.PI)*.09 : 0;
-      } else carGroup.position.y = 0;
       if (outside) return;
       if (!car || !autoRotate) return;
       if (resumeAfter > 0) resumeAfter -= dt;
@@ -111,7 +108,7 @@ export function createShowroom() {
     },
     dispose(): void {
       clearCar();
-      street.dispose(); workshop.dispose(); shadowTexture.dispose();
+      street.dispose(); workshop.dispose(); ground.texture.dispose();
       disposeCarVisual(scene);
     },
   };
