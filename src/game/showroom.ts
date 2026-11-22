@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { showroomRain } from "./showroom-rain";
 import type { LoadedModel } from "./assets";
 import { applyUpgradeLooks, buildHeroMesh, disposeCarVisual } from "./car";
 import type { CarSpec, UpgradeLevels } from "./types";
@@ -17,36 +18,37 @@ export function createShowroom() {
   fill.position.set(5, 2, 3);
   scene.add(key, rim, fill);
 
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(80, 80),
-    new THREE.MeshStandardMaterial({ color: 0x141c2a, metalness: 0.2, roughness: 0.8 }),
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -0.23;
-  const grid = new THREE.GridHelper(60, 40, 0x38445e, 0x252e43);
-  grid.position.y = -0.22;
-  scene.add(floor, grid);
-
-  const disc = new THREE.Mesh(
-    new THREE.CylinderGeometry(3.02, 3.18, 0.22, 56),
-    new THREE.MeshStandardMaterial({ color: 0x263147, roughness: 0.5, metalness: 0.36 }),
-  );
-  disc.position.y = -0.11;
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(3.03, 0.025, 8, 72),
-    new THREE.MeshBasicMaterial({ color: 0x61daf7 }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.015;
-  scene.add(disc, ring);
-
   const carGroup = new THREE.Group();
-  scene.add(carGroup);
+  const weather = showroomRain();
+  const weatherGroup = new THREE.Group();
+  weatherGroup.add(weather.lines);
+  scene.add(carGroup, weatherGroup);
+  const loader = new THREE.TextureLoader();
+  const background = (url: string) => {
+    const texture = loader.load(url);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  };
+  const street = background(new URL("../assets/ui/night-street.webp", import.meta.url).href);
+  const workshop = background(new URL("../assets/ui/workshop.webp", import.meta.url).href);
+  const shadowCanvas = document.createElement("canvas");
+  shadowCanvas.width = shadowCanvas.height = 64;
+  const ctx = shadowCanvas.getContext("2d")!;
+  const shade = ctx.createRadialGradient(32,32,4,32,32,32);
+  shade.addColorStop(0,"rgba(0,0,0,.85)");
+  shade.addColorStop(1,"transparent");
+  ctx.fillStyle = shade;
+  ctx.fillRect(0,0,64,64);
+  const shadowTexture = new THREE.CanvasTexture(shadowCanvas);
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.4,5.7),new THREE.MeshBasicMaterial({map:shadowTexture,transparent:true,depthWrite:false}));
+  shadow.rotation.x=-Math.PI/2;
+  scene.add(shadow);
   const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 80);
   let car: THREE.Group | undefined;
   let activeModel: LoadedModel | undefined;
   let activeTune = "";
   let resumeAfter = 0;
+  let tuneReveal = 0;
 
   function clearCar(): void {
     if (car) {
@@ -63,23 +65,27 @@ export function createShowroom() {
     camera,
     carGroup,
     clearCar,
-    frame(aspect: number): void {
+    frame(aspect: number, streetMenu = false): void {
       camera.aspect = aspect;
       const fit = Math.max(1, 1.27 / aspect);
       camera.position.set(-4.45 * fit, 2.35 * fit, -5.9 * fit);
       camera.lookAt(0, 0.72, 0);
+      camera.clearViewOffset();
+      if (streetMenu && aspect > 1) camera.setViewOffset(aspect, 1, aspect * .17, 0, aspect, 1);
       camera.updateProjectionMatrix();
     },
     setCar(spec: CarSpec, up: UpgradeLevels, model: LoadedModel): void {
       const tune = `${up.engine}${up.tires}${up.suspension}${up.turbo}`;
       if (activeModel === model && activeTune === tune) return;
       const changedCar = activeModel !== model;
+      tuneReveal = changedCar ? 0 : .38;
       clearCar();
       activeModel = model;
       activeTune = tune;
       car = buildHeroMesh(spec, model);
       applyUpgradeLooks(car, up);
       carGroup.add(car);
+      weather.sample(car);
       if (changedCar) {
         carGroup.rotation.y = 0;
         resumeAfter = 0.85;
@@ -89,13 +95,23 @@ export function createShowroom() {
       carGroup.rotation.y += radians;
       resumeAfter = 2.5;
     },
-    update(dt: number, autoRotate: boolean): void {
+    update(dt: number, autoRotate: boolean, outside: boolean): void {
+      scene.background = outside ? street : workshop;
+      weatherGroup.visible = outside && autoRotate;
+      weatherGroup.rotation.y = shadow.rotation.z = carGroup.rotation.y;
+      if (weatherGroup.visible) weather.update(dt);
+      if (tuneReveal > 0) {
+        tuneReveal = Math.max(0, tuneReveal-dt);
+        carGroup.position.y = autoRotate ? Math.sin(tuneReveal/.38*Math.PI)*.09 : 0;
+      } else carGroup.position.y = 0;
+      if (outside) return;
       if (!car || !autoRotate) return;
       if (resumeAfter > 0) resumeAfter -= dt;
       else carGroup.rotation.y += dt * 0.52;
     },
     dispose(): void {
       clearCar();
+      street.dispose(); workshop.dispose(); shadowTexture.dispose();
       disposeCarVisual(scene);
     },
   };

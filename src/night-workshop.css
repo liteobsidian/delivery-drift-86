@@ -1,0 +1,64 @@
+:root {
+  --ink:#101b20; --surface:#1c2b30; --edge:#40565a; --paper:#f5f0e5;
+  --amber:#ffa04a; --aqua:#77dfd4;
+}
+.screen-wrap {color:var(--paper);background:linear-gradient(120deg,#081215e8,#102027dc)}
+.screen-wrap .panel,.garage-detail,.weekly-event-card,.tutorial-box {
+  border:1px solid var(--edge);border-top:3px solid var(--aqua);border-radius:14px;
+  background:linear-gradient(145deg,#243438fa,#101b20fa 75%);color:var(--paper);box-shadow:0 16px 54px #030a0c88;
+}
+.panel h2,.garage-header h2,.weekly-event-card h2,.home-box .logo,.hud-speed {
+  color:var(--paper);font-family:"Arial Narrow",system-ui,sans-serif;font-weight:900;font-style:italic;letter-spacing:-.045em;text-shadow:none;
+}
+.panel h3,.journey-eyebrow,.garage-status,.activity-card b,.hud-drift,.home-box .logo-sub {color:var(--aqua)}
+.home-box .logo span {color:var(--paper)} .home-box .logo em,.order-title,.hud-money {color:var(--amber);text-shadow:none}
+.btn,.garage-tab,.garage-arrow {border-radius:8px;border:1px solid var(--edge);background:#213339;color:var(--paper);box-shadow:none;transition:transform 90ms,background-color 120ms}
+.btn.primary,.btn.primary:hover {background:linear-gradient(165deg,#ffbb69,#ff922f);border-color:#ffbd76;color:#23201b;text-shadow:none;box-shadow:0 3px 0 #8d4d20;font-weight:900}
+.btn:active,.garage-arrow:active,.garage-tab:active,.track-card:active {transform:translateY(2px) scale(.985)}
+.btn:disabled {opacity:.54;box-shadow:none}
+.screen-wrap :focus-visible {outline:2px solid var(--aqua);outline-offset:2px}
+.order-card,.weekly-row,.record-row,.set-row,.up-row,.ach-row,.garage-tab,.track-card,.neva-brief {
+  background-color:var(--surface);border-color:var(--edge);border-radius:9px;
+}
+.ach-row.got {background:linear-gradient(100deg,#3c382a,#1b292d 58%)}
+.ach-prog,.ach-info span,.order-meta,.set-info span,.garage-specs dt,.garage-purchase p,.record-row span,.weekly-row span {color:#b9c9c9}
+.ach-ico {background:#162528;border-radius:10px}
+.set-row {padding:14px}.set-row input {accent-color:var(--aqua)}
+.panel.settings .set-row .btn {margin:0}
+.track-card.selected,.garage-tab[aria-pressed=true] {border-color:var(--aqua);box-shadow:inset 0 -3px var(--aqua)}
+.garage-roster,.track-picker {scroll-snap-type:x proximity}
+.garage-tab,.track-card {scroll-snap-align:center}
+.hud-top,.hud-navigation,.hud-pause,#minimap {border-color:#92bcb985;background-color:#102024e6;border-radius:10px}
+.hud-timer:not(.low),.order-reward {color:var(--aqua);text-shadow:none}
+.screen-wrap[data-screen=garage]{display:grid!important;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);align-items:center;gap:14px;padding:14px;background:transparent;backdrop-filter:none}
+.tuning-stage {height:75dvh}
+.screen-wrap .panel.garage {box-sizing:border-box;width:100%;max-height:88dvh;overflow:auto}
+.garage .money-line {color:var(--amber)}
+@keyframes panel-enter {from{opacity:.5;translate:0 8px}to{opacity:1;translate:0}}
+@media(prefers-reduced-motion:no-preference){.panel,.motor-garage,.home-box,.weekly-event-card,.garage-purchase {animation:panel-enter 180ms ease-out}}
+@media(max-aspect-ratio:1/1){
+ .screen-wrap[data-screen=garage]{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1.6fr)}
+ .tuning-stage{height:100%}.screen-wrap .panel.garage{max-height:100%}
+}
+@media(pointer:coarse),(max-width:760px){
+ .track-picker{display:flex;overflow:auto;max-height:none;scroll-snap-type:x mandatory;padding:3px 2px 9px}
+ .track-picker .track-card{flex:0 0 min(78%,290px);min-height:0;padding-bottom:12px}
+ .track-art{height:clamp(78px,21dvh,165px)}
+ .garage-roster{scroll-snap-type:x mandatory}
+}
+#tc-wheel{border:2px solid #bdd6d080;background:radial-gradient(circle,#a6c0bf24,#15232988);box-shadow:inset 0 0 0 6px #ffffff0b}
+#tc-wheel-knob{background:radial-gradient(circle at 30% 22%,#c2d2ce,#526369 70%);border-color:#d1dbd6aa}
+#tc-brake,#tc-hb{bottom:calc(18px + env(safe-area-inset-bottom));box-sizing:border-box}
+#tc-brake{right:calc(104px + env(safe-area-inset-right));height:56px;width:76px;border:2px solid #c4cdcb;border-radius:9px;align-items:flex-end;padding-bottom:4px;color:white;text-shadow:0 1px 3px black;background:repeating-linear-gradient(115deg,transparent 0 7px,#192428 8px 11px) center 7px/72% 18px no-repeat,linear-gradient(145deg,#aab8b9,#39484d 72%);box-shadow:0 4px 0 #111c20}
+#tc-brake.on{translate:0 3px;filter:brightness(1.35)}
+#tc-hb{right:calc(17px + env(safe-area-inset-right));width:74px;height:91px;border:0;border-radius:7px;align-items:flex-end;padding-bottom:2px;color:#ffbc75;background:linear-gradient(transparent 73%,#152329ed 74%)}
+#tc-hb::before{content:"";position:absolute;bottom:21px;left:25px;width:12px;height:62px;border-radius:5px;background:linear-gradient(#ff9a42 0 49%,#d29148 50% 54%,#8d9999 55% 91%,#354548 92%);box-shadow:1px 1px 3px #141e20;transform-origin:50% 97%;transform:rotate(23deg);transition:transform 100ms}
+#tc-hb.on::before{transform:rotate(-12deg)}
+#tc-nitro{right:calc(18px + env(safe-area-inset-right));bottom:calc(120px + env(safe-area-inset-bottom));width:72px;height:44px;border-radius:9px;color:#9af4e9;background:#102f36c9}
+@media(prefers-reduced-motion:reduce){#tc-hb::before,.btn,.garage-tab,.garage-arrow{transition:none}}
+@media(min-aspect-ratio:1.01/1){
+ .screen-wrap[data-screen=title]{grid-template-columns:1fr minmax(280px,34%);padding-inline:clamp(18px,4vw,72px)}
+ .home-showroom{position:absolute;inset:0;height:100%;z-index:0}
+ .screen-wrap[data-screen=title] .home-box{position:relative;grid-column:2;z-index:1;box-sizing:border-box;width:100%;padding:clamp(12px,2.2vw,30px);border:1px solid #98b9b74d;border-radius:12px;background:linear-gradient(120deg,#0b171de8,#10232ae8)}
+ .home-box .logo{font-size:clamp(28px,4vw,65px)}
+}

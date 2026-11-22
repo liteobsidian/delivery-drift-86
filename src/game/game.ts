@@ -677,7 +677,7 @@ export class Game {
         <p class="tagline">Доставляй быстро. Дрифти жёстко. Не разбей груз.</p>
         <div class="home-place"><span class="home-place-pin">◉</span><span>${mapName}</span><i>·</i><span>${this.currentCarSpec().name.replace("Toyota ", "")}</span></div>
         <div class="home-actions">
-          <button class="btn primary home-play" data-a="play">ИГРАТЬ <span>→</span></button>
+          <button class="btn primary home-play" data-a="play">ВЫЕХАТЬ <span>→</span></button>
           <div class="home-links">
             <button class="btn" data-a="cars">МАШИНЫ</button>
             <button class="btn" data-a="garage">ГАРАЖ</button>
@@ -877,13 +877,13 @@ export class Game {
         <div class="pips">${pips}</div>
         ${maxed
           ? `<button class="btn small" disabled>МАКС</button>`
-          : `<button class="btn small ${p.money >= cost ? "primary" : ""}" data-a="up:${d.key}">₽${cost}</button>`}
+          : `<button class="btn small ${p.money >= cost ? "primary" : ""}" data-a="up:${d.key}" ${p.money < cost ? "disabled" : ""}>₽${cost}</button>`}
       </div>`;
     }).join("");
 
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
-      <div class="panel garage">
+      <div class="showroom-stage tuning-stage" data-showroom-stage>${this.showroomStatus()}</div><div class="panel garage">
         <h2>ГАРАЖ</h2>
         <div class="money-line">Баланс: <b>₽${p.money}</b> · доставок: ${p.deliveries}</div>
         <div class="garage-car-line">Сейчас: <b>${cur.name}</b>
@@ -895,7 +895,7 @@ export class Game {
         <div class="cond-row">
           <div class="cond-bar"><div class="cond-fill" style="transform:scaleX(${this.car.hp / 100})"></div></div>
           <span class="${this.car.hp < 50 ? "neg" : ""}">${Math.round(this.car.hp)}%</span>
-          <button class="btn small ${this.car.hp < 100 && p.money >= this.repairCost ? "primary" : ""}" data-a="repair" ${this.car.hp >= 100 ? "disabled" : ""}>
+          <button class="btn small ${this.car.hp < 100 && p.money >= this.repairCost ? "primary" : ""}" data-a="repair" ${this.car.hp >= 100 || p.money < this.repairCost ? "disabled" : ""}>
             ${this.car.hp >= 100 ? "ИСПРАВНА" : `РЕМОНТ ₽${this.repairCost}`}
           </button>
         </div>
@@ -920,7 +920,7 @@ export class Game {
     this.car.repair();
     this.persistProfile();
     this.audio.cash();
-    this.renderGarage();
+    this.showScreen("garage");
   }
 
   private renderOrders(): void {
@@ -992,7 +992,7 @@ export class Game {
         <h2>НАСТРОЙКИ</h2>
         <div class="set-row">
           <div class="set-info"><b>Громкость звука</b><span id="vol-label">${Math.round(p.volume * 100)}%</span></div>
-          <input type="range" id="vol-slider" min="0" max="100" value="${Math.round(p.volume * 100)}">
+          <input type="range" id="vol-slider" aria-label="Громкость звука" min="0" max="100" value="${Math.round(p.volume * 100)}">
         </div>
         <div class="set-row">
           <div class="set-info"><b>Звук</b><span>${p.muted ? "выключен" : "включён"}</span></div>
@@ -1333,7 +1333,7 @@ export class Game {
     this.grantAchievements(false);
     this.persistProfile();
     this.audio.cash();
-    this.renderGarage();
+    this.showScreen("garage");
   }
 
   private applyCarSpec(): void {
@@ -1706,7 +1706,7 @@ export class Game {
     this.tutorialEl.innerHTML = `<div class="tutorial-box">
       <h3 id="tutorial-title">КАК ИГРАТЬ · ${this.nevaRun ? NEVA_CONTRACT.title : MODE_NAMES[mode].toUpperCase()}</h3>
       <div class="tut-row"><span class="tut-ico wheel">🕹</span><span>${controls}</span></div>
-      <div class="tut-row"><span class="tut-ico hb">★</span><span><b>ДРИФТ</b> — ручник и газ помогают начать занос; нитро пополняется за дрифт.</span></div>
+      <div class="tut-row"><span class="tut-ico hb">★</span><span><b>РУЧНИК</b> — ручник и газ помогают начать занос; нитро пополняется за дрифт.</span></div>
       ${activity}
       <button class="btn primary" data-a="tut-ok" autofocus>ПОНЯТНО!</button>
     </div>`;
@@ -2614,7 +2614,7 @@ export class Game {
         stage.clientWidth,
         stage.clientHeight,
       );
-      this.showroom.frame(stage.clientWidth / stage.clientHeight);
+      this.showroom.frame(stage.clientWidth / stage.clientHeight, this.screen === "title" && this.viewportWidth > this.viewportHeight);
     } else {
       this.showroomViewport = null;
       this.showroom.frame(this.viewportWidth / this.viewportHeight);
@@ -2622,7 +2622,7 @@ export class Game {
   }
 
   private renderShowroom(dt: number): void {
-    this.showroom.update(dt, !this.reducedMotion.matches && !this.showroomDrag);
+    this.showroom.update(dt, !this.reducedMotion.matches && !this.showroomDrag, this.screen === "title");
     const viewport = this.showroomViewport;
     if (viewport) {
       this.renderer.setClearColor(0x0c111d);
