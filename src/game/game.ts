@@ -2883,7 +2883,8 @@ export class Game {
   }
 
   private renderShowroom(dt: number): void {
-    this.showroom.update(dt, !this.reducedMotion.matches && !this.showroomDrag, this.screen === "title");
+    const outside = this.screen === "title";
+    this.showroom.update(dt, !this.reducedMotion.matches && !this.showroomDrag, outside);
     const viewport = this.showroomViewport;
     if (viewport) {
       this.renderer.setClearColor(0x0c111d);
@@ -2892,7 +2893,9 @@ export class Game {
       this.renderer.setScissor(viewport);
       this.renderer.setScissorTest(true);
     }
+    this.renderer.shadowMap.enabled = outside;
     this.renderer.render(this.showroom.scene, this.showroom.camera);
+    this.renderer.shadowMap.enabled = false;
     if (viewport) {
       this.renderer.setScissorTest(false);
       this.renderer.setViewport(0, 0, this.viewportWidth, this.viewportHeight);
