@@ -104,6 +104,8 @@ export function createShowroom() {
         workshop.repeat.set(Math.min(1, ratio), Math.min(1, 1 / ratio));
         workshop.offset.set((1 - workshop.repeat.x) / 2, (1 - workshop.repeat.y) / 2);
       }
+      // The street has a fixed parking direction independent of the workshop turntable.
+      if (outside) carGroup.rotation.y = Math.atan2(3.8, 5.4) - 0.14;
       weatherGroup.visible = outside && autoRotate;
       weatherGroup.rotation.y = ground.group.rotation.y = carGroup.rotation.y;
       ground.group.visible = !!car;
