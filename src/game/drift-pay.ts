@@ -1,4 +1,4 @@
-// Delivery tips accrue only during a controlled, grounded powerslide.
+// Drift rewards accrue only during a controlled, grounded powerslide.
 export function isControlledDrift(
   handbrake: boolean,
   steer: number,
@@ -9,9 +9,9 @@ export function isControlledDrift(
   return (
     grounded &&
     handbrake &&
-    Math.abs(steer) >= 0.18 &&
-    forward > 6 &&
-    lateral >= 3 &&
+    Math.abs(steer) >= 0.1 &&
+    forward > 3 &&
+    lateral >= 1.5 &&
     lateral >= forward * Math.tan(Math.PI / 15)
   );
 }
