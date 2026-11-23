@@ -88,7 +88,6 @@ const consoleErrors = [];
 page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
 page.on("pageerror", (e) => consoleErrors.push(String(e)));
 
-await page.clock.setFixedTime(new Date("2026-11-17T12:00:00Z"));
 let releaseBundle;
 const bundleGate = new Promise((resolve) => { releaseBundle = resolve; });
 await page.route("**/assets/index-*.js", async (route) => { await bundleGate; await route.continue(); });
@@ -273,6 +272,7 @@ if (!hasEventState) fail("Weekly event seen state helpers are missing");
 await page.evaluate(() => window.__gameDebug.markWeeklyEventSeen("2026-11-16T12:00:00Z"));
 if (!(await page.evaluate(() => window.__gameDebug.weeklyEventSeen("2026-11-17T12:00:00Z")))) fail("Weekly event dismissal was not kept for the same UTC week");
 if (await page.evaluate(() => window.__gameDebug.weeklyEventSeen("2026-11-23T00:00:00Z"))) fail("Weekly event dismissal leaked into the next UTC week");
+await page.evaluate(() => window.__gameDebug.markWeeklyEventSeen());
 const weeklyIds = await page.evaluate(() => window.__gameDebug?.weekly?.());
 if (!Array.isArray(weeklyIds) || weeklyIds.length !== 3) fail("The weekly route set is missing");
 const routeData = await page.evaluate(() => window.__gameDebug?.weeklyRoutes?.());
@@ -337,7 +337,7 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
     if ((await page.evaluate(() => window.__gameDebug.modeState().checkpoint)) !== 0) fail("Time Attack accepted an out-of-order checkpoint");
     for (let checkpoint = 0; checkpoint < 4; checkpoint++) {
       await page.evaluate((point) => window.__gameDebug.teleport(point.x, point.z), modeState.course.checkpoints[checkpoint]);
-      await page.waitForTimeout(120);
+      await page.waitForFunction(index => window.__gameDebug.modeState().checkpoint === index, checkpoint + 1, { timeout: 4000 });
       const nextState = await page.evaluate(() => window.__gameDebug.modeState());
       const nextTarget = await page.evaluate(() => window.__gameDebug.orderDest());
       if (nextState.checkpoint !== checkpoint + 1 || Math.hypot(nextTarget.x - modeState.course.checkpoints[checkpoint + 1].x, nextTarget.z - modeState.course.checkpoints[checkpoint + 1].z) > 0.01) fail(`Time Attack did not advance from gate ${checkpoint + 1} in order`);
