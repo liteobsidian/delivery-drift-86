@@ -53,6 +53,11 @@ export default function gameBuildOutput(): Plugin {
         inside(outDir, output.fileName);
         files[output.fileName] = digest(output.type === 'chunk' ? output.code : output.source);
       }
+      const assets = Object.fromEntries(Object.entries(files).filter(([name]) => name.startsWith("assets/")));
+      const template = await readFile(path.join(config.root, "scripts/asset-worker.js"), "utf8");
+      const worker = template.replace("__BUILD_ASSETS__", JSON.stringify(assets));
+      await writeFile(path.join(outDir, "asset-worker.js"), worker);
+      files["asset-worker.js"] = digest(worker);
       if (!files['index.html']) throw new Error('GAME BUILD: no index.html was emitted');
 
       // A success banner alone is insufficient on the runtime mount. Compare

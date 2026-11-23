@@ -31,7 +31,7 @@ export function createShowroom() {
     return texture;
   };
   const street = background(new URL("../assets/ui/night-street.webp", import.meta.url).href);
-  const workshop = background(new URL("../assets/ui/workshop.webp", import.meta.url).href);
+  let workshop: THREE.Texture | undefined;
   const ground = showroomGround();
   scene.add(ground.group);
   const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 80);
@@ -97,9 +97,9 @@ export function createShowroom() {
       carGroup.rotation.y += radians;
     },
     update(dt: number, animateRain: boolean, outside: boolean): void {
-      scene.background = outside ? street : workshop;
+      scene.background = outside ? street : (workshop ??= background(new URL("../assets/ui/workshop.webp", import.meta.url).href));
       // Preserve the workshop photograph's proportions even on a tall phone.
-      if (!outside && workshop.image?.width) {
+      if (!outside && workshop?.image?.width) {
         const ratio = camera.aspect / (workshop.image.width / workshop.image.height);
         workshop.repeat.set(Math.min(1, ratio), Math.min(1, 1 / ratio));
         workshop.offset.set((1 - workshop.repeat.x) / 2, (1 - workshop.repeat.y) / 2);
@@ -114,7 +114,7 @@ export function createShowroom() {
     },
     dispose(): void {
       clearCar();
-      street.dispose(); workshop.dispose(); ground.texture.dispose();
+      street.dispose(); workshop?.dispose(); ground.texture.dispose();
       disposeCarVisual(scene);
     },
   };
