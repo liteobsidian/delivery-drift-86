@@ -23,6 +23,7 @@ import { ACTIVITY_MODES, type ActivityMode, type CarSpec, type GameScreen, type 
 import { PROFILE_KEY, ProfileStore, type SaveStatus } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
+import { driftTip, isControlledDrift } from "./drift-pay";
 import { Roadside } from "./roadside";
 import { World } from "./world";
 import { CITY_STYLE } from "./city-style";
@@ -146,7 +147,7 @@ export class Game {
   private redFinedX = new Map<World["lights"][number], number>();
   private greenCooldown = new Map<World["lights"][number], number>();
   private scrapeCooldown = 0;
-  private driftBonusTimer = 0;
+  private deliveryDriftSeconds = 0;
   private driftBankedScore = 0;
   private driftChainScore = 0;
   private driftChainTime = 0;
@@ -1563,7 +1564,8 @@ export class Game {
       this.car.resetPose(0, 0, Math.PI);
     }
     this.scene.add(this.roadside.group);
-    this.roadside.reset(this.world, this.car.pos);
+    this.roadside.reset(this.world, this.car.pos, this.car.heading);
+    this.deliveryDriftSeconds = 0;
     this.traffic.resetForPlayer(this.car.pos, this.nevaRun ? NEVA_CONTRACT.trafficSeed : this.radioRun ? RADIO_TRAFFIC_SEED : undefined);
     this.car.cargo = 100;
     this.timeLeft = o.timeLimit;
@@ -1713,7 +1715,7 @@ export class Game {
          <div class="tut-row"><span class="tut-ico">📦</span><span>Довези груз за ${NEVA_CONTRACT.timeLimit} с. Целый груз, запас времени и чистые повороты дают очки.</span></div>`
       : mode === "delivery"
       ? `<div class="tut-row"><span class="tut-ico">⚠</span><span>Береги груз от ударов и луж; красный сигнал стоит ₽${RED_LIGHT_FINE}.</span></div>
-         <div class="tut-row"><span class="tut-ico">₽</span><span>Заказы, трюки и безопасные проезды дают деньги.</span></div>`
+         <div class="tut-row"><span class="tut-ico">₽</span><span>За секунду заноса к оплате заказа добавится ₽${driftTip(1)}. Сбитая вывеска сразу даёт ₽12.</span></div>`
       : mode === "radio-silence"
         ? `<div class="tut-row"><span class="tut-ico">◆</span><span>За ${RADIO_TIME} с пройди три передатчика. Каждый начинает погоню. Следуй по линии карты к бирюзовой зоне тишины и въезжай в неё с нужным отрывом.</span></div>
            <div class="tut-row"><span class="tut-ico">✦</span><span>Золотой пакет пополняет нитро и даёт очки после побега. Пакеты, запас времени и состояние кузова определяют медаль и выплату.</span></div>`
@@ -1725,7 +1727,7 @@ export class Game {
     this.tutorialEl.innerHTML = `<div class="tutorial-box">
       <h3 id="tutorial-title">КАК ИГРАТЬ · ${this.nevaRun ? NEVA_CONTRACT.title : MODE_NAMES[mode].toUpperCase()}</h3>
       <div class="tut-row"><span class="tut-ico wheel">🕹</span><span>${controls}</span></div>
-      <div class="tut-row"><span class="tut-ico hb">★</span><span><b>РУЧНИК</b> — ручник и газ помогают начать занос; нитро пополняется за дрифт.</span></div>
+      <div class="tut-row"><span class="tut-ico hb">★</span><span><b>РУЧНИК</b> — на скорости поверни руль и держи ручник. Занос засчитывается, пока машина скользит боком.</span></div>
       ${activity}
       <button class="btn primary" data-a="tut-ok" autofocus>ПОНЯТНО!</button>
     </div>`;
@@ -1920,6 +1922,15 @@ export class Game {
     const prevX = this.car.pos.x;
     const prevZ = this.car.pos.z;
     const res = this.car.step(dt, inp, this.world);
+    const signs = this.roadside.update(dt, {x:prevX,z:prevZ}, this.car.pos,
+      !this.car.isFlipping && !this.car.wrecked && this.car.airY<1 && this.car.vel.lengthSq()>16);
+    if (signs) {
+      const coins = signs*12;
+      this.profile.money += coins;
+      this.persistProfile();
+      this.effects.spawnFlash(this.car.pos.x,this.car.pos.z,0xffce56);
+      this.toast(`Вывеска · +₽${coins}`);
+    }
     const lamp = !this.car.isFlipping && this.car.vel.lengthSq() >= 25
       ? this.world.knockStreetLamp(prevX, prevZ, this.car.pos.x, this.car.pos.z, this.car.airY, dt)
       : null;
@@ -2084,24 +2095,21 @@ export class Game {
       }
     }
 
+    const controlledDrift = isControlledDrift(inp.handbrake, inp.steer, res.drift, res.speed,
+      !res.airborne && !res.rolled && !this.car.isFlipping && !this.car.wrecked && !this.driftCrashThisStep);
     if (this.nevaRun) {
       const clean = !lamp && !res.offRoad && !res.airborne && !res.rolled && !this.car.isFlipping && !this.car.wrecked
         && res.impact <= 3 && tHit <= 0;
-      const i = this.nevaRun.update(prevX, prevZ, this.car.pos.x, this.car.pos.z, dt, res.speed, res.drift, clean);
+      const i = this.nevaRun.update(prevX, prevZ, this.car.pos.x, this.car.pos.z, dt, res.speed, controlledDrift ? res.drift : 0, clean);
       if (i >= 0) {
         const points = this.nevaRun.pointsAt(i);
         this.toast(points ? `${NEVA_SECTORS[i].name} · чистый занос +₽${NEVA_CONTRACT.sectorBonus}` : `${NEVA_SECTORS[i].name} · без премии`);
         if (points) this.audio.uiClick();
       }
     } else if (this.mode === "drift-trial") {
-      this.updateDriftChain(res.drift, res.speed, dt);
-    } else if (this.mode === "delivery" && res.drift > 5 && Math.abs(res.speed) > 8) {
-      this.driftScore += res.drift * Math.abs(res.speed) * dt * 0.09;
-      this.driftBonusTimer -= dt;
-      if (this.driftBonusTimer <= 0) {
-        this.driftBonusTimer = 1.6;
-        this.addBonus(8, "Дрифт!");
-      }
+      this.updateDriftChain(controlledDrift ? res.drift : 0, res.speed, dt);
+    } else if (this.mode === "delivery" && controlledDrift) {
+      this.deliveryDriftSeconds += dt;
     }
 
     // engine audio
@@ -2386,7 +2394,7 @@ export class Game {
       const integ = this.car.cargo / 100;
       const pay = Math.round(o.reward * (0.25 + 0.75 * integ));
       const timeBonus = Math.round((this.timeLeft / o.timeLimit) * o.reward * 0.35);
-      const tip = Math.round(Math.min(this.driftScore, 4000) / 40);
+      const tip = driftTip(this.deliveryDriftSeconds);
       total = Math.max(0, pay + timeBonus + tip + this.bonusMoney - this.orderFines);
       lines.push(`Целостность груза: ${Math.round(this.car.cargo)}%`);
       lines.push(`Оплата: ₽${pay}`);
@@ -2559,8 +2567,8 @@ export class Game {
       : radio ? `Побеги ${radio.escapes}/${RADIO_WAVES} · Пакеты ${radio.packets}${radio.carryingPacket ? "+1" : ""}/${RADIO_WAVES}`
       : this.mode === "drift-trial"
       ? `дрифт ${Math.round(this.driftScore)} · ×${this.driftMultiplier}${this.driftChainScore > 0 ? ` · серия ${Math.round(this.driftChainScore)}` : ""}`
-      : this.mode === "delivery" && this.driftScore > 50 && speed > 8
-        ? `дрифт +${Math.round(this.driftScore)}`
+      : this.mode === "delivery" && this.deliveryDriftSeconds > 0
+        ? `Занос ${this.deliveryDriftSeconds.toFixed(1)} с · +₽${driftTip(this.deliveryDriftSeconds)}`
         : "";
     this.hNitro.querySelector("i")!.setAttribute("style", `transform:scaleX(${this.nitroFuel / 100})`);
     const radioPursuit = radio?.phase === "pursuit" && this.police.active;
