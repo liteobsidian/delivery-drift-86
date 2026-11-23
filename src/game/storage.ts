@@ -1,6 +1,7 @@
 import { CARS, UPGRADE_DEFS, UPGRADE_MAX } from "./config";
 import { NEVA_CONTRACT } from "./neva-contract";
-import { recordDetails, weeklyRouteIds } from "./retention";
+import { EVENTS } from "./career";
+import { careerMedalPoints, mapAccessFor, recordDetails, weeklyRouteIds } from "./retention";
 import { ACTIVITY_MODES, MAP_IDS, type Profile } from "./types";
 
 export const PROFILE_KEY = "delivery-drift-86-save-v2";
@@ -36,6 +37,7 @@ function weekKey(value: unknown): value is string {
 
 export function defaultProfile(): Profile {
   return {
+    career: {}, legacyMaps: [],
     money: 500,
     deliveries: 0,
     carId: "ae86",
@@ -103,6 +105,18 @@ export function mergeProfileData(input: unknown): Profile {
     const entry = recordDetails(key);
     if (entry && typeof value === "number" && Number.isFinite(value) && value >= 0 &&
       (entry.mode !== "time-attack" || value > 0)) profile.records[key] = value;
+  }
+  if (!Object.hasOwn(saved, "career")) {
+    const points = careerMedalPoints(profile.records);
+    profile.legacyMaps = MAP_IDS.filter(id => mapAccessFor(id, profile.deliveries, profile.mapId, points).unlocked);
+  } else {
+    profile.legacyMaps = MAP_IDS.filter(id => strings(saved.legacyMaps).includes(id));
+    const stars = object(saved.career);
+    for (const event of EVENTS) {
+      const count = Math.floor(number(stars[event.id], 0, 3));
+      if (!count) break;
+      profile.career[event.id] = count;
+    }
   }
   const completions = object(saved.weeklyCompletions);
   for (const week of Object.keys(completions).filter(weekKey).sort().slice(-3)) {

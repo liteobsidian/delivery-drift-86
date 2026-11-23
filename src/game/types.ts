@@ -8,6 +8,7 @@ export interface Vec3Like {
 
 export type GameScreen =
   | "title"
+  | "career"
   | "play"
   | "tracks"
   | "neva-contract"
@@ -47,6 +48,8 @@ export interface Stats {
 }
 
 export interface Profile {
+  career: Record<string, number>;
+  legacyMaps: MapId[];
   money: number;
   deliveries: number;
   carId: string;

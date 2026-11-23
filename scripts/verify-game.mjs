@@ -175,7 +175,7 @@ await page.waitForFunction(() => {
 const lockedPortMap = page.locator('[data-a="map:yokohama"]');
 if (await lockedPortMap.count() !== 1) fail("Yokohama Port is missing from the tracks screen");
 if (!(await lockedPortMap.isDisabled())) fail("Yokohama opened before the delivery threshold");
-if (!(await page.getByText(/8 доставок/).count())) fail("Locked Yokohama does not show its delivery requirement");
+if (!(await page.getByText(/Пройди этап 3/).count())) fail("Locked Yokohama does not show its career requirement");
 await page.screenshot({ path: join(SHOTS, "04-tracks-locked.png") });
 await page.locator('[data-a="map:tokyo"]').press("Space");
 const firstTutorial = page.locator("dialog.tutorial[open]");
@@ -226,7 +226,7 @@ if (!outerLanesClear) fail("An outer Tokyo lane is blocked or its concrete perim
 await verifyRoadside(page, [0, 1]);
 await page.screenshot({ path: join(SHOTS, "06-tokyo-network.png") });
 await page.evaluate(() => window.__gameDebug?.exitMode?.());
-await page.evaluate(() => window.__gameDebug?.setDeliveriesForTest?.(8));
+await page.evaluate(() => window.__gameDebug?.setLegacyMapsForTest(["yokohama"]));
 await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="activity:delivery"]').click();
 await page.locator('[data-a="map:yokohama"]').click();
@@ -276,13 +276,6 @@ await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="activity:delivery"]').click();
 await page.locator('[data-a="map:yokohama"]').click();
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "yokohama") fail("Yokohama could not be reselected after returning to Tokyo");
-const hasMapAccess = await page.evaluate(() => typeof window.__gameDebug?.mapAccessFor === "function");
-if (!hasMapAccess) fail("Map unlock rules are missing");
-const accessCases = await page.evaluate(() => {
-  const check = window.__gameDebug.mapAccessFor;
-  return [check("tokyo", 0, "tokyo"), check("yokohama", 0, "tokyo"), check("yokohama", 7, "tokyo"), check("yokohama", 8, "tokyo"), check("yokohama", 0, "yokohama")];
-});
-if (!accessCases[0].unlocked || accessCases[1].unlocked || accessCases[1].deliveriesRemaining !== 8 || accessCases[2].deliveriesRemaining !== 1 || !accessCases[3].unlocked || !accessCases[4].unlocked) fail("Map unlock thresholds or legacy access are incorrect");
 const hasEventState = await page.evaluate(() => typeof window.__gameDebug?.weeklyEventSeen === "function" && typeof window.__gameDebug?.markWeeklyEventSeen === "function");
 if (!hasEventState) fail("Weekly event seen state helpers are missing");
 await page.evaluate(() => window.__gameDebug.markWeeklyEventSeen("2026-11-16T12:00:00Z"));
@@ -571,14 +564,14 @@ console.log("Gameplay smoke passed; checking audit regressions across maps and t
 // Audit regressions across maps, mobile input, and shared saves.
 await page.evaluate(() => {
   window.__gameDebug.exitMode();
-  window.__gameDebug.setDeliveriesForTest(0);
+  window.__gameDebug.setLegacyMapsForTest([]);
 });
 await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="activity:drift-trial"]').click();
-if (await page.locator('[data-a="map:yokohama"]').isDisabled()) fail("Medals did not unlock new maps without delivery progress");
+if (!(await page.locator('[data-a="map:yokohama"]').isDisabled())) fail("Free-play medals bypassed the career gate");
 await page.evaluate(() => {
   window.__gameDebug.exitMode();
-  window.__gameDebug.setDeliveriesForTest(32);
+  window.__gameDebug.setLegacyMapsForTest(["yokohama","spb","kazan","sochi"]);
 });
 const cityLandmarks = {
   tokyo: ["shrine-gate", "tokyo-radio-tower"],
@@ -656,6 +649,18 @@ await page.locator('[data-a="map:tokyo"]').click();
 await page.evaluate(() => window.__gameDebug.setElapsedForTest(9999));
 await page.locator(".result.bad").waitFor();
 if (!(await page.getByText("Время до схода", { exact: false }).isVisible())) fail("Failed Time Attack was presented as a finished lap");
+// Enter a career event through its brief and continue from the saved result.
+await page.locator('[data-a="menu"]').click();
+await page.locator('[data-a="play"]').click();
+await page.locator('[data-a="career"]').click();
+await page.locator('[data-a="chapter-1"]').click();
+if (!(await page.locator('[data-a="launch"]').isDisabled())) fail("Unplayed chapter let the player skip its qualifier");
+await page.locator('[data-a="chapter-0"]').click();
+await page.locator('[data-a="launch"]').click();
+await page.evaluate(() => window.__gameDebug.finishDelivery());
+await page.getByText("ЭТАП ПРОЙДЕН", {exact:true}).waitFor();
+await page.locator('[data-a="career-next"]').click();
+if (await page.locator('[data-a="stage-2"]').getAttribute("aria-pressed") !== "true") fail("Career did not select the next event");
 await page.close();
 
 const mobileContext = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 844, height: 390 } });
