@@ -88,6 +88,7 @@ const consoleErrors = [];
 page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
 page.on("pageerror", (e) => consoleErrors.push(String(e)));
 
+await page.clock.setFixedTime(new Date("2026-11-17T12:00:00Z"));
 let releaseBundle;
 const bundleGate = new Promise((resolve) => { releaseBundle = resolve; });
 await page.route("**/assets/index-*.js", async (route) => { await bundleGate; await route.continue(); });
@@ -119,6 +120,7 @@ if (await page.locator('[data-a="event-dismiss"]').count()) fail("Dismissed week
 await page.waitForFunction(() => window.__gameDebug.showroom().state === "ready");
 await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="back"]').click();
+await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 const restoredTitle = await page.evaluate(() => window.__gameDebug.showroom());
 if (restoredTitle.key !== "ae86" || !restoredTitle.detailed || restoredTitle.state !== "ready") {
   fail("Returning to the title screen replaced the detailed model");
@@ -196,6 +198,17 @@ if (tokyoTraffic.some((a, i) => tokyoTraffic.slice(i + 1).some((b) => {
 const tokyoLayout = await page.evaluate(() => window.__gameDebug.layoutSnapshot());
 if (!tokyoLayout.signals.length || (await page.evaluate((signals) => signals.some((point) => !window.__gameDebug.roadProbe(point.x, point.z).onRoad), tokyoLayout.signals))) fail("Tokyo signal junctions are not on authored roads");
 await page.waitForTimeout(700);
+async function verifyRoadside(page, ids) {
+  for (const id of ids) {
+    const visible = await page.evaluate(id => {
+      const debug = window.__gameDebug;
+      const sprite = debug.scene.getObjectByName("roadside-" + id);
+      return !!sprite?.material.map.image?.width && !debug.roadProbe(sprite.position.x, sprite.position.z).onRoad;
+    }, id);
+    if (!visible) fail("Missing or misplaced roadside character " + id);
+  }
+}
+await verifyRoadside(page, [0, 1]);
 await page.screenshot({ path: join(SHOTS, "06-tokyo-network.png") });
 await page.evaluate(() => window.__gameDebug?.exitMode?.());
 await page.evaluate(() => window.__gameDebug?.setDeliveriesForTest?.(8));
@@ -282,6 +295,10 @@ await page.locator('[data-a="menu"]').click();
 await page.locator('[data-a="profile"]').click();
 if (!(await page.evaluate(() => Object.keys((JSON.parse(localStorage.getItem("delivery-drift-86-save-v2") ?? "{}").records ?? {})).some((key) => key.includes(":delivery:"))))) fail("Delivery personal records were not saved");
 await page.locator('[data-a="back"]').click();
+await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+if (Math.abs(await page.evaluate(() => window.__gameDebug.showroom().angle) - restoredTitle.angle) > .0001)
+  fail("The parked title car inherited another screen's rotation");
+
 
 // Both short modes can start, complete, and be replayed without counting as deliveries.
 await page.evaluate(() => window.__gameDebug?.setDeliveriesForTest?.(0));
@@ -790,6 +807,7 @@ await nevaPage.waitForFunction(() => {
 });
 await nevaPage.keyboard.up("KeyA");
 await nevaPage.keyboard.up("KeyW");
+await verifyRoadside(nevaPage, [2, 3]);
 await nevaPage.screenshot({ path: join(SHOTS, "neva-course.png") });
 
 await nevaPage.evaluate(() => {

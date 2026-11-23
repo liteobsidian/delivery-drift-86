@@ -113,7 +113,7 @@ function rectanglesOverlap(a: Rect, b: Rect, clearance = 0): boolean {
   return true;
 }
 
-function pointInPolygon(x: number, z: number, points: { x: number; z: number }[]): boolean {
+export function pointInPolygon(x: number, z: number, points: { x: number; z: number }[]): boolean {
   let inside = false;
   for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
     const a = points[i];

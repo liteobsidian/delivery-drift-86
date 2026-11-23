@@ -23,6 +23,7 @@ import { ACTIVITY_MODES, type ActivityMode, type CarSpec, type GameScreen, type 
 import { PROFILE_KEY, ProfileStore, type SaveStatus } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
+import { Roadside } from "./roadside";
 import { World } from "./world";
 import { CITY_STYLE } from "./city-style";
 import { Car, disposeCarVisual } from "./car";
@@ -85,6 +86,7 @@ export class Game {
   private viewportHeight = 1;
   private garageIndex = 0;
   private garageReturn: "title" | "garage" = "title";
+  private readonly roadside = new Roadside();
   private scene = new THREE.Scene();
   private readonly ambientLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 1.5);
   private readonly keyLight = new THREE.DirectionalLight();
@@ -1560,6 +1562,8 @@ export class Game {
     } else {
       this.car.resetPose(0, 0, Math.PI);
     }
+    this.scene.add(this.roadside.group);
+    this.roadside.reset(this.world, this.car.pos);
     this.traffic.resetForPlayer(this.car.pos, this.nevaRun ? NEVA_CONTRACT.trafficSeed : this.radioRun ? RADIO_TRAFFIC_SEED : undefined);
     this.car.cargo = 100;
     this.timeLeft = o.timeLimit;
@@ -2677,6 +2681,7 @@ export class Game {
     this.careerCar.dispose();
     this.nevaCar?.dispose();
     this.radioCar?.dispose();
+    this.roadside.dispose();
     this.showroom.dispose();
     for (const model of this.heroModels.values()) {
       if (typeof model === "object") disposeCarVisual(model.root);
