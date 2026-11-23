@@ -24,6 +24,7 @@ import { PROFILE_KEY, ProfileStore, type SaveStatus } from "./storage";
 import { AudioSystem } from "./audio";
 import { Input } from "./input";
 import { driftTip, isControlledDrift } from "./drift-pay";
+import { EVENTS, nextEvent, canRace, mapOpen, settleEvent, goal, type CareerEvent } from "./career";
 import { Roadside } from "./roadside";
 import { World } from "./world";
 import { CITY_STYLE } from "./city-style";
@@ -41,7 +42,7 @@ import { canUnlockCar, driftMedal, driftMultiplierForSeconds, finalDriftScore, m
 import { RADIO_CACHE_RADIUS, RADIO_GATE_RADIUS, RADIO_TIME, RADIO_TITLE, RADIO_TRAFFIC_SEED, RADIO_WAVES, RadioRun, radioCourse, radioMedal, radioScore } from "./radio-silence";
 import { createShowroom } from "./showroom";
 import {
-  careerMedalPoints, completeWeeklyRoute, mapAccessFor, recordDetails, saveRecord,
+  completeWeeklyRoute, recordDetails, saveRecord,
   utcWeekKey, weeklyRouteIds, weeklyRoutes, type WeeklyRoute,
 } from "./retention";
 
@@ -59,7 +60,7 @@ const MODE_NAMES: Record<ActivityMode, string> = {
 };
 const RADIO_SIGNAL_COLOR = 0xb899ff;
 const RADIO_CACHE_COLOR = 0xffbb62;
-const SHOWROOM_SCREENS = new Set<GameScreen>(["title", "play", "tracks", "neva-contract", "profile", "garage", "cars", "orders", "settings", "achievements"]);
+const SHOWROOM_SCREENS = new Set<GameScreen>(["title", "play", "career", "tracks", "neva-contract", "profile", "garage", "cars", "orders", "settings", "achievements"]);
 const rubles = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
 
 function el(tag: string, cls: string, html = ""): HTMLElement {
@@ -129,6 +130,9 @@ export class Game {
   screen: GameScreen = "title";
   order: Order | null = null;
   mode: ActivityMode = "delivery";
+  private selectedEvent = EVENTS[0];
+  private activeEvent?: CareerEvent;
+  private careerHudGoal = "";
   private pendingMode: ActivityMode = "delivery";
   orders: Order[] = [];
   timeLeft = 0;
@@ -286,7 +290,8 @@ export class Game {
       if (this.screen === "title" && !this.screenEl.querySelector(".weekly-event-shade")) this.showScreen("play");
       else if (this.screen === "neva-contract") this.startNevaContract();
       else if (this.screen === "result") {
-        if (this.nevaRun) this.startNevaContract();
+        if (this.activeEvent) this.continueCareer();
+        else if (this.nevaRun) this.startNevaContract();
         else if (this.lastResult.mode) this.startMode(this.lastResult.mode);
         else this.gotoOrders();
       }
@@ -360,7 +365,7 @@ export class Game {
           const week = utcWeekKey();
           return { week, completed: this.profile.weeklyCompletions[week] ?? [] };
         },
-        mapAccessFor,
+        setLegacyMapsForTest: (maps: MapId[]) => { this.profile.legacyMaps = maps; this.persistProfile(); },
         setDeliveriesForTest: (deliveries: number) => { this.profile.deliveries = deliveries; this.persistProfile(); },
         weeklyEventSeen: (date?: string) => this.profile.weeklyEventWeek === utcWeekKey(date ? new Date(date) : new Date()),
         markWeeklyEventSeen: (date?: string) => {
@@ -596,12 +601,14 @@ export class Game {
       this.garageIndex = CARS.indexOf(this.currentCarSpec());
     }
     if (this.screen === "playing" && s !== "playing") this.creditDrift();
+    if (!["playing", "paused", "settings", "result"].includes(s)) this.activeEvent = undefined;
     this.screen = s;
     this.screenEl.dataset.screen = s;
     if (s !== "playing" && s !== "paused") this.tutorialEl.close();
     this.hudEl.style.display = s === "playing" ? "block" : "none";
     this.input.setDriving(s === "playing" && !this.tutorialEl.open && this.saveStatus !== "conflict");
     if (s === "title") this.renderTitle();
+    else if (s === "career") this.renderCareer();
     else if (s === "play") this.renderPlay();
     else if (s === "neva-contract") this.renderNevaContract();
     else if (s === "tracks") this.renderTracks();
@@ -690,7 +697,7 @@ export class Game {
             <button class="btn" data-a="profile">ПРОФИЛЬ</button>
           </div>
         </div>
-        <div class="home-career"><span>₽${rubles.format(p.money)}</span><span>${p.deliveries} доставок</span><span>${p.unlockedAch.length}/${ACHIEVEMENTS.length} достижений</span></div>
+        <div class="home-career"><span>₽${rubles.format(p.money)}</span><span>Карьера · ${Object.keys(p.career).length}/${EVENTS.length}</span><span>${p.unlockedAch.length}/${ACHIEVEMENTS.length} достижений</span></div>
       </div>
       <div class="showroom-stage home-showroom" data-showroom-stage aria-hidden="${showWeeklyEvent}">
         ${this.showroomStatus()}
@@ -725,7 +732,7 @@ export class Game {
     this.screenEl.innerHTML = `<div class="panel journey-panel">
       <div class="journey-eyebrow">НОЧНОЙ КУРЬЕР · ${WORLD_MAPS.find((map) => map.id === this.profile.mapId)?.name}</div>
       <h2>ВЫБЕРИ ЗАЕЗД</h2>
-      <p class="dim">Сначала выбери, как хочешь провести эту гонку.</p>
+      <button class="career-entry" data-a="career"><span><small>ЧЕМПИОНАТ · 5 ГЛАВ</small><b>Карьера</b></span><strong>${nextEvent(this.profile.career)?.title ?? "Все этапы пройдены"} →</strong></button>
       <button type="button" class="neva-feature activity-card" data-a="neva">
         <b>ДОСТАВЬ КРАСИВО</b><span>Петербург · турбожига · два поворота с премией за занос</span>
         <i aria-hidden="true">→</i>
@@ -738,7 +745,7 @@ export class Game {
       </div>
       <button class="btn" data-a="back">← НАЗАД</button>
     </div>`;
-    this.bindScreen({ back: () => this.showScreen("title"), neva: () => this.showScreen("neva-contract") });
+    this.bindScreen({ career: () => this.openCareer(), back: () => this.showScreen("title"), neva: () => this.showScreen("neva-contract") });
   }
 
   private renderNevaContract(): void {
@@ -764,20 +771,83 @@ export class Game {
     this.bindScreen({ "start-neva": () => this.startNevaContract(), back: () => this.showScreen("play") });
   }
 
+  private openCareer(event = nextEvent(this.profile.career) ?? EVENTS[EVENTS.length - 1]): void {
+    this.selectedEvent = event;
+    this.showScreen("career");
+  }
+
+  private renderCareer(): void {
+    const event = this.selectedEvent;
+    const stars = this.profile.career;
+    const district = WORLD_MAPS[event.chapter];
+    const available = canRace(event, stars);
+    const count = Object.values(stars).reduce((sum, n) => sum + n, 0);
+    const buttons: Record<string, () => void> = {
+      back: () => this.showScreen("play"),
+      launch: () => this.startCareer(event),
+    };
+    const chapters = WORLD_MAPS.map((map, index) => {
+      buttons["chapter-" + index] = () => this.openCareer(EVENTS.find(e => e.map === map.id && !stars[e.id]) ?? EVENTS[index * 3 + 2]);
+      return `<button data-a="chapter-${index}" aria-pressed="${index === event.chapter}">${["Токио","Ёкохама","Петербург","Казань","Сочи"][index]}</button>`;
+    }).join("");
+    const stages = EVENTS.filter(e => e.map === event.map).map(e => {
+      buttons["stage-" + e.number] = () => this.openCareer(e);
+      return `<button data-a="stage-${e.number}" aria-pressed="${event === e}"><small>ЭТАП ${e.number}</small><b>${e.title}</b><span>${stars[e.id] ? "★".repeat(stars[e.id]) + "☆".repeat(3-stars[e.id]) : canRace(e,stars) ? "Открыт" : "Закрыт"}</span></button>`;
+    }).join("");
+    this.screenEl.style.display = "flex";
+    this.screenEl.innerHTML = `<section class="career-board">
+      <header><button class="btn small" data-a="back">‹ Назад</button><h2>Карьера</h2><strong>★ ${count} / 45</strong></header>
+      <nav aria-label="Главы карьеры">${chapters}</nav>
+      <div class="career-body"><div class="career-city" style="background-image:linear-gradient(0deg,#101321 5%,transparent 85%),url('${MAP_PREVIEWS[event.map]}')">
+      <small>ГЛАВА ${event.chapter + 1} / 5</small><h3>${district.name}</h3><p>${WORLD_MAPS[event.chapter+1] ? "За финал главы откроется " + WORLD_MAPS[event.chapter+1].name : "Финал чемпионата"}</p></div>
+      <div class="career-brief"><div class="career-stages">${stages}</div>
+      <div class="career-details"><h3>${event.title}</h3><ul>${[1,2,3].map(t => `<li><b>${"★".repeat(t)}</b> ${goal(event,t)}</li>`).join("")}</ul>
+      <small>Премия за новую звезду · ₽${100+50*event.chapter}</small></div>
+      <button class="btn primary" data-a="launch" ${available ? "" : "disabled"}>${available ? stars[event.id] ? "Улучшить результат" : "Старт" : "Пройди этап " + (event.number-1)}</button></div></div></section>`;
+    this.bindScreen(buttons);
+    const cover = this.screenEl.querySelector<HTMLElement>(".career-city")!;
+    let startX = 0;
+    cover.onpointerdown = e => { startX = e.clientX; cover.setPointerCapture(e.pointerId); };
+    cover.onpointerup = e => {
+      const dx = e.clientX - startX;
+      if (Math.abs(dx) >= 44) buttons["chapter-" + (event.chapter - Math.sign(dx))]?.();
+    };
+  }
+
+  private continueCareer(): void {
+    if (this.activeEvent && !this.lastResult.ok) this.startCareer(this.activeEvent);
+    else this.openCareer();
+  }
+
+  private startCareer(event: CareerEvent): void {
+    if (!canRace(event, this.profile.career) || !this.selectMap(event.map)) return;
+    this.activeEvent = event;
+    this.careerHudGoal = `Этап ${event.number} · ${goal(event,1)}`;
+    if (event.mode !== "delivery") {
+      this.startMode(event.mode);
+      return;
+    }
+    let seed = 86 + event.chapter;
+    const route = sampleDeliveryDestination(this.world.layout, () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 4294967296;
+    }, new Set(), 100 + event.chapter * 12, 330);
+    if (!route) throw new Error("Missing career route " + event.id);
+    this.startOrder({...route, id:this.orderId++, title:event.title, reward:400 + event.chapter*120,
+      timeLimit:Math.ceil(route.distance/10)+38, fragility:1+event.chapter*.12});
+  }
+
   private renderTracks(): void {
-    const medalPoints = careerMedalPoints(this.profile.records);
-    const cards = WORLD_MAPS.map((map) => {
-      const access = mapAccessFor(map.id, this.profile.deliveries, this.profile.mapId, medalPoints);
-      const locked = !access.unlocked;
-      const progress = Math.min(map.unlockDeliveries, this.profile.deliveries);
+    const cards = WORLD_MAPS.map((map,index) => {
+      const locked = !mapOpen(map.id,this.profile);
       return `<button class="map-card track-card ${this.profile.mapId === map.id ? "selected" : ""} ${locked ? "locked" : ""}" data-a="map:${map.id}" ${locked ? "disabled" : ""} aria-pressed="${this.profile.mapId === map.id}">
         <span class="track-art">
           <img src="${MAP_PREVIEWS[map.id]}" alt="" width="456" height="384" loading="lazy" decoding="async">
           ${locked ? "<b class='track-lock' aria-hidden='true'>🔒</b>" : ""}
         </span>
         <b>${map.name}</b>
-        <span>${locked ? "Открывается за доставки или медали" : map.description}</span>
-        ${locked ? `<span class="track-progress">${progress} / ${map.unlockDeliveries} доставок · ${medalPoints} / ${map.unlockMedalPoints} очков медалей</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
+        <span>${locked ? "Открывается в карьере" : map.description}</span>
+        ${locked ? `<span class="track-progress">Пройди этап ${index*3} · ${EVENTS[index*3-1]?.title}</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
       </button>`;
     }).join("");
     const modeName = MODE_NAMES[this.pendingMode];
@@ -785,7 +855,7 @@ export class Game {
     this.screenEl.innerHTML = `<div class="panel journey-panel tracks-panel">
       <div class="journey-eyebrow">${modeName.toUpperCase()}</div>
       <h2>ВЫБЕРИ МЕСТО</h2>
-      <p class="dim">За лучшую медаль в каждом режиме на каждой карте начисляются очки. Бронза — 1, серебро — 2, золото — 3.</p>
+      <p class="dim">Финал каждой главы карьеры открывает следующий район.</p>
       <div class="map-picker track-picker">${cards}</div>
       <button class="btn" data-a="back">← К РЕЖИМАМ</button>
     </div>`;
@@ -986,7 +1056,8 @@ export class Game {
     this.bindScreen({
       resume: () => this.togglePause(),
       retry: () => {
-        if (this.nevaRun) this.startNevaContract();
+        if (this.activeEvent) this.startCareer(this.activeEvent);
+        else if (this.nevaRun) this.startNevaContract();
         else if (this.mode === "delivery" && this.order) this.startOrder(this.order);
         else if (this.mode !== "delivery") this.startMode(this.mode);
       },
@@ -1143,12 +1214,13 @@ export class Game {
       <div class="panel result ${r.ok ? "ok" : "bad"}">
         <h2>${r.title ?? (r.ok ? "ДОСТАВЛЕНО!" : "ЗАКАЗ ПРОВАЛЕН")}</h2>
         <div class="result-lines">${r.lines.map((l) => `<div>${l}</div>`).join("")}</div>
-        ${r.mode || this.nevaRun ? `<button class="btn primary" data-a="replay">ПОВТОРИТЬ ЗАЕЗД</button>` : `<button class="btn primary" data-a="more">ЕЩЁ ЗАКАЗ <kbd>ПРОБЕЛ</kbd></button>`}
+        ${this.activeEvent ? `<button class="btn primary" data-a="career-next">${r.ok ? this.activeEvent.number === EVENTS.length ? "К итогам карьеры" : "К этапам" : "Повторить этап"}</button>` : r.mode || this.nevaRun ? `<button class="btn primary" data-a="replay">ПОВТОРИТЬ ЗАЕЗД</button>` : `<button class="btn primary" data-a="more">ЕЩЁ ЗАКАЗ <kbd>ПРОБЕЛ</kbd></button>`}
         ${share}
         <button class="btn" data-a="garage">В ГАРАЖ</button>
         <button class="btn" data-a="menu">В МЕНЮ</button>
       </div>`;
     this.bindScreen({
+      "career-next": () => this.continueCareer(),
       more: () => this.gotoOrders(),
       replay: () => {
         if (this.nevaRun) this.startNevaContract();
@@ -1222,8 +1294,7 @@ export class Game {
   }
 
   private selectMap(mapId: MapId): boolean {
-    const points = careerMedalPoints(this.profile.records);
-    if (!mapAccessFor(mapId, this.profile.deliveries, this.profile.mapId, points).unlocked) return false;
+    if (!mapOpen(mapId, this.profile)) return false;
     if (this.world.mapId !== mapId) this.useWorld(mapId);
     if (this.profile.mapId !== mapId) {
       this.profile.mapId = mapId;
@@ -2367,6 +2438,18 @@ export class Game {
     const driftScore = finalDriftScore(this.driftScore);
     this.driftScore = driftScore;
     if (this.mode === "drift-trial" && ok) p.driftBest = Math.max(p.driftBest, driftScore);
+    const event = this.activeEvent;
+    const careerLines: string[] = [];
+    let stagePassed = ok;
+    if (event) {
+      const value = event.mode === "delivery" ? this.car.cargo : event.mode === "drift-trial" ? driftScore : o.timeLimit-this.timeLeft;
+      const result = settleEvent(p,event,ok,value);
+      stagePassed = result.earned > 0;
+      careerLines.push(`Этап ${event.number} · ${event.title} · ${"★".repeat(result.earned)}${"☆".repeat(3-result.earned)}`);
+      if (!stagePassed) careerLines.push(`Цель этапа: ${goal(event,1)}`);
+      if (result.bonus) careerLines.push(`Премия за новые звёзды: ₽${result.bonus}`);
+      if (result.first && event.leg===2) careerLines.push(WORLD_MAPS[event.chapter+1] ? "Открыта карта · "+WORLD_MAPS[event.chapter+1].name : "Чемпионат пройден!");
+    }
     if (this.mode !== "delivery") {
       const title = this.mode === "drift-trial" ? "DRIFT TRIAL" : "TIME ATTACK";
       const elapsed = Math.max(0, o.timeLimit - this.timeLeft);
@@ -2398,7 +2481,7 @@ export class Game {
       lines.push(`<b class="gold">Выплата за заезд: ₽${reward}</b>`);
       this.grantAchievements(false);
       this.persistProfile();
-      this.lastResult = { ok, lines, mode: this.mode, title };
+      this.lastResult = { ok: stagePassed, lines:[...careerLines,...lines], mode: this.mode, title: event ? (stagePassed ? "ЭТАП ПРОЙДЕН" : "ЦЕЛЬ НЕ ВЫПОЛНЕНА") : title };
       this.order = null;
       this.police.stop();
       this.bonusMoney = 0;
@@ -2453,7 +2536,7 @@ export class Game {
     }
     this.grantAchievements(false);
     this.persistProfile();
-    this.lastResult = { ok, lines };
+    this.lastResult = { ok:stagePassed, lines:[...careerLines,...lines], title:event ? (stagePassed ? "ЭТАП ПРОЙДЕН" : "ЭТАП НЕ ПРОЙДЕН") : undefined };
     this.order = null;
     this.police.stop();
     this.bonusMoney = 0;
@@ -2562,6 +2645,9 @@ export class Game {
       : this.mode === "delivery"
       ? `📦 ${CARGO_NAMES[o.id % CARGO_NAMES.length]} · ₽${o.reward}`
       : this.mode === "drift-trial" ? "DRIFT TRIAL · комбо до ×5" : `TIME ATTACK · КП ${Math.min(this.timeAttackCheckpointIndex + 1, this.timeAttackCourse?.checkpoints.length ?? 5)}/${this.timeAttackCourse?.checkpoints.length ?? 5}`;
+    if (this.activeEvent) this.hOrder.textContent = this.activeEvent.mode === "time-attack"
+      ? `Этап ${this.activeEvent.number} · КП ${Math.min(this.timeAttackCheckpointIndex + 1, 5)}/5`
+      : this.careerHudGoal;
     const t = Math.max(0, this.timeLeft);
     const seconds = Math.ceil(t);
     this.hTimer.textContent = radio ? `⏱ ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : this.mode === "time-attack"

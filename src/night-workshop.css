@@ -135,3 +135,20 @@
 .pit [data-part="body"]{--part-art:url("./assets/ui/part-body.webp")}
 .pit-rack i{mix-blend-mode:screen}
 @media(min-aspect-ratio:1.01/1) and (min-height:470px){.pit-detail::before{content:"";height:clamp(60px,19vh,190px);background:var(--part-art) left center/contain no-repeat;mix-blend-mode:screen}}
+
+.career-entry,.career-board {color:#fbf3e5;background:#141e29;border:1px solid #475561}
+.career-entry {width:100%;padding:10px 16px;margin:0 0 8px;display:flex;align-items:center;justify-content:space-between;text-align:left;cursor:pointer;border-left:4px solid #fbb659;background:linear-gradient(105deg,#354557,#15202b)}
+.career-entry small,.career-board small {display:block;font-size:10px;letter-spacing:.1em;color:#c4d0d4}
+.career-entry b {display:block;font-size:22px}.career-entry strong,.career-board header strong,.career-details li b {color:#ffbd65}
+.career-board {width:min(960px,95vw);max-height:94dvh;overflow:auto;padding:clamp(8px,2vh,18px);box-sizing:border-box;border-radius:12px;text-align:left}
+.career-board header,.career-board nav,.career-stages {display:flex;align-items:center;gap:8px}
+.career-board header strong {margin-left:auto}.career-board h2,.career-board h3,.career-board p {margin:0}
+.career-board nav {margin:7px 0;overflow-x:auto}.career-board nav button,.career-stages button {background:#202d3a;color:#d9e1e5;border:1px solid #455762;padding:7px 12px;cursor:pointer;border-radius:5px}
+.career-board button[aria-pressed=true] {border-color:#ffb95b;background:#354454;color:white}
+.career-body {display:grid;grid-template-columns:minmax(160px, .75fr) 1.4fr;gap:14px}
+.career-city {background-size:cover;background-position:center;display:flex;flex-direction:column;justify-content:flex-end;padding:16px;border-radius:6px}
+.career-city h3 {font-size:clamp(19px,3vw,34px);line-height:1.05}.career-city p {margin-top:7px;font-size:12px;color:#e3ddcf}
+.career-stages {align-items:stretch;gap:4px}.career-stages button {flex:1;text-align:left;padding:6px}.career-stages span,.career-stages b {display:block;font-size:12px}.career-stages span {color:#ffc873}
+.career-details {padding:8px 0}.career-details ul {list-style:none;padding:0;margin:4px 0;font-size:13px}.career-details li b {display:inline-block;width:3em}
+.career-brief>.btn {width:100%}
+.career-city {touch-action:pan-y}
