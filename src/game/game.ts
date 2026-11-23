@@ -1715,7 +1715,7 @@ export class Game {
          <div class="tut-row"><span class="tut-ico">📦</span><span>Довези груз за ${NEVA_CONTRACT.timeLimit} с. Целый груз, запас времени и чистые повороты дают очки.</span></div>`
       : mode === "delivery"
       ? `<div class="tut-row"><span class="tut-ico">⚠</span><span>Береги груз от ударов и луж; красный сигнал стоит ₽${RED_LIGHT_FINE}.</span></div>
-         <div class="tut-row"><span class="tut-ico">₽</span><span>Заказы, трюки и безопасные проезды дают деньги.</span></div>`
+         <div class="tut-row"><span class="tut-ico">₽</span><span>За секунду заноса к оплате заказа добавится ₽${driftTip(1)}. Сбитая вывеска сразу даёт ₽12.</span></div>`
       : mode === "radio-silence"
         ? `<div class="tut-row"><span class="tut-ico">◆</span><span>За ${RADIO_TIME} с пройди три передатчика. Каждый начинает погоню. Следуй по линии карты к бирюзовой зоне тишины и въезжай в неё с нужным отрывом.</span></div>
            <div class="tut-row"><span class="tut-ico">✦</span><span>Золотой пакет пополняет нитро и даёт очки после побега. Пакеты, запас времени и состояние кузова определяют медаль и выплату.</span></div>`
@@ -1727,7 +1727,7 @@ export class Game {
     this.tutorialEl.innerHTML = `<div class="tutorial-box">
       <h3 id="tutorial-title">КАК ИГРАТЬ · ${this.nevaRun ? NEVA_CONTRACT.title : MODE_NAMES[mode].toUpperCase()}</h3>
       <div class="tut-row"><span class="tut-ico wheel">🕹</span><span>${controls}</span></div>
-      <div class="tut-row"><span class="tut-ico hb">★</span><span><b>РУЧНИК</b> — ручник и газ помогают начать занос; нитро пополняется за дрифт.</span></div>
+      <div class="tut-row"><span class="tut-ico hb">★</span><span><b>РУЧНИК</b> — на скорости поверни руль и держи ручник. Занос засчитывается, пока машина скользит боком.</span></div>
       ${activity}
       <button class="btn primary" data-a="tut-ok" autofocus>ПОНЯТНО!</button>
     </div>`;

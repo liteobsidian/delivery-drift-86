@@ -36,7 +36,7 @@ function sites(world: World) {
             z > bounds.maxZ - 2
           )
             continue;
-          if (world.nearestRoadDist(x, z) < 1.4 || world.rampAt(x, z)) continue;
+          if (world.isOnRoad(x, z) || world.nearestRoadDist(x, z) < 1.4 || world.rampAt(x, z)) continue;
           if (
             world.buildings.some(
               (b) =>
