@@ -88,6 +88,7 @@ const consoleErrors = [];
 page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
 page.on("pageerror", (e) => consoleErrors.push(String(e)));
 
+await page.clock.setFixedTime(new Date("2026-11-17T12:00:00Z"));
 let releaseBundle;
 const bundleGate = new Promise((resolve) => { releaseBundle = resolve; });
 await page.route("**/assets/index-*.js", async (route) => { await bundleGate; await route.continue(); });
@@ -119,6 +120,7 @@ if (await page.locator('[data-a="event-dismiss"]').count()) fail("Dismissed week
 await page.waitForFunction(() => window.__gameDebug.showroom().state === "ready");
 await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="back"]').click();
+await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 const restoredTitle = await page.evaluate(() => window.__gameDebug.showroom());
 if (restoredTitle.key !== "ae86" || !restoredTitle.detailed || restoredTitle.state !== "ready") {
   fail("Returning to the title screen replaced the detailed model");
