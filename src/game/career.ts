@@ -54,7 +54,7 @@ export function goal(event: CareerEvent, tier: number) {
     return tier === 1 ? "Доставить заказ" : `Сохранить ${value}% груза`;
   return event.mode === "drift-trial"
     ? `Набрать ${value} очк. за 60 с`
-    : `Пройти круг за ${value} с`;
+    : tier === 1 ? "Финишировать до конца таймера" : `Пройти круг за ${value} с`;
 }
 export function settleEvent(
   profile: Profile,

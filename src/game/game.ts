@@ -290,7 +290,7 @@ export class Game {
       if (this.screen === "title" && !this.screenEl.querySelector(".weekly-event-shade")) this.showScreen("play");
       else if (this.screen === "neva-contract") this.startNevaContract();
       else if (this.screen === "result") {
-        if (this.activeEvent) this.openCareer(this.lastResult.ok ? undefined : this.activeEvent);
+        if (this.activeEvent) this.continueCareer();
         else if (this.nevaRun) this.startNevaContract();
         else if (this.lastResult.mode) this.startMode(this.lastResult.mode);
         else this.gotoOrders();
@@ -814,6 +814,11 @@ export class Game {
     };
   }
 
+  private continueCareer(): void {
+    if (this.activeEvent && !this.lastResult.ok) this.startCareer(this.activeEvent);
+    else this.openCareer();
+  }
+
   private startCareer(event: CareerEvent): void {
     if (!canRace(event, this.profile.career) || !this.selectMap(event.map)) return;
     this.activeEvent = event;
@@ -1215,7 +1220,7 @@ export class Game {
         <button class="btn" data-a="menu">В МЕНЮ</button>
       </div>`;
     this.bindScreen({
-      "career-next": () => { if (this.activeEvent && !r.ok) this.startCareer(this.activeEvent); else this.openCareer(); },
+      "career-next": () => this.continueCareer(),
       more: () => this.gotoOrders(),
       replay: () => {
         if (this.nevaRun) this.startNevaContract();
@@ -2640,7 +2645,9 @@ export class Game {
       : this.mode === "delivery"
       ? `📦 ${CARGO_NAMES[o.id % CARGO_NAMES.length]} · ₽${o.reward}`
       : this.mode === "drift-trial" ? "DRIFT TRIAL · комбо до ×5" : `TIME ATTACK · КП ${Math.min(this.timeAttackCheckpointIndex + 1, this.timeAttackCourse?.checkpoints.length ?? 5)}/${this.timeAttackCourse?.checkpoints.length ?? 5}`;
-    if (this.activeEvent) this.hOrder.textContent = this.careerHudGoal;
+    if (this.activeEvent) this.hOrder.textContent = this.activeEvent.mode === "time-attack"
+      ? `Этап ${this.activeEvent.number} · КП ${Math.min(this.timeAttackCheckpointIndex + 1, 5)}/5`
+      : this.careerHudGoal;
     const t = Math.max(0, this.timeLeft);
     const seconds = Math.ceil(t);
     this.hTimer.textContent = radio ? `⏱ ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : this.mode === "time-attack"
