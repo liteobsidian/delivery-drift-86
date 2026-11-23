@@ -658,26 +658,31 @@ export class Game {
     const now = new Date();
     const week = utcWeekKey(now);
     const completed = p.weeklyCompletions[week] ?? [];
-    const featuredWeekly = weeklyRoutes(now, p.mapId).find((route) => !completed.includes(route.id));
+    const routes = weeklyRoutes(now, p.mapId);
+    const featuredWeekly = routes.find((route) => !completed.includes(route.id));
     const showWeeklyEvent = !!featuredWeekly && p.weeklyEventWeek !== week;
     const dismissWeeklyEvent = () => {
       p.weeklyEventWeek = week;
       this.persistProfile();
     };
+    const links = [
+      ["cars", "Машины", "M3 14l2-5h14l2 5v4H3z M6 18v2m12-2v2M6 14h2m8 0h2"],
+      ["garage", "Гараж", "M2 10l10-6 10 6M4 10v10h16V10M8 20v-7h8v7m-8-4h8"],
+      ["profile", "Профиль", "M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0z M4 21v-2a8 6 0 0 1 16 0v2"],
+    ];
     this.screenEl.style.display = "grid";
     this.screenEl.innerHTML = `
       <div class="title-box home-box">
         <button class="btn home-settings" data-a="settings" aria-label="Настройки">⚙</button>
         <div class="logo-sub">НОЧНОЙ КУРЬЕР · ${mapName.toUpperCase()}</div>
         <h1 class="logo">DELIVERY<span> DRIFT</span> <em>86</em></h1>
-        <p class="tagline">Доставляй быстро. Дрифти жёстко. Не разбей груз.</p>
         <div class="home-place"><span class="home-place-pin">◉</span><span>${mapName}</span><i>·</i><span>${this.currentCarSpec().name.replace("Toyota ", "")}</span></div>
         <div class="home-actions">
           <button class="btn primary home-play" data-a="play">ВЫЕХАТЬ <span>→</span></button>
           <div class="home-links">
-            <button class="btn" data-a="cars">МАШИНЫ</button>
-            <button class="btn" data-a="garage">ГАРАЖ</button>
-            <button class="btn" data-a="profile">ПРОФИЛЬ</button>
+            ${links.map(([action, label, path]) => `<button class="btn" data-a="${action}">
+              <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"/></svg>
+              <span>${label}</span></button>`).join("")}
           </div>
         </div>
         <div class="home-career"><span>₽${rubles.format(p.money)}</span><span>Карьера · ${Object.keys(p.career).length}/${EVENTS.length}</span><span>${p.unlockedAch.length}/${ACHIEVEMENTS.length} достижений</span></div>
@@ -685,10 +690,10 @@ export class Game {
       <div class="showroom-stage home-showroom" data-showroom-stage aria-hidden="${showWeeklyEvent}">
         ${this.showroomStatus()}
       </div>
-      ${showWeeklyEvent && featuredWeekly ? `<div class="weekly-event-shade"><section class="weekly-event-card" role="dialog" aria-modal="true" aria-labelledby="weekly-event-title">
-        <div class="journey-eyebrow">СОБЫТИЕ НЕДЕЛИ · UTC ${week}</div>
+      ${showWeeklyEvent && featuredWeekly ? `<div class="weekly-event-shade"><section class="weekly-event-card" style="--event-art:url('${MAP_PREVIEWS[p.mapId]}')" role="dialog" aria-modal="true" aria-labelledby="weekly-event-title">
+        <div class="journey-eyebrow">СОБЫТИЕ НЕДЕЛИ · ${mapName}</div>
         <h2 id="weekly-event-title">${featuredWeekly.title}</h2>
-        <p>Особый маршрут недели уже ждёт. Успей доехать за ${Math.round(featuredWeekly.timeLimit)} секунд.</p>
+        <p>Доставь заказ за ${Math.round(featuredWeekly.timeLimit)} с. Пройдено маршрутов за неделю: ${routes.filter(route => completed.includes(route.id)).length} из ${routes.length}.</p>
         <div class="weekly-event-actions"><button class="btn" data-a="event-dismiss">ПОЗЖЕ</button><button class="btn primary" data-a="event-start">НАЧАТЬ ЗАЕЗД →</button></div>
       </section></div>` : ""}`;
     if (showWeeklyEvent) {
@@ -712,48 +717,46 @@ export class Game {
 
   private renderPlay(): void {
     const upcoming = nextEvent(this.profile.career);
+    const activities = [
+      { action: "neva", title: NEVA_CONTRACT.title, detail: "Петербург · два поворота с премией за занос", art: "spb" },
+      { action: "activity:delivery", title: "Доставка", detail: "Бесконечные заказы · деньги на гараж", art: "tokyo" },
+      { action: "activity:drift-trial", title: "Drift Trial", detail: "60 секунд · комбо ×5 · Silvia за серебро", art: "yokohama" },
+      { action: "activity:time-attack", title: "Time Attack", detail: "Круг на время · Evo за золото", art: "sochi" },
+      { action: "activity:radio-silence", title: RADIO_TITLE, detail: "2 минуты · три погони за пакетами данных", art: "kazan" },
+    ] as const;
     this.screenEl.style.display = "flex";
-    this.screenEl.innerHTML = `<div class="panel journey-panel">
-      <div class="journey-eyebrow">НОЧНОЙ КУРЬЕР · ${WORLD_MAPS.find((map) => map.id === this.profile.mapId)?.name}</div>
-      <h2>ВЫБЕРИ ЗАЕЗД</h2>
-      <button type="button" class="career-entry" data-a="career" style="--district-image:url('${MAP_PREVIEWS[upcoming?.map ?? "sochi"]}')">
-        <span><small>ЧЕМПИОНАТ · 5 ГЛАВ</small><b>Карьера</b></span>
-        <strong>${upcoming ? "Этап " + upcoming.number + " · " + upcoming.title : "Все этапы пройдены"}</strong><i class="career-arrow" aria-hidden="true"></i>
-      </button>
-      <button type="button" class="neva-feature activity-card" data-a="neva">
-        <b>ДОСТАВЬ КРАСИВО</b><span>Петербург · турбожига · два поворота с премией за занос</span>
-        <i aria-hidden="true">→</i>
-      </button>
-      <div class="activity-picker journey-activities">
-        <button class="activity-card" data-a="activity:delivery"><b>ДОСТАВКА</b><span>Бесконечные заказы, деньги и развитие гаража</span><i>Выбрать →</i></button>
-        <button class="activity-card" data-a="activity:drift-trial"><b>DRIFT TRIAL</b><span>60 секунд · комбо до ×5 · ₽ за очки · Silvia за серебро</span><i>Выбрать →</i></button>
-        <button class="activity-card" data-a="activity:time-attack"><b>TIME ATTACK</b><span>Фиксированный круг с контрольными точками · медали и Evo за золото</span><i>Выбрать →</i></button>
-        <button class="activity-card" data-a="activity:radio-silence"><b>${RADIO_TITLE.toUpperCase()}</b><span>2 минуты · три погони · пакеты данных и премия за отрыв</span><i>Выбрать →</i></button>
-      </div>
-      <button class="btn" data-a="back">← НАЗАД</button>
-    </div>`;
+    this.screenEl.innerHTML = `<section class="race-deck" aria-labelledby="race-choice-title">
+      <header class="race-head"><button type="button" class="race-back" data-a="back" aria-label="Назад в меню">‹</button>
+        <h2 id="race-choice-title">Выбери заезд</h2></header>
+      <div class="race-program">
+        <button type="button" class="race-poster" data-a="career" style="--poster:url('${MAP_PREVIEWS[upcoming?.map ?? "sochi"]}')">
+          <span class="race-poster-copy"><small>Чемпионат · 5 глав</small><b>Карьера</b>
+          <span>${upcoming ? "Этап " + upcoming.number + " · " + upcoming.title : "Все этапы пройдены"}</span></span>
+          <span class="race-poster-action">К этапам <i aria-hidden="true">→</i></span>
+        </button>
+        <div class="race-menu" role="group" aria-label="Игровые режимы">${activities.map(mode => `
+          <button type="button" class="race-mode" data-a="${mode.action}">
+            <img src="${MAP_PREVIEWS[mode.art]}" alt=""><span><b>${mode.title}</b><small>${mode.detail}</small></span><i aria-hidden="true">›</i>
+          </button>`).join("")}</div>
+      </div></section>`;
     this.bindScreen({ career: () => this.openCareer(), back: () => this.showScreen("title"), neva: () => this.showScreen("neva-contract") });
   }
 
   private renderNevaContract(): void {
     const best = this.profile.neva.bestScore;
     this.screenEl.style.display = "flex";
-    this.screenEl.innerHTML = `<section class="panel neva-brief">
-      <div class="neva-brief-copy">
-        <div class="journey-eyebrow">ПЕТЕРБУРГ · КОНТРАКТ</div>
-        <h2>${NEVA_CONTRACT.title}</h2>
-        <p>Доставь груз через Неву на турбожиге. Пройди в заносе между золотыми линиями, чтобы заработать ₽${NEVA_CONTRACT.sectorBonus} за поворот.</p>
-        <p class="neva-goal">${this.nevaTarget === null ? `Лимит ${NEVA_CONTRACT.timeLimit} с` : `Результат друга · ${this.nevaTarget} очк.`}${best ? ` · Твой рекорд ${best}` : ""}</p>
-        <div class="neva-actions">
-          <button class="btn primary" data-a="start-neva">НАЧАТЬ ЗАЕЗД</button>
-          <button class="btn" data-a="back">К РЕЖИМАМ</button>
-        </div>
-      </div>
-      <figure class="neva-route">
-        <canvas width="350" height="235" role="img" aria-label="Маршрут через Неву с двумя поворотами"></canvas>
-        <figcaption>1 · Дворцовый поворот <span>2 · Съезд с моста</span></figcaption>
-      </figure>
-    </section>`;
+    this.screenEl.innerHTML = `<section class="race-deck neva-brief" aria-labelledby="contract-title">
+      <header class="race-head"><button type="button" class="race-back" data-a="back" aria-label="К режимам">‹</button>
+        <div><small>Петербург · контракт</small><h2 id="contract-title">${NEVA_CONTRACT.title}</h2></div></header>
+      <div class="race-brief-body">
+        <figure><canvas width="350" height="235" role="img" aria-label="Маршрут через Неву с двумя поворотами"></canvas>
+          <figcaption>1 · Дворцовый поворот <span>2 · Съезд с моста</span></figcaption></figure>
+        <div class="race-brief-info"><div class="race-brief-scroll">
+          <small>Премия за поворот</small><strong>+₽${NEVA_CONTRACT.sectorBonus}</strong>
+          <p>Доставь груз через Неву на турбожиге. Пройди в заносе между золотыми линиями.</p>
+          <p>Лимит ${NEVA_CONTRACT.timeLimit} с${this.nevaTarget === null ? "" : ` · Результат друга · ${this.nevaTarget} очк.`}${best ? ` · Твой рекорд ${best}` : ""}</p>
+        </div><button type="button" class="race-launch" data-a="start-neva">Начать заезд <i aria-hidden="true">→</i></button></div>
+      </div></section>`;
     drawNevaPreview(this.screenEl.querySelector("canvas")!);
     this.bindScreen({ "start-neva": () => this.startNevaContract(), back: () => this.showScreen("play") });
   }
@@ -799,14 +802,16 @@ export class Game {
         </div>
         <div class="career-stages" role="group" aria-label="Этапы · ${district.name}">${stages}</div>
         <aside class="career-brief" aria-label="Задание этапа">
-          <div class="career-docket"><small>ЭТАП ${String(event.number).padStart(2,"0")} / 15</small><strong>${MODE_NAMES[event.mode]}</strong></div>
+          <div class="career-objectives"><div class="career-docket"><small>ЭТАП ${String(event.number).padStart(2,"0")} / 15</small><strong>${MODE_NAMES[event.mode]}</strong></div>
           <h3>${event.title}</h3>
           <ul>${[1,2,3].map(t => `<li><b aria-label="Звёзд: ${t}">${"★".repeat(t)}</b><span>${goal(event,t)}</span></li>`).join("")}</ul>
-          <div class="career-prize"><span>За новую звезду</span><strong>+ ₽${100+50*event.chapter}</strong></div>
+          <div class="career-prize"><span>За новую звезду</span><strong>+ ₽${100+50*event.chapter}</strong></div></div>
           <button class="career-launch" type="button" data-a="launch" ${available ? "" : "disabled"}><b>${available ? stars[event.id] ? "Улучшить результат" : "На старт" : "Пройди этап " + (event.number-1)}</b><i class="career-arrow" aria-hidden="true"></i></button>
         </aside>
       </div></section>`;
     this.bindScreen(buttons);
+    const activeChapter = this.screenEl.querySelector<HTMLElement>(".career-mast nav [aria-pressed=true]");
+    activeChapter?.scrollIntoView({ inline: "nearest", block: "nearest" });
     const cover = this.screenEl.querySelector<HTMLElement>(".career-city")!;
     let startX = 0;
     cover.onpointerdown = e => { startX = e.clientX; cover.setPointerCapture(e.pointerId); };
@@ -840,28 +845,44 @@ export class Game {
   }
 
   private renderTracks(): void {
-    const cards = WORLD_MAPS.map((map,index) => {
-      const locked = !mapOpen(map.id,this.profile);
-      return `<button class="map-card track-card ${this.profile.mapId === map.id ? "selected" : ""} ${locked ? "locked" : ""}" data-a="map:${map.id}" ${locked ? "disabled" : ""} aria-pressed="${this.profile.mapId === map.id}">
-        <span class="track-art">
-          <img src="${MAP_PREVIEWS[map.id]}" alt="" width="768" height="340" loading="lazy" decoding="async">
-          ${locked ? "<b class='track-lock' aria-hidden='true'>🔒</b>" : ""}
-        </span>
-        <b>${map.name}</b>
-        <span>${locked ? "Открывается в карьере" : map.description}</span>
-        ${locked ? `<span class="track-progress">Пройди этап ${index*3} · ${EVENTS[index*3-1]?.title}</span>` : `<span class="track-enter">${this.profile.mapId === map.id ? "ТЕКУЩАЯ ЛОКАЦИЯ" : "ВЫБРАТЬ МЕСТО"}</span>`}
+    const cards = WORLD_MAPS.map((map, index) => {
+      const locked = !mapOpen(map.id, this.profile);
+      const selected = this.profile.mapId === map.id;
+      return `<button type="button" class="race-track" data-a="map:${map.id}" ${locked ? "disabled" : ""} aria-pressed="${selected}">
+        <span class="track-art"><img src="${MAP_PREVIEWS[map.id]}" alt="" width="768" height="340" decoding="async"></span>
+        <span class="race-track-copy"><small>Глава ${String(index + 1).padStart(2, "0")}${selected ? " · Текущая локация" : ""}</small><b>${map.name}</b>
+          <span>${locked ? `Пройди этап ${index * 3} · ${EVENTS[index * 3 - 1]?.title}` : map.description}</span></span>
+        <span class="race-track-action">${locked ? "Закрыто" : "Начать заезд"}<i aria-hidden="true">${locked ? "◇" : "→"}</i></span>
       </button>`;
     }).join("");
-    const modeName = MODE_NAMES[this.pendingMode];
     this.screenEl.style.display = "flex";
-    this.screenEl.innerHTML = `<div class="panel journey-panel tracks-panel">
-      <div class="journey-eyebrow">${modeName.toUpperCase()}</div>
-      <h2>ВЫБЕРИ МЕСТО</h2>
-      <p class="dim">Финал каждой главы карьеры открывает следующий район.</p>
-      <div class="map-picker track-picker">${cards}</div>
-      <button class="btn" data-a="back">← К РЕЖИМАМ</button>
-    </div>`;
-    this.bindScreen({ back: () => this.showScreen("play") });
+    this.screenEl.innerHTML = `<section class="race-deck" aria-labelledby="track-choice-title">
+      <header class="race-head"><button type="button" class="race-back" data-a="back" aria-label="К режимам">‹</button>
+        <div><small>${MODE_NAMES[this.pendingMode]}</small><h2 id="track-choice-title">Выбери место</h2></div>
+        <div class="race-stepper"><button type="button" data-a="prev" aria-label="Предыдущая локация">‹</button>
+        <button type="button" data-a="next" aria-label="Следующая локация">›</button></div></header>
+      <div class="race-track-strip" role="region" aria-label="Локации" tabindex="0">${cards}</div></section>`;
+    const strip = this.screenEl.querySelector<HTMLElement>(".race-track-strip")!;
+    const stepper = this.screenEl.querySelector<HTMLElement>(".race-stepper")!;
+    const previous = stepper.querySelector<HTMLButtonElement>('[data-a="prev"]')!;
+    const next = stepper.querySelector<HTMLButtonElement>('[data-a="next"]')!;
+    const move = (direction: number) => {
+      const cardWidth = strip.firstElementChild!.getBoundingClientRect().width;
+      const gap = parseFloat(getComputedStyle(strip).columnGap);
+      strip.scrollBy({
+        left: direction * (cardWidth + gap),
+        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+      });
+    };
+    const update = () => {
+      previous.disabled = strip.scrollLeft <= 1;
+      next.disabled = strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1;
+    };
+    strip.addEventListener("scroll", update, { passive: true });
+    const selected = strip.querySelector<HTMLElement>('[aria-pressed="true"]');
+    selected?.scrollIntoView({ inline: "nearest", block: "nearest" });
+    update();
+    this.bindScreen({ back: () => this.showScreen("play"), prev: () => move(-1), next: () => move(1) });
   }
 
   private renderCars(): void {
@@ -873,7 +894,7 @@ export class Game {
     this.screenEl.innerHTML = `
       <section class="motor-garage" aria-labelledby="garage-title">
         <header class="garage-header">
-          <button class="btn small" type="button" data-a="back">‹ Назад</button>
+          <button class="btn small" type="button" data-a="back" aria-label="Назад">←</button>
           <h2 id="garage-title">Выбор машины</h2>
           <span class="garage-balance" aria-label="Баланс">₽${rubles.format(this.profile.money)}</span>
         </header>
@@ -923,15 +944,16 @@ export class Game {
       : !owned && shortfall > 0 ? `Не хватает ₽${rubles.format(shortfall)}` : "";
     const detail = this.screenEl.querySelector<HTMLElement>(".garage-detail")!;
     detail.innerHTML = `
-      <div><p class="garage-status">${owned ? "В гараже" : locked ? "Закрыта" : "Доступна"}</p>
-      <h3 id="garage-car-name">${car.name}</h3></div>
+      <div class="garage-inspection"><div class="garage-ingress"><span class="car-counter">${String(this.garageIndex + 1).padStart(2, "0")} / ${String(CARS.length).padStart(2, "0")}</span><p class="garage-status">${owned ? "В гараже" : locked ? "Закрыта" : "Доступна"}</p></div>
+      <h3 id="garage-car-name">${car.name}</h3>
       <dl class="garage-specs">
         <div><dt>Скорость</dt><dd>${speedKmh(tuned.topSpeed)} <small>км/ч</small></dd></div>
         <div><dt>Разгон</dt><dd>${tuned.accel.toFixed(1).replace(".", ",")}</dd></div>
         <div><dt>Сцепление</dt><dd>${tuned.grip.toFixed(1).replace(".", ",")}</dd></div>
       </dl>
-      <div class="garage-purchase">${action}${note ? `<p>${note}</p>` : ""}</div>
-      ${car.id === NEVA_CAR.id ? `<a class="garage-credit" href="https://sketchfab.com/3d-models/lada-2107-low-poly-5959908e4e304234b22f3436291cb588" target="_blank" rel="noopener">Кузов · Name’s_Been_Classified · CC BY 4.0</a>` : ""}`;
+      ${note ? `<p class="garage-unlock">${note}</p>` : ""}
+      ${car.id === NEVA_CAR.id ? `<a class="garage-credit" href="https://sketchfab.com/3d-models/lada-2107-low-poly-5959908e4e304234b22f3436291cb588" target="_blank" rel="noopener">Кузов · Name’s_Been_Classified · CC BY 4.0</a>` : ""}</div>
+      <div class="garage-purchase">${action}</div>`;
     this.bindScreen({}, detail);
     for (const tab of this.screenEl.querySelectorAll<HTMLButtonElement>(".garage-tab")) {
       const active = tab.dataset.a === `inspect:${car.id}`;
@@ -991,12 +1013,13 @@ export class Game {
     const detail = this.screenEl.querySelector<HTMLElement>(".pit-detail")!;
     detail.dataset.part = key;
     detail.innerHTML = `
-      <small>${body ? "ОБСЛУЖИВАНИЕ" : `ТЮНИНГ / УРОВЕНЬ ${level} ИЗ ${UPGRADE_MAX}`}</small>
+      <div class="pit-readout"><small>${body ? "ОБСЛУЖИВАНИЕ" : `ТЮНИНГ / УРОВЕНЬ ${level} ИЗ ${UPGRADE_MAX}`}</small>
       <h3>${def?.name ?? "Кузов"}</h3>
+      <div class="pit-level" aria-hidden="true" style="--completed:${body ? Math.max(0, Math.min(100, this.car.hp)) : 100 * level / UPGRADE_MAX}%"></div>
       <div class="pit-stat"><span>${metric}</span><b>${from}${complete ? "" : ` <em>→ ${to}</em>`} ${unit}</b></div>
+      ${missing ? `<span class="pit-missing">Не хватает ₽ ${rubles.format(missing)}</span>` : ""}</div>
       <button class="pit-install" data-a="${body ? "repair" : `up:${key}`}" ${complete || missing ? "disabled" : ""}>
-        ${complete ? (body ? "Кузов исправен" : "Макс. уровень") : `${body ? "Ремонт" : "Установить"} <b>₽ ${rubles.format(cost)}</b>`}</button>
-      ${missing ? `<span class="pit-missing">Не хватает ₽ ${rubles.format(missing)}</span>` : ""}`;
+        ${complete ? (body ? "Кузов исправен" : "Макс. уровень") : `${body ? "Ремонт" : "Установить"} <b>₽ ${rubles.format(cost)}</b>`}</button>`;
     this.bindScreen({ repair: () => this.repairCar() }, detail);
     for (const tab of this.screenEl.querySelectorAll<HTMLButtonElement>(".pit-rack button")) {
       const selected = tab.dataset.a === `part:${key}`;
@@ -1021,40 +1044,44 @@ export class Game {
 
   private renderOrders(): void {
     if (this.orders.length === 0) this.genOrders();
-    const cards = this.orders.map((o, i) => `
-      <div class="order-card" data-a="take:${i}">
-        <div class="order-title">${o.title}</div>
-        <div class="order-cargo">📦 ${CARGO_NAMES[o.id % CARGO_NAMES.length]}</div>
-        <div class="order-meta">
-          <span>расстояние ~${Math.round(o.distance)} м</span>
-          <span>лимит ${o.timeLimit} с</span>
-          <span class="frag ${o.fragility > 1.3 ? "high" : o.fragility > 1 ? "mid" : ""}">хрупкость ×${o.fragility.toFixed(1)}</span>
-        </div>
-        <div class="order-reward">₽${o.reward}+</div>
-      </div>`).join("");
+    const cards = this.orders.map((order, i) => `
+      <button type="button" class="race-order" data-a="take:${i}">
+        <span class="race-order-copy"><small>${CARGO_NAMES[order.id % CARGO_NAMES.length]}</small><b>${order.title}</b>
+          <span>≈ ${Math.round(order.distance)} м · ${order.timeLimit} с · Хрупкость ×${order.fragility.toFixed(1)}</span></span>
+        <span class="race-pay"><small>Выплата</small><b>₽${order.reward}+</b></span><i aria-hidden="true">›</i>
+      </button>`).join("");
     this.screenEl.style.display = "flex";
-    this.screenEl.innerHTML = `
-      <div class="panel orders">
-        <h2>ВЫБОР ЗАКАЗА</h2>
-        <p class="dim">Дальний заказ платит больше, но груз дольше трясётся. Выбирай маршрут с умом.</p>
-        <div class="order-cards">${cards}</div>
-        <button class="btn" data-a="back">← В ГАРАЖ</button>
-      </div>`;
+    this.screenEl.innerHTML = `<section class="race-deck" aria-labelledby="orders-title">
+      <header class="race-head"><button type="button" class="race-back" data-a="back" aria-label="В гараж">‹</button>
+        <h2 id="orders-title">Выбор заказа</h2></header>
+      <div class="race-dispatch">
+        <div class="race-poster" style="--poster:url('${MAP_PREVIEWS[this.profile.mapId]}')">
+          <div class="race-poster-copy"><small>Служба доставки</small><b>${WORLD_MAPS.find(map => map.id === this.profile.mapId)?.name}</b></div></div>
+        <div class="race-menu" role="group" aria-label="Доступные заказы">${cards}</div>
+      </div></section>`;
     this.bindScreen({ back: () => this.showScreen("garage") });
   }
 
   private renderPaused(): void {
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
-      <div class="panel pause">
-        <h2>ПАУЗА</h2>
-        <button class="btn primary" data-a="resume">ПРОДОЛЖИТЬ</button>
-        <button class="btn" data-a="retry">${this.mode === "delivery" && !this.nevaRun ? "ЗАНОВО ЗАКАЗ" : "ЗАНОВО ЗАЕЗД"}</button>
-        <button class="btn" data-a="help">❓ КАК ИГРАТЬ</button>
-        <button class="btn" data-a="settings">⚙ НАСТРОЙКИ</button>
-        <button class="btn" data-a="sound">${this.profile.muted ? "🔇 ВКЛ ЗВУК" : "🔊 ВЫКЛ ЗВУК"}</button>
-        <button class="btn" data-a="quit">В МЕНЮ</button>
-      </div>`;
+      <section class="pit-pause" aria-labelledby="pause-heading">
+        <header style="--pause-art:url('${MAP_PREVIEWS[this.world.mapId]}')">
+          <span>${WORLD_MAPS.find(map => map.id === this.world.mapId)?.name}</span>
+          <h2 id="pause-heading">Пауза</h2>
+          <strong>${this.nevaRun ? NEVA_CONTRACT.title : MODE_NAMES[this.mode]}</strong>
+        </header>
+        <div class="pit-actions">
+          <nav aria-label="Действия в заезде">
+            <button data-a="retry">${this.mode === "delivery" && !this.nevaRun ? "Заново заказ" : "Заново заезд"}</button>
+            <button data-a="help">Как играть</button>
+            <button data-a="settings">Настройки</button>
+            <button data-a="sound">${this.profile.muted ? "Включить звук" : "Выключить звук"}</button>
+            <button data-a="quit">В главное меню</button>
+          </nav>
+          <button class="pit-primary" data-a="resume">Продолжить <i aria-hidden="true">›</i></button>
+        </div>
+      </section>`;
     this.bindScreen({
       resume: () => this.togglePause(),
       retry: () => {
@@ -1085,12 +1112,12 @@ export class Game {
     const p = this.profile;
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
-      <div class="panel settings">
-        <header class="station-head"><button data-a="back" aria-label="Назад">‹</button><h2>Настройки</h2></header>
-        <div class="audio-console"><div class="volume-face"><small>ГРОМКОСТЬ</small><strong id="vol-label">${Math.round(p.volume * 100)}%</strong></div>
-        <div class="audio-controls"><label for="vol-slider">Общая громкость</label><input type="range" id="vol-slider" min="0" max="100" value="${Math.round(p.volume * 100)}">
-        <button class="sound-switch" role="switch" aria-checked="${!p.muted}" data-a="sound"><span>Звук</span><b>${p.muted ? "Выкл" : "Вкл"}</b></button></div></div>
-      </div>`;
+      <section class="driver-hub dh-settings" aria-labelledby="dh-title">
+        <header class="dh-header"><button class="dh-back" data-a="back" aria-label="Назад">‹</button><h2 id="dh-title">Настройки</h2></header>
+        <div class="dh-scroll dh-soundroom"><div class="dh-soundface"><span>Уровень звука</span><strong id="vol-label">${Math.round(p.volume * 100)}%</strong><div class="dh-wave" aria-hidden="true">${[28,42,62,48,80,54,92,70,46,34,62,84,54,38,20].map(h => `<i style="height:${h}%"></i>`).join("")}</div></div>
+          <div class="dh-mixer"><label for="vol-slider">Общая громкость</label><input type="range" id="vol-slider" min="0" max="100" value="${Math.round(p.volume * 100)}"><div class="dh-limits" aria-hidden="true"><span>0%</span><span>100%</span></div>
+          <button class="sound-switch dh-switch" role="switch" aria-checked="${!p.muted}" data-a="sound"><span>Звук</span><b>${p.muted ? "Выкл" : "Вкл"}</b><i aria-hidden="true"></i></button></div></div>
+      </section>`;
     this.bindScreen({
       back: () => this.showScreen(this.settingsFrom === "paused" ? "paused" : "title"),
       sound: () => {
@@ -1118,69 +1145,79 @@ export class Game {
 
   private renderAchievements(): void {
     const p = this.profile;
-    const rows = ACHIEVEMENTS.map((a) => {
+    const tiers = { bronze: "Бронза", silver: "Серебро", gold: "Золото" };
+    const total = ACHIEVEMENTS.length;
+    const earned = ACHIEVEMENTS.filter(a => p.unlockedAch.includes(a.id)).length;
+    const cards = ACHIEVEMENTS.map(a => {
       const got = p.unlockedAch.includes(a.id);
-      const prog = a.progress(p);
-      const tierLabel = a.tier === "bronze" ? "БРОНЗА" : a.tier === "silver" ? "СЕРЕБРО" : a.tier === "gold" ? "ЗОЛОТО" : "";
-      return `<div class="ach-row ${got ? "got" : ""} ${a.tier ? `tier-${a.tier}` : ""}">
-        <div class="ach-ico ${a.tier ? `tier-${a.tier}` : ""}">${a.icon}</div>
-        <div class="ach-info"><div class="ach-title"><b>${a.name}</b>${tierLabel ? `<small class="ach-tier ${a.tier}">${tierLabel}</small>` : ""}</div><span>${a.desc}</span></div>
-        <div class="ach-prog">${prog ?? ""}</div>
-      </div>`;
+      return `<article class="dh-trophy ${got ? "earned" : "locked"}">
+        <span aria-hidden="true" class="dh-medal ${a.tier ?? ""}">${a.icon}</span>
+        <div><small>${got ? "Открыто" : "В работе"}${a.tier ? ` · ${tiers[a.tier]}` : ""}</small>
+        <h3>${a.name}</h3><p>${a.desc}</p><strong>${a.progress(p) ?? ""}</strong></div></article>`;
     }).join("");
     this.screenEl.style.display = "flex";
-    this.screenEl.innerHTML = `
-      <div class="panel achievements">
-        <header class="station-head"><button data-a="back" aria-label="Назад в профиль">‹</button><h2>Достижения</h2><span>Открыто ${p.unlockedAch.length} / ${ACHIEVEMENTS.length}</span></header>
-        <progress class="trophy-meter" aria-label="Открытые достижения" value="${p.unlockedAch.length}" max="${ACHIEVEMENTS.length}"></progress>
-        <div class="ach-list">${rows}</div>
-      </div>`;
-    this.bindScreen({ back: () => this.showScreen("profile") });
+    this.screenEl.innerHTML = `<section class="driver-hub" aria-labelledby="dh-title">
+      <header class="dh-header"><button class="dh-back" data-a="back" aria-label="Назад в профиль">‹</button>
+      <h2 id="dh-title">Достижения</h2></header>
+      <div class="dh-ach-layout"><aside class="dh-collection"><small>Коллекция</small><strong>${earned}<em>/ ${total}</em></strong>
+      <progress aria-label="Открытые достижения" value="${earned}" max="${total}"></progress>
+      <div class="dh-filter"><button data-a="all" aria-pressed="true">Все</button><button data-a="earned" aria-pressed="false">Открытые</button></div></aside>
+      <div class="dh-scroll dh-shelf" tabindex="0" aria-label="Коллекция достижений">${cards}<p class="dh-empty" hidden>Здесь появятся открытые тобой достижения.</p></div></div></section>`;
+    const filter = (onlyEarned: boolean) => {
+      this.screenEl.querySelectorAll<HTMLElement>(".dh-trophy.locked").forEach(card => card.hidden = onlyEarned);
+      this.screenEl.querySelector<HTMLElement>(".dh-empty")!.hidden = !onlyEarned || earned > 0;
+      this.screenEl.querySelector('[data-a="all"]')!.setAttribute("aria-pressed", String(!onlyEarned));
+      this.screenEl.querySelector('[data-a="earned"]')!.setAttribute("aria-pressed", String(onlyEarned));
+      this.screenEl.querySelector(".dh-shelf")!.scrollTop = 0;
+    };
+    this.bindScreen({ back: () => this.showScreen("profile"), all: () => filter(false), earned: () => filter(true) });
   }
 
   private renderProfile(): void {
-    const records = this.profile.records;
-    const rows = Object.keys(records).sort().flatMap((key) => {
+    const p = this.profile;
+    const rows = Object.keys(p.records).sort().flatMap(key => {
       const entry = recordDetails(key);
       if (!entry) return [];
       const { mapId, mode, car } = entry;
-      const mapName = WORLD_MAPS.find((item) => item.id === mapId)!.name;
-      const modeName = MODE_NAMES[mode];
-      const value = records[key];
+      const mapName = WORLD_MAPS.find(item => item.id === mapId)!.name;
+      const value = p.records[key];
       const rounded = Math.round(value).toLocaleString("ru-RU");
       const metric = mode === "time-attack" ? `${value.toFixed(1)} с` : mode === "delivery" ? `₽${rounded}` : `${rounded} очк.`;
-      return [`<div class="record-row"><b>${modeName}</b><span>${mapName} · ${car.name}</span><strong>${metric}</strong></div>`];
+      return [`<article class="record-row dh-record" style="--course:url('${MAP_PREVIEWS[mapId]}')"><small>${MODE_NAMES[mode]}</small><strong>${metric}</strong><h3>${mapName}</h3><p>${car.name}</p></article>`];
     });
-    if (this.profile.neva.bestScore) rows.unshift(
-      `<div class="record-row"><b>${NEVA_CONTRACT.title}</b><span>Петербург · LADA 2107 Turbo</span><strong>${this.profile.neva.bestScore} очк.</strong></div>`,
+    if (p.neva.bestScore) rows.unshift(
+      `<article class="record-row dh-record dh-neva"><small>${NEVA_CONTRACT.title}</small><strong>${p.neva.bestScore} очк.</strong><h3>Петербург</h3><p>LADA 2107 Turbo</p></article>`,
     );
-    const recordRows = rows.join("") || `<p class="dim">Лучший результат появится здесь после первого завершённого заезда.</p>`;
     const now = new Date();
     const week = utcWeekKey(now);
-    const routes = weeklyRoutes(now, this.profile.mapId);
-    const completed = this.profile.weeklyCompletions[week] ?? [];
-    const routeRows = routes.map((route, i) => {
+    const routes = weeklyRoutes(now, p.mapId);
+    const completed = p.weeklyCompletions[week] ?? [];
+    const weeklyCards = routes.map((route, i) => {
       const done = completed.includes(route.id);
-      return `<div class="weekly-row ${done ? "done" : ""}">
-        <div><b>${route.title}</b><span>${route.timeLimit} сек · ${Math.round(route.distance)} м${done ? " · уже пройден" : ""}</span></div>
-        <button class="btn small ${done ? "" : "primary"}" data-a="weekly:${i}">${done ? "ПОВТОРИТЬ" : "СТАРТ"}</button>
-      </div>`;
+      return `<article class="dh-route"><div><small>${done ? "Уже пройден" : "Доступен"}</small><h3>${route.title}</h3><p>${route.timeLimit} сек · ${Math.round(route.distance)} м</p></div>
+      <button data-a="weekly:${i}">${done ? "Повторить" : "Старт"} <span aria-hidden="true">›</span></button></article>`;
     }).join("");
+    const car = this.currentCarSpec();
     this.screenEl.style.display = "flex";
-    this.screenEl.innerHTML = `<div class="panel records-panel">
-      <div class="journey-eyebrow">ПРОФИЛЬ · ${this.currentCarSpec().name.replace("Toyota ", "")}</div>
-      <h2>ЛИЧНЫЕ РЕКОРДЫ</h2>
-      <p class="dim">Лучшие результаты по карте, режиму и машине · неделя UTC ${week}</p>
-      <div class="record-list">${recordRows}</div>
-      <h2>НЕДЕЛЬНЫЕ МАРШРУТЫ</h2>
-      <p class="dim">Новый набор каждый понедельник по UTC · обычные доставки доступны без ограничений</p>
-      <div class="weekly-list">${routeRows}</div>
-      <button class="btn" data-a="achievements">ДОСТИЖЕНИЯ ${this.profile.unlockedAch.length}/${ACHIEVEMENTS.length}</button>
-      <button class="btn" data-a="back">← В МЕНЮ</button>
-    </div>`;
+    this.screenEl.innerHTML = `<section class="driver-hub" aria-labelledby="dh-title">
+      <header class="dh-header"><button class="dh-back" data-a="back" aria-label="В меню">‹</button><h2 id="dh-title">Профиль</h2>
+      <button class="dh-trophylink" data-a="achievements">Достижения <b>${p.unlockedAch.length}/${ACHIEVEMENTS.length}</b></button></header>
+      <div class="dh-profile-layout"><aside class="dh-license"><div class="dh-driver-car" style="--car:url('${new URL(`../assets/ui/roster/${car.id}.webp`, import.meta.url).href}')"><span>Моя машина</span><b>${car.name}</b></div>
+      <nav aria-label="Разделы профиля"><button data-a="records-tab" aria-pressed="true">Личные рекорды</button>
+      <button data-a="weekly-tab" aria-pressed="false">Недельные маршруты</button></nav></aside>
+      <div class="dh-scroll dh-profile-pane" data-pane="records" tabindex="0"><h3>Личные рекорды</h3><p>Лучшие результаты по карте, режиму и машине</p>
+      <div class="dh-records">${rows.join("") || `<div class="dh-debut" style="--course:url('${MAP_PREVIEWS[p.mapId]}')"><h3>Первый финиш</h3><p>Заверши заезд, чтобы поставить свой первый рекорд.</p></div>`}</div></div>
+      <div class="dh-scroll dh-profile-pane" data-pane="weekly" tabindex="0" hidden><h3>Недельные маршруты</h3><p>Неделя UTC ${week} · новый набор каждый понедельник. Обычные доставки доступны без ограничений.</p><div class="dh-routes">${weeklyCards}</div></div>
+      </div></section>`;
+    const selectPane = (name: string) => {
+      this.screenEl.querySelectorAll<HTMLElement>("[data-pane]").forEach(pane => {
+        pane.hidden = pane.dataset.pane !== name;
+        this.screenEl.querySelector(`[data-a="${pane.dataset.pane}-tab"]`)!.setAttribute("aria-pressed", String(!pane.hidden));
+      });
+    };
     this.bindScreen({
-      back: () => this.showScreen("title"),
-      achievements: () => this.showScreen("achievements"),
+      back: () => this.showScreen("title"), achievements: () => this.showScreen("achievements"),
+      "records-tab": () => selectPane("records"), "weekly-tab": () => selectPane("weekly"),
       ...Object.fromEntries(routes.map((route, i) => [`weekly:${i}`, () => this.startWeeklyRoute(route)])),
     });
   }
@@ -1201,26 +1238,58 @@ export class Game {
 
   private lastResult: {
     ok: boolean; lines: string[]; mode?: GameMode; title?: string; nevaScore?: number;
-  } = { ok: false, lines: [] };
+    metric: { label: string; value: string };
+    gauges?: { label: string; value: number }[];
+    record?: string;
+    rewards?: { label: string; amount: number }[];
+  } = { ok: false, lines: [], metric: { label: "", value: "" } };
 
   private renderResult(): void {
     const r = this.lastResult;
-    const share = r.nevaScore === undefined ? "" : `
-      <button class="btn" data-a="share-neva">БРОСИТЬ ВЫЗОВ ДРУГУ</button>
-      <div class="neva-share" hidden>
-        <input aria-label="Ссылка на вызов" readonly>
-        <small role="status"></small>
-      </div>`;
+    const event = this.activeEvent;
+    const title = r.title ?? (r.ok ? "ДОСТАВЛЕНО!" : "ЗАКАЗ ПРОВАЛЕН");
+    const district = WORLD_MAPS.find(map => map.id === this.world.mapId)!;
+    const primaryAction = event ? "career-next" : r.mode || this.nevaRun ? "replay" : "more";
+    const primaryLabel = event
+      ? r.ok ? event.number === EVENTS.length ? "К итогам карьеры" : "К этапам" : "Повторить этап"
+      : primaryAction === "replay" ? "Повторить заезд" : "Ещё заказ";
+    const detailRows = r.lines.map(line => {
+      const divider = line.indexOf(": ");
+      if (divider < 0 || line.includes("<")) return `<li>${line}</li>`;
+      return `<li class="finish-split"><span>${line.slice(0, divider + 1)}</span> <strong>${line.slice(divider + 2)}</strong></li>`;
+    }).join("");
+    const gauges = r.gauges?.map(({label,value}) => `<div class="finish-gauge">
+      <span>${label}</span><strong>${Math.round(value)}<small>%</small></strong>
+      <i aria-hidden="true" style="--level:${Math.max(0,Math.min(100,value))}%"></i></div>`).join("") ?? "";
+    const rewards = r.rewards?.map(({label,amount}) => `<div class="finish-reward"><span>${label}</span><b>₽${rubles.format(amount)}</b></div>`).join("") ?? "";
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `
-      <div class="panel result ${r.ok ? "ok" : "bad"}">
-        <h2>${r.title ?? (r.ok ? "ДОСТАВЛЕНО!" : "ЗАКАЗ ПРОВАЛЕН")}</h2>
-        <div class="result-lines">${r.lines.map((l) => `<div>${l}</div>`).join("")}</div>
-        ${this.activeEvent ? `<button class="btn primary" data-a="career-next">${r.ok ? this.activeEvent.number === EVENTS.length ? "К итогам карьеры" : "К этапам" : "Повторить этап"}</button>` : r.mode || this.nevaRun ? `<button class="btn primary" data-a="replay">ПОВТОРИТЬ ЗАЕЗД</button>` : `<button class="btn primary" data-a="more">ЕЩЁ ЗАКАЗ <kbd>ПРОБЕЛ</kbd></button>`}
-        ${share}
-        <button class="btn" data-a="garage">В ГАРАЖ</button>
-        <button class="btn" data-a="menu">В МЕНЮ</button>
-      </div>`;
+      <section class="race-finish result ${r.ok ? "ok" : "bad"}" aria-labelledby="finish-heading" style="--finish-art:url('${MAP_PREVIEWS[this.world.mapId]}')">
+        <div class="finish-poster">
+          <div class="finish-location"><i aria-hidden="true"></i>${district.name}</div>
+          <div class="finish-hero">
+            <span class="finish-status">${r.ok ? "Финиш" : "Попытка не удалась"}${event ? ` · Этап ${event.number}` : ""}</span>
+            <h2 id="finish-heading">${title}</h2>
+            <div class="finish-metric"><strong>${r.metric.value}</strong><span>${r.metric.label}</span></div>
+          </div>
+        </div>
+        <div class="finish-report">
+          <h3>Итоги заезда</h3>
+          <div class="finish-scroll" tabindex="0" aria-label="Подробности заезда">
+            ${gauges ? `<div class="finish-gauges">${gauges}</div>` : ""}
+            ${rewards ? `<div class="finish-rewards">${rewards}</div>` : ""}
+            ${r.record ? `<div class="finish-record"><i aria-hidden="true">★</i><span>Личный рекорд</span><strong>${r.record}</strong></div>` : ""}
+            <ul class="result-lines">${detailRows}</ul>
+          </div>
+          ${r.nevaScore === undefined ? "" : `<div class="neva-share" hidden><input aria-label="Ссылка на вызов" readonly><small role="status"></small></div>`}
+        </div>
+        <footer class="finish-actions">
+          <button type="button" class="finish-back" data-a="menu"><i aria-hidden="true">‹</i> В меню</button>
+          <button type="button" data-a="garage">В гараж</button>
+          ${r.nevaScore === undefined ? "" : '<button type="button" class="finish-share" data-a="share-neva">Бросить вызов другу</button>'}
+          <button type="button" class="finish-next" data-a="${primaryAction}">${primaryLabel}<i class="career-arrow" aria-hidden="true"></i></button>
+        </footer>
+      </section>`;
     this.bindScreen({
       "career-next": () => this.continueCareer(),
       more: () => this.gotoOrders(),
@@ -1808,25 +1877,40 @@ export class Game {
       ? "Газ, задний ход и руль на джойстике. Справа тормоз, ручник и нитро."
       : "WASD или стрелки для вождения. Пробел включает ручник, Shift включает нитро, Esc ставит игру на паузу.";
     const activity = this.nevaRun
-      ? `<div class="tut-row"><span class="tut-ico">◆</span><span>Начни занос между золотыми линиями и выезжай через вторую. Удар или выезд с дороги лишает премии за этот поворот.</span></div>
-         <div class="tut-row"><span class="tut-ico">📦</span><span>Довези груз за ${NEVA_CONTRACT.timeLimit} с. Целый груз, запас времени и чистые повороты дают очки.</span></div>`
+      ? [
+          ["Повороты", "Начни занос между золотыми линиями и выезжай через вторую. Удар или выезд с дороги лишает премии за этот поворот."],
+          ["Доставка", `Довези груз за ${NEVA_CONTRACT.timeLimit} с. Целый груз, запас времени и чистые повороты дают очки.`],
+        ]
       : mode === "delivery"
-      ? `<div class="tut-row"><span class="tut-ico">⚠</span><span>Береги груз от ударов и луж; красный сигнал стоит ₽${RED_LIGHT_FINE}.</span></div>
-         <div class="tut-row"><span class="tut-ico">₽</span><span>За секунду заноса в кошелёк сразу поступает ₽${driftTip(1)}. Сбитая вывеска сразу даёт ₽12.</span></div>`
-      : mode === "radio-silence"
-        ? `<div class="tut-row"><span class="tut-ico">◆</span><span>За ${RADIO_TIME} с пройди три передатчика. Каждый начинает погоню. Следуй по линии карты к бирюзовой зоне тишины и въезжай в неё с нужным отрывом.</span></div>
-           <div class="tut-row"><span class="tut-ico">✦</span><span>Золотой пакет пополняет нитро и даёт очки после побега. Пакеты, запас времени и состояние кузова определяют медаль и выплату.</span></div>`
-        : mode === "drift-trial"
-        ? `<div class="tut-row"><span class="tut-ico">🔥</span><span>Держи занос, чтобы поднять множитель до ×5. Когда машина выйдет из заноса, очки серии засчитаются.</span></div>
-           <div class="tut-row"><span class="tut-ico">⚠</span><span>Сильный удар сбрасывает незабранные очки серии. За итоговый счёт выдаются медали и ₽.</span></div>`
-        : `<div class="tut-row"><span class="tut-ico">🏁</span><span>Пройди контрольные точки строго по порядку и вернись на старт для финиша.</span></div>
-           <div class="tut-row"><span class="tut-ico">🥇</span><span>Время круга определяет медаль, выплату и лучший результат трассы.</span></div>`;
-    this.tutorialEl.innerHTML = `<div class="tutorial-box">
-      <h3 id="tutorial-title">КАК ИГРАТЬ · ${this.nevaRun ? NEVA_CONTRACT.title : MODE_NAMES[mode].toUpperCase()}</h3>
-      <div class="tut-row"><span class="tut-ico wheel">🕹</span><span>${controls}</span></div>
-      <div class="tut-row"><span class="tut-ico hb">★</span><span><b>РУЧНИК</b> — на скорости поверни руль и держи ручник. Занос засчитывается, пока машина скользит боком.</span></div>
-      ${activity}
-      <button class="btn primary" data-a="tut-ok" autofocus>ПОНЯТНО!</button>
+        ? [
+            ["Заказ", `Береги груз от ударов и луж. Проезд на красный стоит ₽${RED_LIGHT_FINE}.`],
+            ["Премия", `Секунда заноса приносит ₽${driftTip(1)}, сбитая вывеска — ₽12.`],
+          ]
+        : mode === "radio-silence"
+          ? [
+              ["Передатчики", `За ${RADIO_TIME} с пройди три передатчика. После каждого уйди от погони в бирюзовой зоне тишины. Путь к ней отмечен на карте.`],
+              ["Золотой пакет", "Пакет пополняет нитро и даёт очки после побега. Пакеты, запас времени и состояние кузова определяют медаль и выплату."],
+            ]
+          : mode === "drift-trial"
+            ? [
+                ["Серия", "Держи занос, чтобы поднять множитель до ×5. При выходе из заноса очки серии засчитаются."],
+                ["Медаль", "Сильный удар сбрасывает незабранные очки серии. Итоговый счёт определяет медаль и выплату."],
+              ]
+            : [
+                ["Чекпоинты", "Пройди контрольные точки по порядку и вернись на старт для финиша."],
+                ["Время круга", "Время определяет медаль, выплату и лучший результат трассы."],
+              ];
+    const hints = [
+      ["Управление", controls],
+      ["Ручник", "На скорости поверни руль и держи ручник. Занос засчитывается, пока машина скользит боком."],
+      ...activity,
+    ];
+    this.tutorialEl.innerHTML = `<div class="tutorial-box pit-guide">
+      <header><span>${this.nevaRun ? NEVA_CONTRACT.title : MODE_NAMES[mode]}</span><h3 id="tutorial-title">Как играть</h3></header>
+      <div class="pit-guide-scroll" tabindex="0" aria-label="Управление и цели заезда">
+        ${hints.map(([title, hint]) => `<section class="pit-hint"><h4>${title}</h4><p>${hint}</p></section>`).join("")}
+      </div>
+      <button class="pit-primary" data-a="tut-ok" autofocus>ПОНЯТНО!</button>
     </div>`;
   }
 
@@ -2464,11 +2548,13 @@ export class Game {
     const event = this.activeEvent;
     const careerLines: string[] = [];
     let stagePassed = ok;
+    let careerMetric: { label: string; value: string } | undefined;
     if (event) {
       const value = event.mode === "delivery" ? this.car.cargo : event.mode === "drift-trial" ? driftScore : o.timeLimit-this.timeLeft;
       const result = settleEvent(p,event,ok,value);
       stagePassed = result.earned > 0;
-      careerLines.push(`Этап ${event.number} · ${event.title} · ${"★".repeat(result.earned)}${"☆".repeat(3-result.earned)}`);
+      careerMetric = { label: "Звёзды за этап", value: "★".repeat(result.earned) + "☆".repeat(3 - result.earned) };
+      careerLines.push(event.title);
       if (!stagePassed) careerLines.push(`Цель этапа: ${goal(event,1)}`);
       if (result.bonus) careerLines.push(`Премия за новые звёзды: ₽${result.bonus}`);
       if (result.first && event.leg===2) careerLines.push(WORLD_MAPS[event.chapter+1] ? "Открыта карта · "+WORLD_MAPS[event.chapter+1].name : "Чемпионат пройден!");
@@ -2494,17 +2580,19 @@ export class Game {
         lines.push(this.timeAttackCourse.name);
         lines.push(`Пройдено контрольных точек: ${this.timeAttackCheckpointIndex}/${this.timeAttackCourse.checkpoints.length}`);
       }
-      if (record !== null) lines.push(this.mode === "drift-trial" ? `Лучший счёт: ${Math.round(record)}` : `Лучшее время: ${record.toFixed(1)} с`);
+      const recordLabel = record === null ? undefined : this.mode === "drift-trial" ? `${Math.round(record)} очк.` : `${record.toFixed(1)} с`;
       if (this.mode === "time-attack" && medal) {
         p.stats.timeAttackMedal = Math.max(p.stats.timeAttackMedal, medalRank(medal));
       }
       p.money += reward;
       p.totalEarn += reward;
       p.bestEarn = Math.max(p.bestEarn, reward);
-      lines.push(`<b class="gold">Выплата за заезд: ₽${reward}</b>`);
+
       this.grantAchievements(false);
       this.persistProfile();
-      this.lastResult = { ok: stagePassed, lines:[...careerLines,...lines], mode: this.mode, title: event ? (stagePassed ? "ЭТАП ПРОЙДЕН" : "ЦЕЛЬ НЕ ВЫПОЛНЕНА") : title };
+      this.lastResult = { ok: stagePassed, lines:[...careerLines,...lines], mode: this.mode, record:recordLabel, rewards:[{label:"За заезд",amount:reward}], metric: careerMetric ?? (this.mode === "drift-trial"
+        ? { label: "Очки за дрифт", value: String(driftScore) }
+        : { label: ok ? "Время на финише" : "Время в заезде", value: `${elapsed.toFixed(1)} с` }), title: event ? (stagePassed ? "ЭТАП ПРОЙДЕН" : "ЦЕЛЬ НЕ ВЫПОЛНЕНА") : title };
       this.order = null;
       this.police.stop();
       this.bonusMoney = 0;
@@ -2513,33 +2601,27 @@ export class Game {
     }
     const lines: string[] = [`${reason}.`];
     let total = 0;
+    let recordLabel: string | undefined;
+    const rewards: {label:string; amount:number}[] = [];
     if (ok) {
       const integ = this.car.cargo / 100;
       const pay = Math.round(o.reward * (0.25 + 0.75 * integ));
       const timeBonus = Math.round((this.timeLeft / o.timeLimit) * o.reward * 0.35);
       const tip = this.driftCredited;
       total = Math.max(0, pay + timeBonus + this.bonusMoney - this.orderFines);
-      lines.push(`Целостность груза: ${Math.round(this.car.cargo)}%`);
-      lines.push(`Оплата: ₽${pay}`);
-      lines.push(`Бонус за время: ₽${timeBonus}`);
+      rewards.push({label:"Оплата",amount:pay},{label:"Бонус за время",amount:timeBonus});
       if (tip > 0) lines.push(`Уже в кошельке за занос: ₽${tip}`);
-      if (this.bonusMoney > 0)
-        lines.push(`<span class="gold">Трюки и бонусы: ₽${this.bonusMoney}</span>`);
-      if (this.orderFines > 0)
-        lines.push(`<span class="neg">Штрафы за красный: −₽${this.orderFines}</span>`);
-      lines.push(`<b class="gold">Итого: ₽${total}</b>`);
-      lines.push(
-        `Состояние машины: ${Math.round(this.car.hp)}%${
-          this.car.hp < 50 ? ' — <span class="neg">надо в гараж</span>' : ""
-        }`
-      );
+      if (this.bonusMoney > 0) rewards.push({label:"Трюки",amount:this.bonusMoney});
+      if (this.orderFines > 0) lines.push(`<span class="neg">Штрафы за красный: −₽${this.orderFines}</span>`);
+      if (event) lines.push(`Выплата за заказ: ₽${total}`);
+      if (this.car.hp < 50) lines.push('<span class="neg">Машине нужен ремонт</span>');
       p.money += total;
       p.deliveries += 1;
       p.totalEarn += total;
       p.bestEarn = Math.max(p.bestEarn, total + tip);
       if (this.car.cargo >= 99.5) p.stats.perfectDeliveries += 1;
       const record = saveRecord(p.records, p.mapId, "delivery", p.carId, total + tip);
-      lines.push(`Личный рекорд доставки: ₽${Math.round(record)}`);
+      recordLabel = `₽${rubles.format(Math.round(record))}`;
       if (o.weekly) {
         const completed = completeWeeklyRoute(p.weeklyCompletions, o.weekly);
         const completedOnMap = weeklyRouteIds(o.weekly.week, p.mapId).filter((id) => completed.includes(id)).length;
@@ -2549,8 +2631,7 @@ export class Game {
     } else {
       const consolation = 40;
       p.money += consolation;
-      lines.push(`<span class="neg">${reason}</span>`);
-      lines.push(`Утешительные: ₽${consolation}`);
+      rewards.push({label:"Утешительные",amount:consolation});
       if (this.orderFines > 0) {
         p.money = Math.max(0, p.money - this.orderFines);
         lines.push(`<span class="neg">Штрафы: −₽${this.orderFines}</span>`);
@@ -2559,7 +2640,11 @@ export class Game {
     }
     this.grantAchievements(false);
     this.persistProfile();
-    this.lastResult = { ok:stagePassed, lines:[...careerLines,...lines], title:event ? (stagePassed ? "ЭТАП ПРОЙДЕН" : "ЭТАП НЕ ПРОЙДЕН") : undefined };
+    this.lastResult = { ok:stagePassed, lines:[...careerLines,...lines], record:recordLabel, rewards,
+      gauges: ok || event ? [{label:"Груз",value:this.car.cargo},{label:"Кузов",value:this.car.hp}] : [{label:"Кузов",value:this.car.hp}],
+      metric:careerMetric ?? (ok
+      ? { label: "Выплата за заказ", value: `₽${rubles.format(total)}` }
+      : { label: "Целостность груза", value: `${Math.round(this.car.cargo)}%` }), title:event ? (stagePassed ? "ЭТАП ПРОЙДЕН" : "ЭТАП НЕ ПРОЙДЕН") : undefined };
     this.order = null;
     this.police.stop();
     this.bonusMoney = 0;
@@ -2571,16 +2656,21 @@ export class Game {
     const lines = [`${reason}.`, `Побеги ${run.escapes}/${RADIO_WAVES} · Пакеты ${run.packets}/${RADIO_WAVES}`];
     const timeLeft = Math.max(0, this.timeLeft);
     lines.push(`Время ${(RADIO_TIME - timeLeft).toFixed(1)} с · Кузов ${Math.round(this.car.hp)}%`);
+    let recordLabel: string | undefined;
+    let rewardAmount = 0;
+    let metric = { label: "Успешные побеги", value: `${run.escapes}/${RADIO_WAVES}` };
     if (ok) {
       const score = radioScore(run.packets, timeLeft, this.car.hp);
+      metric = { label: "Очки за операцию", value: String(score) };
       const medal = radioMedal(score);
       const best = saveRecord(p.records, this.world.mapId, "radio-silence", p.carId, score);
       const reward = modeReward("radio-silence", medal, score);
       p.money += reward;
       p.totalEarn += reward;
       p.bestEarn = Math.max(p.bestEarn, reward);
-      lines.push(`${score} очк. · ${medalLabel(medal)} · Рекорд ${best}`);
-      lines.push(`<b class="gold">Выплата за заезд ₽${reward}</b>`);
+      recordLabel = `${best} очк.`;
+      rewardAmount = reward;
+      lines.push(medalLabel(medal));
       if (p.stats.escapes >= RADIO_WAVES && !p.unlockedAch.includes("escapee")) lines.push("Открыта ачивка «Невидимка»");
       this.audio.success();
     } else {
@@ -2591,7 +2681,8 @@ export class Game {
     if (this.radioCache) this.radioCache.visible = false;
     this.grantAchievements(false);
     this.persistProfile();
-    this.lastResult = { ok, title: RADIO_TITLE.toUpperCase(), mode: "radio-silence", lines };
+    this.lastResult = { ok, title: RADIO_TITLE.toUpperCase(), mode: "radio-silence", lines, metric, record:recordLabel,
+      rewards:ok ? [{label:"За операцию",amount:rewardAmount}] : [] };
     this.order = null;
     this.showScreen("result");
   }
@@ -2614,11 +2705,11 @@ export class Game {
       p.bestEarn = Math.max(p.bestEarn, payout);
       if (this.car.cargo >= 99.5) p.stats.perfectDeliveries++;
       lines.push(
-        `<b class="neva-score">${score} очк.${isRecord ? " · НОВЫЙ РЕКОРД" : ""}</b>`,
-        `Груз ${Math.round(this.car.cargo)}% · ${duration.toFixed(1)} с · Чистые повороты ${run.cleanSectors}/${NEVA_SECTORS.length}`,
+        `Время ${duration.toFixed(1)} с · Чистые повороты ${run.cleanSectors}/${NEVA_SECTORS.length}`,
         `Оплата ₽${value.base} · за время +₽${value.timeBonus} · за занос +₽${value.driftBonus}`,
         `<b class="gold">Итого ₽${payout}</b>`,
       );
+      if (isRecord) lines.push("Новый рекорд контракта!");
       if (run.bestSector >= 0) lines.push(`Лучший поворот · ${NEVA_SECTORS[run.bestSector].name}, ${run.pointsAt(run.bestSector)} очк. заноса`);
       if (this.nevaTarget !== null) {
         const difference = score - this.nevaTarget;
@@ -2633,7 +2724,10 @@ export class Game {
     else this.audio.fail();
     this.grantAchievements(false);
     this.persistProfile();
-    this.lastResult = { ok, lines, title: NEVA_CONTRACT.title, nevaScore: score };
+    this.lastResult = { ok, lines, title: NEVA_CONTRACT.title, nevaScore: score,
+      record:ok ? `${p.neva.bestScore} очк.` : undefined, gauges:[{label:"Груз",value:this.car.cargo},{label:"Кузов",value:this.car.hp}],
+      metric: score === undefined ? { label: "Чистые повороты", value: `${run.cleanSectors}/${NEVA_SECTORS.length}` }
+        : { label: "Очки контракта", value: String(score) } };
     this.order = null;
     this.police.stop();
     this.bonusMoney = 0;

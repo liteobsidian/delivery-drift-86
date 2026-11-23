@@ -318,13 +318,29 @@ if (await page.evaluate(() => window.__gameDebug?.weekKey?.("2026-11-15T23:59:00
 if (await page.evaluate(() => window.__gameDebug?.weekKey?.("2026-11-16T00:00:00Z")) !== "2026-11-16") fail("UTC weekly key did not rotate on Monday");
 await page.evaluate(() => window.__gameDebug?.exitMode?.());
 await page.locator('[data-a="profile"]').click();
-if (!(await page.getByText("НЕДЕЛЬНЫЕ МАРШРУТЫ").count())) fail("The records and weekly routes screen did not open");
+if (!(await page.getByRole("button", { name: "Недельные маршруты" }).isVisible())) fail("The records and weekly routes screen did not open");
 await page.screenshot({ path: join(SHOTS, "05-profile.png") });
+await page.setViewportSize({ width: 568, height: 320 });
+await page.locator('[data-a="achievements"]').click();
+const shelf = page.locator(".dh-scroll:visible").last();
+if (!(await shelf.evaluate(el => {
+  el.scrollTop = 100;
+  return el.scrollTop > 0 && document.scrollingElement.scrollTop === 0;
+}))) fail("Scrolling the trophy collection moved the whole screen");
+const shelfBack = page.locator('.dh-back');
+if (!(await shelfBack.evaluate(el => {
+  const { x, y, width, height } = el.getBoundingClientRect();
+  return el.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+}))) fail("Scrolling trophies covered the back button");
+await shelfBack.click();
+await page.setViewportSize({ width: 1280, height: 720 });
+await page.locator('[data-a="weekly-tab"]').click();
 await page.locator('[data-a="weekly:0"]').click();
 await page.evaluate(() => window.__gameDebug?.finishWeekly?.());
 if ((await page.evaluate(() => window.__gameDebug?.weeklyProgress?.()?.completed?.length)) !== 1) fail("Completing a weekly route was not saved");
 await page.locator('[data-a="menu"]').click();
 await page.locator('[data-a="profile"]').click();
+await page.locator('[data-a="weekly-tab"]').click();
 await page.locator('[data-a="weekly:0"]').click();
 await page.evaluate(() => window.__gameDebug?.finishWeekly?.());
 if ((await page.evaluate(() => window.__gameDebug?.weeklyProgress?.()?.completed?.length)) !== 1) fail("Replaying a weekly route changed completed route progress");

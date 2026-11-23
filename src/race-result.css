@@ -1,0 +1,115 @@
+/* Only the race report scrolls. */
+.screen-wrap[data-screen="result"] {
+  padding: 0;
+  overflow: hidden;
+  background: var(--ink);
+  backdrop-filter: none;
+}
+.race-finish {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template: minmax(0, 1fr) auto / minmax(0, 1.35fr) minmax(0, 1fr);
+  color: var(--paper);
+  background: #101129;
+  text-align: left;
+}
+.race-finish h2,.race-finish h3,.race-finish ul {
+  margin: 0;
+}
+.finish-poster {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  isolation: isolate;
+  padding: max(clamp(12px,3vw,58px),env(safe-area-inset-top)) clamp(14px,3.4vw,64px) clamp(14px,3.4vw,64px) max(clamp(14px,3.4vw,64px),env(safe-area-inset-left));
+  background: linear-gradient(0deg,#090b22f5,rgba(18,14,43,.82) 32%,transparent 78%), var(--finish-art) center / cover no-repeat;
+}
+.finish-poster::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background: linear-gradient(110deg,#090b239c,transparent 52%);
+}
+.finish-location,.finish-status,.finish-metric span,.finish-report h3 {
+  font: 750 clamp(10px,1.2vw,16px)/1.25 "Courier Prime", monospace;
+  text-transform: uppercase;
+  letter-spacing: .055em;
+}
+.finish-location {display:flex;align-items:center;gap:9px;align-self:flex-start;padding:5px 9px;background:#0c102cdd}
+.finish-location i {
+  display:inline-block;width:20px;height:12px;transform:skewX(-14deg);
+  background:repeating-conic-gradient(#f4f1ff 0 25%,#333055 0 50%) 0 0/8px 8px;
+}
+.finish-hero {display:grid;gap:clamp(4px,1.5dvh,16px)}
+.finish-status {color:var(--signal-blue);border-left:3px solid currentColor;padding-left:7px}
+.race-finish.bad .finish-status {color:#ff98bc}
+.finish-hero h2,.finish-metric strong,.finish-actions .finish-next {
+  font-family:"Arial Narrow","Roboto",Arial,sans-serif;
+  font-weight:900;
+  font-style:italic;
+  letter-spacing:-.052em;
+}
+.finish-hero h2 {font-size:clamp(21px,min(4.2vw,8dvh),65px);line-height:1.03;color:var(--paper);text-wrap:balance}
+.finish-metric {display:flex;align-items:baseline;flex-wrap:wrap;column-gap:12px}
+.finish-metric strong {color:#f4ecff;font-size:clamp(36px,min(7vw,13.5dvh),110px);line-height:1;font-variant-numeric:tabular-nums}
+.finish-metric span {color:#c0d7ff}
+.finish-report {
+  min-height:0;min-width:0;
+  display:grid;grid-template-rows:auto minmax(0,1fr) auto;
+  padding: max(clamp(12px,2.2vw,40px),env(safe-area-inset-top)) max(clamp(14px,2.5vw,48px),env(safe-area-inset-right)) clamp(10px,1.7vw,28px) clamp(14px,2.5vw,48px);
+  border-left:3px solid #6d5caa;
+  background:linear-gradient(125deg,#28274d,#12172d);
+}
+.finish-report h3 {display:flex;align-items:center;gap:12px;padding:0 0 9px;font-size:clamp(13px,1.45vw,20px);color:var(--signal-blue)}
+.finish-scroll {min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#7464aa #181a32}
+.race-finish .result-lines {background:none;border:0;border-radius:0;padding:0;list-style:none;color:var(--paper);font-size:clamp(12px,1.22vw,18px);line-height:1.35}
+.result-lines li {padding:3px 0}
+.finish-split {display:flex;align-items:baseline;justify-content:space-between;gap:9px}
+.finish-split span {color:#c2c8e3}.finish-split strong {text-align:right;font-variant-numeric:tabular-nums}
+.race-finish .gold,.race-finish .neva-score {color:#e1b8ff}
+.race-finish .neg {color:#ff9ebd}
+.finish-report .neva-share {margin:0;padding-top:5px}
+.finish-report .neva-share input {color:var(--paper);background:#121329;border-color:#8e7fbb}
+.finish-report .neva-share small {color:var(--signal-blue)}
+.finish-gauges,.finish-rewards {display:flex;gap:8px;margin-bottom:9px;flex-wrap:wrap}
+.finish-gauge {flex:1;min-width:72px;padding:7px 9px;background:linear-gradient(115deg,#33325a,#242545);border-left:2px solid #779cf4}
+.finish-gauge span,.finish-reward span,.finish-record span {font:700 clamp(10px,.92vw,13px)/1.1 monospace;color:#c7d2f2}
+.finish-gauge strong {display:block;font:bold italic clamp(22px,3.2vw,48px)/1.16 Arial,sans-serif;color:#eaf5ff}
+.finish-gauge small {font-size:.5em}
+.finish-gauge i {display:block;height:6px;background:repeating-linear-gradient(108deg,transparent 0 6px,#202039 6px 8px),linear-gradient(90deg,#6ed9ff 0%,#a188ff var(--level),#454a66 var(--level));transform:skewX(-12deg)}
+.finish-reward {display:grid;gap:3px;min-width:66px;flex:1;align-content:center;padding:5px 8px;border-left:2px solid #c69eff;background:linear-gradient(100deg,#634c9b65,#4a3b720e)}
+.finish-reward b,.finish-record strong {font:800 italic clamp(16px,1.9vw,27px)/1.1 Arial,sans-serif;color:#efdcff}
+.finish-record {display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.finish-record i {color:#ff88cd;font-style:normal}.finish-record strong {margin-left:auto;color:#ffb3dc}
+.finish-actions {
+  grid-column:1/-1;
+  display:flex;align-items:stretch;gap:clamp(5px,1.1vw,18px);
+  padding:clamp(6px,1.4dvh,14px) max(14px,env(safe-area-inset-right)) max(clamp(6px,1.4dvh,14px),env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));
+  background:#101127;border-top:1px solid #4b426e;
+}
+.finish-actions button {
+  appearance:none;min-height:44px;padding:5px clamp(8px,1.35vw,24px);box-sizing:border-box;
+  color:#e8e5ff;background:#21233f;border:1px solid #49476c;border-radius:0;
+  cursor:pointer;line-height:1.1;font-family:inherit;font-size:clamp(12px,1.25vw,18px);font-weight:700;
+}
+.finish-actions .finish-back {background:transparent;border-color:transparent}
+.finish-back i {font:700 18px/1 Arial;color:var(--signal-blue)}
+.finish-actions .finish-share {border-color:#8068bc;color:#e4c9ff}
+.finish-actions .finish-next {
+  display:flex;align-items:center;justify-content:space-between;gap:8px;margin-left:auto;
+  min-width:min(31vw,330px);color:var(--action-ink);background:var(--action-fill);
+  box-shadow:inset 0 -3px #9c357a;border:0;
+  font-size:clamp(15px,1.8vw,24px);text-transform:uppercase;
+  clip-path:polygon(8px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 8px);
+}
+.finish-actions button:focus-visible,.finish-scroll:focus-visible {outline:2px solid var(--signal-blue);outline-offset:-2px}
+@media(prefers-reduced-motion:no-preference) {
+  .finish-hero,.finish-report h3 {animation:panel-enter .24s ease-out}
+  .finish-actions button {transition:filter .15s,translate .12s}
+  .finish-actions button:active {filter:brightness(1.14);translate:0 1px}
+}

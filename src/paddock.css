@@ -1,0 +1,84 @@
+/* Keep the model stage clear and reserve a separate rail for touch controls. */
+@media (orientation: landscape) {
+  .home-box .home-actions {width:clamp(218px,33vw,400px);gap:4px}
+  .home-actions .home-play {
+    display:flex;justify-content:space-between;align-items:center;min-width:0;
+    min-height:clamp(44px,7dvh,66px);padding:0 16px;
+    font-size:clamp(17px,2.15vw,30px);letter-spacing:.025em;
+    background:linear-gradient(108deg,#ffa7e0,#f57acc 62%,#b58fff);
+    color:#22142e;border:0;border-radius:0;
+    clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)
+  }
+  .home-box .home-links {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px}
+  .home-box .home-links .btn {
+    display:grid;justify-items:center;align-content:center;gap:2px;min-width:0;min-height:46px;
+    padding:4px 2px;border:0;border-top:1px solid #7068a0;border-radius:0;
+    background:linear-gradient(125deg,#26203bf5,#101328f5);
+    color:#f8edff;font-weight:750;font-size:clamp(10px,1.15vw,14px);letter-spacing:.01em
+  }
+  .home-links svg {color:#bbacff}
+  .home-box .home-career {border-radius:0;border-top:1px solid #8b76a7;gap:clamp(5px,1vw,15px)}
+  .home-career span:first-child {color:#f9ceff;font-variant-numeric:tabular-nums}
+  .home-box .home-place {max-width:46%;flex-wrap:wrap;font-size:clamp(10px,1.3vw,16px)}
+  .home-box .home-settings {border-radius:0;background:#161328e8;border:1px solid #71678b}
+}
+.career-brief, .garage-display .garage-detail, .pit .pit-detail {
+  --rail-surface:radial-gradient(ellipse at 100% 0,#453253 0,transparent 60%),linear-gradient(145deg,#20213b,#111326 78%);
+  display:grid;grid-template-rows:minmax(0,1fr) auto;justify-content:stretch;align-content:stretch;
+  background:var(--rail-surface);border:0;border-inline-start:1px solid #81719e;
+  overflow:hidden;min-height:0;gap:clamp(6px,1.5vh,15px)
+}
+.career-objectives, .garage-inspection, .pit-readout {
+  position:relative;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;
+  display:flex;flex-direction:column;align-items:stretch;justify-content:safe center;
+  gap:clamp(7px,1.9vh,22px);scrollbar-width:thin;scrollbar-color:#77618f transparent
+}
+.career-objectives > *, .garage-inspection > *, .pit-readout > * {flex-shrink:0}
+.garage-display .garage-detail {padding:clamp(10px,2.7vw,44px)}
+.garage-ingress {display:flex;align-items:center;justify-content:space-between;gap:8px}
+.garage-ingress .garage-status {margin:0;font-size:12px;color:#d6c6f5}
+.car-counter,.pit-readout small {font:700 11px/1.2 ui-monospace,monospace;letter-spacing:.09em;color:#a5dfff}
+.garage-inspection .garage-specs {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.garage-inspection .garage-specs > div {padding:.4em 0 .5em;border-block:1px solid #655977}
+.garage-inspection .garage-specs dd {font-size:clamp(16px,2.1vw,32px);line-height:1.1}
+.garage-specs dd small {font-weight:500;font-size:.58em}
+.garage-unlock {margin:0;color:#dccde8;font-size:12px;line-height:1.4}
+.garage-picker,.pit-rack {border-top:1px solid #8676a0}
+.garage-roster .garage-tab {isolation:isolate;position:relative;overflow:hidden;background:#171829;color:#d6cde9}
+.garage-roster .garage-tab[aria-pressed=true],.pit-rack [aria-pressed=true] {background:linear-gradient(135deg,#45305c,#242038);color:white}
+.garage-tab[aria-pressed=true]::after,.pit-rack [aria-pressed=true]::after {
+  content:"";position:absolute;inset:auto 0 0;height:3px;background:linear-gradient(90deg,#82d6ff,#c497ff,#ff95da)
+}
+.garage-header,.pit-head,.career-mast {background:linear-gradient(100deg,#17162aef,#161729f7 60%,#2a1d36f5);border-bottom:1px solid #655a7f}
+.garage-header .btn,.pit-head button,.career-mast .career-back {font:700 24px/1 system-ui;color:#d8caff;border-radius:0;width:44px}
+.pit .pit-detail::before {content:none}
+.pit-readout::before {content:"";display:none;flex:0 1 140px;min-height:48px;background:var(--part-art) left center/contain no-repeat;mix-blend-mode:screen}
+.pit-level {
+  height:5px;background:linear-gradient(90deg,#95dcff,#eaa1ff) left/var(--completed) 100% no-repeat,#3f3656
+}
+.pit-readout .pit-stat {display:grid;gap:4px;border:0;padding:0;color:#c3bdd6}
+.pit-stat b {font-size:clamp(16px,2.3vw,36px);color:#f3efff}
+.pit-stat em {color:#efadff}
+.pit-car button {border-bottom:1px solid #baa6dc;min-height:44px;color:#f4e3ff}
+.pit-rack button,.garage-roster .garage-tab {scroll-snap-align:center}
+.garage-roster {scroll-snap-type:x proximity}
+.career-objectives .career-prize {padding-top:4px}
+.career-mast nav {justify-content:safe center}
+.career-mast nav button {flex-shrink:0}
+.career-board .career-stages button[aria-pressed=true] {border-color:#de9dff;background:linear-gradient(125deg,#51365f,#302343)}
+@media (min-height:500px) { .pit-readout::before {display:block} }
+@media (max-height:390px) and (orientation:landscape) {
+  .home-box .home-career {font-size:10px;padding:6px}
+  .home-box .home-links svg {width:17px;height:17px}
+  .career-brief,.garage-display .garage-detail,.pit .pit-detail {padding:8px 11px max(8px,env(safe-area-inset-bottom))}
+  .career-objectives,.garage-inspection,.pit-readout {gap:5px}
+  .garage-inspection .garage-specs > div {padding:3px 0}
+  .pit-car {padding:8px 12px}
+  .pit-car button {min-height:36px}
+  .career-mast h2 {font-size:16px}
+  .career-mast nav button {padding:0 6px}
+}
+.garage-purchase .btn,.pit button.pit-install {min-height:44px}
+.garage-inspection h3,.pit-readout h3,.career-caption h3,.career-objectives h3 {
+  font-family:var(--race-display,"Arial Narrow",sans-serif);font-style:italic;font-weight:800
+}
