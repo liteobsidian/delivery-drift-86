@@ -36,9 +36,14 @@ const CANVAS_ID = "game-canvas";
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".webp": "image/webp", ".json": "application/json", ".wasm": "application/wasm" };
 
+const assetRequests = [];
+let releaseHero;
+const heroGate = new Promise(resolve => { releaseHero = resolve; });
 const server = createServer(async (req, res) => {
   try {
     const pathname = req.url.split("?")[0];
+    if (pathname.startsWith("/assets/")) assetRequests.push(pathname);
+    if (/\/ae86-[^/]+\.glb$/.test(pathname)) await heroGate;
     const raw = pathname === "/" ? "/index.html" : pathname;
     // Decode: request paths are percent-encoded, so an asset named "level 1.png" arrives as
     // "level%201.png" and would 404 (surfacing later as a bogus console-error failure).
@@ -91,9 +96,6 @@ page.on("pageerror", (e) => consoleErrors.push(String(e)));
 let releaseBundle;
 const bundleGate = new Promise((resolve) => { releaseBundle = resolve; });
 await page.route("**/assets/index-*.js", async (route) => { await bundleGate; await route.continue(); });
-let releasePolice;
-const policeGate = new Promise((resolve) => { releasePolice = resolve; });
-await page.route("**/assets/police-*.glb", async (route) => { await policeGate; await route.continue(); });
 await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "commit" });
 const loadingScreen = page.locator("#startup-loading");
 await loadingScreen.waitFor();
@@ -101,15 +103,41 @@ if (await page.locator("#startup-progress").getAttribute("value") !== null) fail
 releaseBundle();
 await page.waitForFunction(() => {
   const progress = document.querySelector("#startup-progress");
-  return progress.value > 0 && progress.value === progress.max - 1;
+  return progress.hasAttribute("value") && progress.max === 1 && progress.value === 0;
 });
 if (!(await loadingScreen.isVisible()) || !(await page.locator("#game-root").evaluate((root) => root.inert)) ||
     await page.evaluate(() => window.__GAME_READY__ === true)) fail("The title screen opened before all startup models were ready");
 await page.screenshot({ path: join(SHOTS, "01-loading.png") });
-releasePolice();
+releaseHero();
 await loadingScreen.waitFor({ state: "hidden" });
 await page.waitForLoadState("networkidle");
 if (!(await page.evaluate(() => window.__GAME_READY__ && window.__gameDebug.showroom().detailed))) fail("The loader closed before the detailed title frame was rendered");
+const carsRequested = () => assetRequests.filter(path => path.endsWith(".glb"));
+const [heroURL] = carsRequested();
+if (carsRequested().length !== 1 || !heroURL.includes("/ae86-")) fail("Cold menu requested unused vehicles");
+if (await page.evaluate(() => window.__gameDebug.worldCacheSize()) !== 0) fail("Menu built a city before entering a race");
+await page.waitForFunction(async url => {
+  const cache = await caches.open("delivery-drift-assets-v1");
+  return !!(await cache.match(url)) && (await cache.keys()).some(key => /\/main-.*\.js$/.test(key.url));
+}, heroURL);
+const firstRequestCount = assetRequests.length;
+await page.reload({ waitUntil: "networkidle" });
+await loadingScreen.waitFor({ state: "hidden" });
+const warmRequests = assetRequests.slice(firstRequestCount);
+if (warmRequests.some(url => !/\/index-.*\.js$/.test(url)) ||
+    !(await page.evaluate(() => window.__gameDebug.showroom().detailed))) fail("Warm menu fetched cached assets: " + warmRequests);
+// Only an older fingerprint is present for the hero. All other assets remain valid.
+await page.evaluate(async url => {
+  const cache = await caches.open("delivery-drift-assets-v1");
+  await cache.put("/assets/ae86-previous.glb", new Response("previous version"));
+  await cache.delete(url);
+}, heroURL);
+const beforeRefresh = assetRequests.length;
+await page.reload({ waitUntil: "networkidle" });
+await loadingScreen.waitFor({ state: "hidden" });
+const refreshed = assetRequests.slice(beforeRefresh).filter(url => !/\/index-.*\.js$/.test(url));
+if (refreshed.length !== 1 || refreshed[0] !== heroURL ||
+    !(await page.evaluate(() => window.__gameDebug.showroom().detailed))) fail("Changed model was not refreshed individually: " + refreshed);
 if (!(await page.locator('[data-a="event-dismiss"]').isVisible())) fail("Weekly event was not promoted on startup");
 if (!(await page.locator('[data-a="event-start"]').isVisible())) fail("Weekly event popup has no start action");
 await page.locator('[data-a="event-dismiss"]').click();

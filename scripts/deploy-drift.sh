@@ -9,8 +9,9 @@ umask 077
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
-# This build contains only index.html and Vite's fingerprinted assets.
+# Publish the worker and all fingerprinted assets before switching the entry page.
 test -s "$dist_dir/index.html"
+test -s "$dist_dir/asset-worker.js"
 shopt -s nullglob
 assets=("$dist_dir"/assets/*)
 if (( ${#assets[@]} == 0 )); then
@@ -37,6 +38,8 @@ HOST_KEY
     printf 'put "%s" "assets/.%s.upload"\n' "$asset" "$name"
     printf 'rename "assets/.%s.upload" "assets/%s"\n' "$name" "$name"
   done
+  printf 'put "%s/asset-worker.js" ".asset-worker.js.upload"\n' "$dist_dir"
+  printf '%s\n' 'rename ".asset-worker.js.upload" asset-worker.js'
   printf 'put "%s/index.html" ".index.html.upload"\n' "$dist_dir"
   printf '%s\n' 'rename ".index.html.upload" index.html'
 } > "$temp_dir/upload.sftp"
@@ -58,6 +61,7 @@ verify_file() {
 }
 
 verify_file "$dist_dir/index.html" "$site/"
+verify_file "$dist_dir/asset-worker.js" "$site/asset-worker.js"
 pending=()
 wait_pending() {
   local pid

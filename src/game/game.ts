@@ -31,7 +31,7 @@ import { CITY_STYLE } from "./city-style";
 import { Car, disposeCarVisual } from "./car";
 import { trafficLanePosition, Traffic } from "./traffic";
 import { Police } from "./police";
-import { loadGameAssets, loadHeroModel, WORLD_MODEL_COUNT, type LoadedModel } from "./assets";
+import { loadGameAssets, loadHeroModel, type LoadedModel } from "./assets";
 import { Effects } from "./effects";
 import { ACHIEVEMENTS, checkAchievements } from "./achievements";
 import { NEVA_CONTRACT, NEVA_SECTORS, NevaRun, nevaChallengeLink, nevaChallengeTarget, nevaResult } from "./neva-contract";
@@ -113,7 +113,11 @@ export class Game {
   audio = new AudioSystem();
   private input!: Input;
   private worldCache = new Map<MapId, World>();
-  world = new World(this.profile.mapId);
+  private activeWorld?: World;
+  get world(): World {
+    if (!this.activeWorld) this.useWorld(this.profile.mapId);
+    return this.activeWorld!;
+  }
   car: Car;
   private readonly careerCar: Car;
   private nevaCar: Car | null = null;
@@ -123,7 +127,20 @@ export class Game {
   private nevaMarkings: ReturnType<typeof buildNevaMarkings> | null = null;
   private nevaRun: NevaRun | null = null;
   private nevaTarget = nevaChallengeTarget(window.location.search);
-  traffic: Traffic;
+  private activeTraffic?: Traffic;
+  get traffic(): Traffic {
+    if (this.activeTraffic) return this.activeTraffic;
+    this.activeTraffic = new Traffic(this.world, this.car.pos);
+    this.activeTraffic.onNearMiss = () => {
+      if (this.screen !== "playing") return;
+      if (this.mode === "delivery" && !this.nevaRun) {
+        this.addBonus(60, "Впритирку!");
+        this.audio.uiClick();
+      }
+    };
+    this.scene.add(this.activeTraffic.group);
+    return this.activeTraffic;
+  }
   private midriseAsset: { root: THREE.Group; size: THREE.Vector3 } | null = null;
   effects = new Effects();
 
@@ -165,6 +182,7 @@ export class Game {
   private shake = 0;
   private wreckTimer = -1; // >=0 while the burning wreck is counting down to order fail
   readonly initialModels: Promise<void>;
+  private worldModelsRequested = false;
   assetsReady = false; // downloaded models swapped in
   private camPos = new THREE.Vector3(0, 5, 55);
   private camForward = new THREE.Vector3();
@@ -217,55 +235,19 @@ export class Game {
     this.keyLight.position.set(-120, 200, -80);
     this.accentLight.position.set(100, 60, 120);
     this.scene.add(this.ambientLight, this.keyLight, this.accentLight);
-    this.applyCityLight(this.world.mapId);
 
-    this.scene.add(this.world.group);
-    this.worldCache.set(this.world.mapId, this.world);
     const upgrades = this.currentUpgrades();
     this.careerCar = new Car(tunedSpec(this.currentCarSpec(), upgrades));
     this.careerCar.setUpgrades(upgrades);
     this.configureCar(this.careerCar);
     this.car = this.careerCar;
     this.scene.add(this.car.group);
-    this.traffic = new Traffic(this.world, this.car.pos);
-    this.traffic.onNearMiss = () => {
-      if (this.screen !== "playing") return;
-      if (this.mode === "delivery" && !this.nevaRun) {
-        this.addBonus(60, "Впритирку!");
-        this.audio.uiClick();
-      }
-    };
-    this.scene.add(this.traffic.group);
     this.scene.add(this.police.group);
     this.scene.add(this.effects.group);
     const initialScreen = this.nevaTarget === null ? "title" : "neva-contract";
-    const initialCars = new Set([this.currentCarSpec().glb]);
-    if (initialScreen === "neva-contract") initialCars.add(NEVA_CAR.glb);
-    const totalModels = WORLD_MODEL_COUNT + initialCars.size;
-    let finishedModels = 0;
-    const reportModel = () => onLoadingProgress(++finishedModels, totalModels);
-    onLoadingProgress(0, totalModels);
-    const carsReady = Array.from(initialCars, (key) => this.requestHero(key)?.then(reportModel));
-    const worldReady = loadGameAssets(reportModel)
-      .then((assets) => {
-        if (this.disposed) {
-          for (const model of [...assets.traffic, assets.police, assets.midrise]) {
-            if (model) disposeCarVisual(model.root);
-          }
-          return;
-        }
-        this.traffic.setCarModels(assets.traffic.map((m) => m.root));
-        if (assets.police) this.police.setModel(assets.police.root, assets.police.size.y + 0.05);
-        if (assets.midrise) {
-          this.midriseAsset = assets.midrise;
-          for (const world of this.worldCache.values()) {
-            world.setHeroBuildings(assets.midrise.root, assets.midrise.size);
-          }
-        }
-      });
-    this.initialModels = Promise.all([...carsReady, worldReady]).then(() => {
-      if (!this.disposed) this.assetsReady = true;
-    });
+    const firstModel = initialScreen === "neva-contract" ? NEVA_CAR.glb : this.currentCarSpec().glb;
+    onLoadingProgress(0, 1);
+    this.initialModels = Promise.resolve(this.requestHero(firstModel)).then(() => onLoadingProgress(1, 1));
     // --- UI ---
     this.overlay = document.getElementById("ui-overlay")!;
     this.screenEl = el("div", "screen-wrap");
@@ -306,7 +288,7 @@ export class Game {
         () => ({ x: this.car.pos.x, y: this.car.pos.y, z: this.car.pos.z });
       // verification hook (not user-facing)
       (window as unknown as { __gameDebug: unknown }).__gameDebug = {
-        mapId: () => this.world.mapId,
+        mapId: () => this.activeWorld?.mapId ?? this.profile.mapId,
         roadProbe: (x: number, z: number) => ({
           onRoad: this.world.isOnRoad(x, z),
           nearestRoadDist: this.world.nearestRoadDist(x, z),
@@ -603,6 +585,7 @@ export class Game {
     if (this.screen === "playing" && s !== "playing") this.creditDrift();
     if (!["playing", "paused", "settings", "result"].includes(s)) this.activeEvent = undefined;
     this.screen = s;
+    if (s === "play" || s === "playing") this.prepareWorldModels();
     this.screenEl.dataset.screen = s;
     if (s !== "playing" && s !== "paused") this.tutorialEl.close();
     this.hudEl.style.display = s === "playing" ? "block" : "none";
@@ -1174,7 +1157,7 @@ export class Game {
     const recordRows = rows.join("") || `<p class="dim">Лучший результат появится здесь после первого завершённого заезда.</p>`;
     const now = new Date();
     const week = utcWeekKey(now);
-    const routes = weeklyRoutes(now, this.world.mapId);
+    const routes = weeklyRoutes(now, this.profile.mapId);
     const completed = this.profile.weeklyCompletions[week] ?? [];
     const routeRows = routes.map((route, i) => {
       const done = completed.includes(route.id);
@@ -1314,7 +1297,7 @@ export class Game {
 
   private selectMap(mapId: MapId): boolean {
     if (!mapOpen(mapId, this.profile)) return false;
-    if (this.world.mapId !== mapId) this.useWorld(mapId);
+    if (this.activeWorld?.mapId !== mapId) this.useWorld(mapId);
     if (this.profile.mapId !== mapId) {
       this.profile.mapId = mapId;
       this.persistProfile();
@@ -1335,13 +1318,13 @@ export class Game {
   }
 
   private useWorld(mapId: MapId): void {
-    if (this.world.mapId !== mapId) {
+    if (this.activeWorld?.mapId !== mapId) {
       let nextWorld = this.worldCache.get(mapId);
       if (!nextWorld) {
         nextWorld = new World(mapId);
         if (this.midriseAsset) nextWorld.setHeroBuildings(this.midriseAsset.root, this.midriseAsset.size);
       }
-      this.world.group.removeFromParent();
+      this.activeWorld?.group.removeFromParent();
       this.worldCache.delete(mapId);
       this.worldCache.set(mapId, nextWorld);
       if (this.worldCache.size > WORLD_CACHE_LIMIT) {
@@ -1349,7 +1332,7 @@ export class Game {
         this.worldCache.get(oldest)!.dispose();
         this.worldCache.delete(oldest);
       }
-      this.world = nextWorld;
+      this.activeWorld = nextWorld;
       this.applyCityLight(mapId);
       this.scene.add(this.world.group);
       this.orders = [];
@@ -1357,10 +1340,32 @@ export class Game {
       this.greenCooldown.clear();
       this.world.hideDestination();
       this.car.resetPose(0, 0, Math.PI);
-      this.traffic.setWorld(this.world, this.car.pos);
+      this.activeTraffic?.setWorld(nextWorld, this.car.pos);
       this.police.stop();
     }
     this.buildMinimapBase();
+  }
+
+  private prepareWorldModels(): void {
+    if (this.worldModelsRequested) return;
+    this.worldModelsRequested = true;
+    void loadGameAssets().then((assets) => {
+      if (this.disposed) {
+        for (const model of [...assets.traffic, assets.police, assets.midrise]) {
+          if (model) disposeCarVisual(model.root);
+        }
+        return;
+      }
+      this.assetsReady = true;
+      this.traffic.setCarModels(assets.traffic.map((m) => m.root));
+      if (assets.police) this.police.setModel(assets.police.root, assets.police.size.y + 0.05);
+      if (assets.midrise) {
+        this.midriseAsset = assets.midrise;
+        for (const world of this.worldCache.values()) {
+          world.setHeroBuildings(assets.midrise.root, assets.midrise.size);
+        }
+      }
+    });
   }
 
   // ================= profile / economy =================
@@ -1759,7 +1764,6 @@ export class Game {
     this.mmCanvas.id = "minimap";
     this.mmCanvas.width = this.mmCanvas.height = 150;
     this.hudEl.appendChild(this.mmCanvas);
-    this.buildMinimapBase();
 
     this.toastEl = el("div", "toast");
     heading.appendChild(this.toastEl);
@@ -2828,7 +2832,7 @@ export class Game {
       this.nevaMarkings.geometry.dispose();
       this.nevaMarkings.material.dispose();
     }
-    this.traffic.dispose();
+    this.activeTraffic?.dispose();
     this.police.dispose();
     this.effects.dispose();
     for (const world of this.worldCache.values()) world.dispose();
