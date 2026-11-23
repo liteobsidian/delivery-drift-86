@@ -728,11 +728,15 @@ export class Game {
   }
 
   private renderPlay(): void {
+    const upcoming = nextEvent(this.profile.career);
     this.screenEl.style.display = "flex";
     this.screenEl.innerHTML = `<div class="panel journey-panel">
       <div class="journey-eyebrow">НОЧНОЙ КУРЬЕР · ${WORLD_MAPS.find((map) => map.id === this.profile.mapId)?.name}</div>
       <h2>ВЫБЕРИ ЗАЕЗД</h2>
-      <button class="career-entry" data-a="career"><span><small>ЧЕМПИОНАТ · 5 ГЛАВ</small><b>Карьера</b></span><strong>${nextEvent(this.profile.career)?.title ?? "Все этапы пройдены"} →</strong></button>
+      <button type="button" class="career-entry" data-a="career" style="--district-image:url('${MAP_PREVIEWS[upcoming?.map ?? "sochi"]}')">
+        <span><small>ЧЕМПИОНАТ · 5 ГЛАВ</small><b>Карьера</b></span>
+        <strong>${upcoming ? "Этап " + upcoming.number + " · " + upcoming.title : "Все этапы пройдены"}</strong><i class="career-arrow" aria-hidden="true"></i>
+      </button>
       <button type="button" class="neva-feature activity-card" data-a="neva">
         <b>ДОСТАВЬ КРАСИВО</b><span>Петербург · турбожига · два поворота с премией за занос</span>
         <i aria-hidden="true">→</i>
@@ -786,24 +790,39 @@ export class Game {
       back: () => this.showScreen("play"),
       launch: () => this.startCareer(event),
     };
+    const cities = ["Токио", "Ёкохама", "Петербург", "Казань", "Сочи"];
     const chapters = WORLD_MAPS.map((map, index) => {
       buttons["chapter-" + index] = () => this.openCareer(EVENTS.find(e => e.map === map.id && !stars[e.id]) ?? EVENTS[index * 3 + 2]);
-      return `<button data-a="chapter-${index}" aria-pressed="${index === event.chapter}">${["Токио","Ёкохама","Петербург","Казань","Сочи"][index]}</button>`;
+      return `<button type="button" data-a="chapter-${index}" aria-pressed="${index === event.chapter}">
+        <span>${cities[index]}</span></button>`;
     }).join("");
     const stages = EVENTS.filter(e => e.map === event.map).map(e => {
       buttons["stage-" + e.number] = () => this.openCareer(e);
-      return `<button data-a="stage-${e.number}" aria-pressed="${event === e}"><small>ЭТАП ${e.number}</small><b>${e.title}</b><span>${stars[e.id] ? "★".repeat(stars[e.id]) + "☆".repeat(3-stars[e.id]) : canRace(e,stars) ? "Открыт" : "Закрыт"}</span></button>`;
+      const best = stars[e.id] ?? 0;
+      const status = best ? "★".repeat(best) + "☆".repeat(3 - best) : canRace(e, stars) ? "Открыт" : "Закрыт";
+      return `<button type="button" data-a="stage-${e.number}" aria-pressed="${event === e}">
+        <span><small>ЭТАП ${e.number}</small><i>${status}</i></span><b>${e.title}</b></button>`;
     }).join("");
     this.screenEl.style.display = "flex";
-    this.screenEl.innerHTML = `<section class="career-board">
-      <header><button class="btn small" data-a="back">‹ Назад</button><h2>Карьера</h2><strong>★ ${count} / 45</strong></header>
-      <nav aria-label="Главы карьеры">${chapters}</nav>
-      <div class="career-body"><div class="career-city" style="background-image:linear-gradient(0deg,#101321 5%,transparent 85%),url('${MAP_PREVIEWS[event.map]}')">
-      <small>ГЛАВА ${event.chapter + 1} / 5</small><h3>${district.name}</h3><p>${WORLD_MAPS[event.chapter+1] ? "За финал главы откроется " + WORLD_MAPS[event.chapter+1].name : "Финал чемпионата"}</p></div>
-      <div class="career-brief"><div class="career-stages">${stages}</div>
-      <div class="career-details"><h3>${event.title}</h3><ul>${[1,2,3].map(t => `<li><b>${"★".repeat(t)}</b> ${goal(event,t)}</li>`).join("")}</ul>
-      <small>Премия за новую звезду · ₽${100+50*event.chapter}</small></div>
-      <button class="btn primary" data-a="launch" ${available ? "" : "disabled"}>${available ? stars[event.id] ? "Улучшить результат" : "Старт" : "Пройди этап " + (event.number-1)}</button></div></div></section>`;
+    this.screenEl.innerHTML = `<section class="career-board" aria-label="Карьера">
+      <header class="career-mast"><button class="career-back" type="button" data-a="back" aria-label="Назад к заездам">←</button>
+        <h2>Карьера</h2><nav aria-label="Главы карьеры">${chapters}</nav>
+        <strong class="career-score" aria-label="Звёзды чемпионата: ${count} из 45"><i>★</i> ${count}<small>/45</small></strong>
+      </header>
+      <div class="career-atlas">
+        <div class="career-city" style="--district-image:url('${MAP_PREVIEWS[event.map]}')">
+          <div class="career-caption"><small>ГЛАВА ${String(event.chapter + 1).padStart(2,"0")} / 05</small><h3>${cities[event.chapter]}</h3>
+          <p>${WORLD_MAPS[event.chapter+1] ? "За финал главы · " + WORLD_MAPS[event.chapter+1].name : "Финал чемпионата"}</p></div>
+        </div>
+        <div class="career-stages" role="group" aria-label="Этапы · ${district.name}">${stages}</div>
+        <aside class="career-brief" aria-label="Задание этапа">
+          <div class="career-docket"><small>ЭТАП ${String(event.number).padStart(2,"0")} / 15</small><strong>${MODE_NAMES[event.mode]}</strong></div>
+          <h3>${event.title}</h3>
+          <ul>${[1,2,3].map(t => `<li><b aria-label="Звёзд: ${t}">${"★".repeat(t)}</b><span>${goal(event,t)}</span></li>`).join("")}</ul>
+          <div class="career-prize"><span>За новую звезду</span><strong>+ ₽${100+50*event.chapter}</strong></div>
+          <button class="career-launch" type="button" data-a="launch" ${available ? "" : "disabled"}><b>${available ? stars[event.id] ? "Улучшить результат" : "На старт" : "Пройди этап " + (event.number-1)}</b><i class="career-arrow" aria-hidden="true"></i></button>
+        </aside>
+      </div></section>`;
     this.bindScreen(buttons);
     const cover = this.screenEl.querySelector<HTMLElement>(".career-city")!;
     let startX = 0;
@@ -842,7 +861,7 @@ export class Game {
       const locked = !mapOpen(map.id,this.profile);
       return `<button class="map-card track-card ${this.profile.mapId === map.id ? "selected" : ""} ${locked ? "locked" : ""}" data-a="map:${map.id}" ${locked ? "disabled" : ""} aria-pressed="${this.profile.mapId === map.id}">
         <span class="track-art">
-          <img src="${MAP_PREVIEWS[map.id]}" alt="" width="456" height="384" loading="lazy" decoding="async">
+          <img src="${MAP_PREVIEWS[map.id]}" alt="" width="768" height="340" loading="lazy" decoding="async">
           ${locked ? "<b class='track-lock' aria-hidden='true'>🔒</b>" : ""}
         </span>
         <b>${map.name}</b>

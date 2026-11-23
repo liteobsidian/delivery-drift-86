@@ -169,7 +169,7 @@ for (const mode of ["delivery", "drift-trial", "time-attack", "radio-silence"]) 
 await page.locator('[data-a="activity:delivery"]').click();
 await page.waitForFunction(() => {
   const images = [...document.querySelectorAll(".track-art img")];
-  return images.length === 5 && images.every((image) => image.complete && image.naturalWidth === 456) &&
+  return images.length === 5 && images.every((image) => image.complete && image.naturalWidth === 768 && image.naturalHeight === 340) &&
     new Set(images.map((image) => image.src)).size === 5;
 });
 const lockedPortMap = page.locator('[data-a="map:yokohama"]');

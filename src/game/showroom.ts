@@ -38,7 +38,8 @@ export function createShowroom() {
   let car: THREE.Group | undefined;
   let activeModel: LoadedModel | undefined;
   let activeTune = "";
-  const parkingHeading = Math.atan2(3.8, 5.4);
+  const inspectionHeading = Math.atan2(3.8, 5.4);
+  const parkingHeading = inspectionHeading - THREE.MathUtils.degToRad(19);
   carGroup.rotation.y = parkingHeading;
 
 
@@ -87,9 +88,9 @@ export function createShowroom() {
       if (glow) glow.visible = false;
       applyUpgradeLooks(car, up);
       carGroup.add(car);
-      weather.sample(car);
+      weather.sample(car, box.translate(car.position));
       if (changedCar) {
-        carGroup.rotation.y = parkingHeading;
+        carGroup.rotation.y = inspectionHeading;
       }
     },
     rotate(radians: number): void {
