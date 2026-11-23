@@ -38,7 +38,8 @@ export function createShowroom() {
   let car: THREE.Group | undefined;
   let activeModel: LoadedModel | undefined;
   let activeTune = "";
-  let resumeAfter = 0;
+  const parkingHeading = Math.atan2(3.8, 5.4);
+  carGroup.rotation.y = parkingHeading;
 
 
   function clearCar(): void {
@@ -88,15 +89,13 @@ export function createShowroom() {
       carGroup.add(car);
       weather.sample(car);
       if (changedCar) {
-        carGroup.rotation.y = 0;
-        resumeAfter = 0.85;
+        carGroup.rotation.y = parkingHeading;
       }
     },
     rotate(radians: number): void {
       carGroup.rotation.y += radians;
-      resumeAfter = 2.5;
     },
-    update(dt: number, autoRotate: boolean, outside: boolean): void {
+    update(dt: number, animateRain: boolean, outside: boolean): void {
       scene.background = outside ? street : workshop;
       // Preserve the workshop photograph's proportions even on a tall phone.
       if (!outside && workshop.image?.width) {
@@ -105,16 +104,12 @@ export function createShowroom() {
         workshop.offset.set((1 - workshop.repeat.x) / 2, (1 - workshop.repeat.y) / 2);
       }
       // The street has a fixed parking direction independent of the workshop turntable.
-      if (outside) carGroup.rotation.y = Math.atan2(3.8, 5.4) - 0.14;
-      weatherGroup.visible = outside && autoRotate;
+      if (outside) carGroup.rotation.y = parkingHeading;
+      weatherGroup.visible = outside && animateRain;
       weatherGroup.rotation.y = ground.group.rotation.y = carGroup.rotation.y;
       ground.group.visible = !!car;
       ground.rails.visible = !outside;
       if (weatherGroup.visible) weather.update(dt);
-      if (outside) return;
-      if (!car || !autoRotate) return;
-      if (resumeAfter > 0) resumeAfter -= dt;
-      else carGroup.rotation.y += dt * 0.15;
     },
     dispose(): void {
       clearCar();

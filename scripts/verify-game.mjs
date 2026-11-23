@@ -199,12 +199,17 @@ if (!tokyoLayout.signals.length || (await page.evaluate((signals) => signals.som
 await page.waitForTimeout(700);
 async function verifyRoadside(page, ids) {
   for (const id of ids) {
-    const visible = await page.evaluate(id => {
+    await page.waitForFunction(id => {
       const debug = window.__gameDebug;
-      const sprite = debug.scene.getObjectByName("roadside-" + id);
-      return !!sprite?.material.map.image?.width && !debug.roadProbe(sprite.position.x, sprite.position.z).onRoad;
+      const figure = debug.scene.getObjectByName("roadside-" + id);
+      return figure?.material.map.image?.width && !debug.roadProbe(figure.position.x, figure.position.z).onRoad;
     }, id);
-    if (!visible) fail("Missing or misplaced roadside character " + id);
+    const frame = await page.evaluate(id =>
+      window.__gameDebug.scene.getObjectByName("roadside-" + id).material.map.offset.toArray(), id);
+    await page.waitForFunction(([id, x, y]) => {
+      const offset = window.__gameDebug.scene.getObjectByName("roadside-" + id).material.map.offset;
+      return offset.x !== x || offset.y !== y;
+    }, [id, ...frame]);
   }
 }
 await verifyRoadside(page, [0, 1]);
