@@ -15,6 +15,7 @@ import { circleOrientedRectContact, cityBuildingMeshYaw, generateCityBuildingSit
 import { BuildingSpatialIndex } from "./building-spatial-index";
 import { cityLayoutFor, distanceToRoad, distanceToRoadPath, gantrySupports, worldLengthToTexturePixels, worldToTextureCoordinate, type CityParcel, type CityPoint } from "./map-layouts";
 import { RoadSpatialIndex } from "./road-spatial-index";
+import { perimeterBounds, buildPerimeter } from "./city-perimeter";
 import { StreetLights } from "./street-lights";
 import { paintRoadSurface, transverseMarking } from "./road-surface";
 import { buildRampArrows, buildRampSurface, rampProfileHeight, RAMP_ARROW_LEAD, RAMP_HEIGHT, type Ramp } from "./ramps";
@@ -102,6 +103,7 @@ const RAMP_ARROW_CYCLES_PER_SECOND = 1.65;
 export class World {
   readonly mapId: MapId;
   readonly layout;
+  readonly perimeter;
   readonly buildingSites: CityBuildingSite[];
   readonly group = new THREE.Group();
   readonly buildings: AABB[] = [];
@@ -140,6 +142,8 @@ export class World {
   constructor(mapId: MapId = "tokyo") {
     this.mapId = mapId;
     this.layout = cityLayoutFor(mapId);
+    this.perimeter = perimeterBounds(this.layout);
+    this.group.add(buildPerimeter(this.layout, this.perimeter));
     this.roadIndex = new RoadSpatialIndex(this.layout);
     this.deckSites = [
       ...this.layout.landmarks.filter((site) => site.kind === "bridge"),
@@ -307,8 +311,9 @@ export class World {
   ): number {
     const candidates = this.buildingIndex.query(pos.x, pos.z, radius);
     let impact = this.buildingIndex.resolve(candidates, pos, radius, vel);
-    // world bounds
-    const { minX, maxX, minZ, maxZ } = this.layout.bounds;
+    // The car's hull touches the rendered inner face before its centre reaches it.
+    const minX = this.perimeter.minX + radius, maxX = this.perimeter.maxX - radius;
+    const minZ = this.perimeter.minZ + radius, maxZ = this.perimeter.maxZ - radius;
     if (pos.x < minX || pos.x > maxX) {
       impact = Math.max(impact, Math.abs(vel.x));
       pos.x = Math.max(minX, Math.min(maxX, pos.x));

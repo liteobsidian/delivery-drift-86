@@ -212,6 +212,17 @@ async function verifyRoadside(page, ids) {
     }, [id, ...frame]);
   }
 }
+const outerLanesClear = await page.evaluate(() => {
+  const d = window.__gameDebug;
+  const wall = d.scene.getObjectByName("city-perimeter");
+  const b = d.roadProbe(0, 0).bounds;
+  return wall?.children.length === 4 && [-1, 1].every(sign =>
+    [[sign * 177.5, 29], [29, sign * 177.5]].every(([x,z]) => {
+      const p = d.resolveBoundary(x,z);
+      return p.x === x && p.z === z && d.roadProbe(x,z).onRoad;
+    })) && d.resolveBoundary(b.maxX + 5, 29).x === b.maxX - 1;
+});
+if (!outerLanesClear) fail("An outer Tokyo lane is blocked or its concrete perimeter disagrees with collision");
 await verifyRoadside(page, [0, 1]);
 await page.screenshot({ path: join(SHOTS, "06-tokyo-network.png") });
 await page.evaluate(() => window.__gameDebug?.exitMode?.());
