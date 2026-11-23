@@ -995,8 +995,8 @@ html, body, #root {
 .track-card.selected { border-color: #00e5ff; box-shadow: 0 0 20px rgba(0,229,255,.2), inset 0 0 18px rgba(0,229,255,.1); }
 .track-card.locked { filter: saturate(.72); cursor: not-allowed; }
 .track-lock { position: absolute; top: 12px; left: 12px; padding: 8px 10px; border-radius: 18px; background: rgba(6,10,19,.8); }
-.track-progress { color: #ffd24a !important; }
-.track-enter { color: #00e5ff !important; font-size: 10px !important; font-weight: 900; letter-spacing: 1px; }
+.track-progress { color: var(--selected-violet) !important; }
+.track-enter { color: var(--signal-blue) !important; font-size: 10px !important; font-weight: 900; letter-spacing: 1px; }
 
 @media (max-width: 680px) {
   .home-box { padding: 18px 16px; }
@@ -1017,13 +1017,13 @@ html, body, #root {
   margin: 0 auto 10px;
   padding: 16px 48px 16px 18px;
   text-align: left;
-  border-color: #905e3d;
-  background: linear-gradient(115deg, #2c2430, #182737 74%, #153443);
+  border-color: var(--edge);
+  background: linear-gradient(115deg, #2a2445, #191e37 74%, #202a55);
 }
-.neva-feature b { color: #ffd195; font-size: 15px; }
-.neva-feature span { font-size: 12px; color: #d2c7c5; }
-.neva-feature i { position: absolute; right: 18px; top: 20px; color: #ffd195; font-style: normal; font-size: 20px; }
-.neva-feature:hover { border-color: #ffc06a; background: linear-gradient(115deg, #3a2935, #1d3643); }
+.neva-feature b { color: var(--signal-blue); font-size: 15px; }
+.neva-feature span { font-size: 12px; color: var(--muted-ink); }
+.neva-feature i { position: absolute; right: 18px; top: 20px; color: var(--signal-blue); font-style: normal; font-size: 20px; }
+.neva-feature:hover { border-color: var(--selected-violet); background: linear-gradient(115deg, #352750, #202545); }
 
 .neva-brief {
   box-sizing: border-box;
@@ -1035,17 +1035,17 @@ html, body, #root {
   gap: clamp(16px, 3vw, 28px);
   align-items: center;
   overflow-y: auto;
-  border-color: #63524a;
+  border-color: var(--edge);
 }
-.neva-brief h2 { color: #ffdfb4; text-align: left; margin: 6px 0 12px; }
+.neva-brief h2 { color: var(--paper); text-align: left; margin: 6px 0 12px; }
 .neva-brief p { margin: 0 0 14px; color: #c5cce4; line-height: 1.5; font-size: 14px; }
-.neva-brief .neva-goal { color: #ffc981; font-weight: 700; }
+.neva-brief .neva-goal { color: var(--signal-blue); font-weight: 700; }
 .neva-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .neva-actions .btn { min-width: 0; margin: 0; }
 .neva-route { margin: 0; min-width: 0; }
 .neva-route canvas { width: 100%; height: auto; display: block; border-radius: 10px; }
-.neva-route figcaption { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px 14px; color: #ffca82; font-size: 11px; }
-.neva-score { font-size: 18px; color: #ffcc89; }
+.neva-route figcaption { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--selected-violet); font-size: 11px; }
+.neva-score { font-size: 18px; color: var(--signal-blue); }
 .neva-share { margin: 10px 0; text-align: left; }
 .neva-share input { box-sizing: border-box; width: 100%; padding: 8px 10px; color: #e9edff; background: #11172b; border: 1px solid #424d6e; border-radius: 6px; }
 .neva-share small { color: #addadf; }
