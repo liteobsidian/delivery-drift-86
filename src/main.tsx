@@ -3,6 +3,12 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router'
 import './index.css'
 import "./night-workshop.css";
+import "./landscape.css";
+import "./paddock.css";
+import "./event-select.css";
+import "./race-result.css";
+import "./player-hub.css";
+import "./race-shell.css";
 import App from './App.tsx'
 
 createRoot(document.getElementById('root')!).render(
@@ -12,4 +18,3 @@ createRoot(document.getElementById('root')!).render(
     </BrowserRouter>
   </StrictMode>,
 )
-import "./landscape.css";

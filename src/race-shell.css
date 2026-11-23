@@ -1,0 +1,48 @@
+@font-face {
+  font-family: "Rubik Race";
+  src: url("./assets/fonts/rubik-race.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 800;
+  font-display: swap;
+}
+:root { --race-display: "Rubik Race", "Arial Black", sans-serif; }
+#ui-overlay .screen-wrap :is(h1,h2), .pit-guide h3 {
+  font-family: var(--race-display);
+  font-style: italic;
+  font-weight: 800;
+}
+#ui-overlay .screen-wrap[data-screen="paused"] { padding: max(12px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); box-sizing:border-box }
+.pit-pause,.tutorial .pit-guide {
+  box-sizing:border-box; color:#f5f6ff; background:#111427; border:1px solid #555577;
+  box-shadow:0 18px 70px #08071cbd;
+}
+.pit-pause { display:grid; grid-template-columns:1fr 1fr; width:min(780px,100%); height:min(375px,100%); min-height:0; text-align:left }
+.pit-pause header { align-content:end; padding:clamp(14px,3vw,38px); background:linear-gradient(0deg,#16142df5,transparent 110%),var(--pause-art) center/cover }
+.pit-pause header span,.pit-guide header span { font:700 12px/1.2 system-ui,sans-serif; color:#9beaff; letter-spacing:.07em; text-transform:uppercase }
+.pit-pause h2,.tutorial .pit-guide h3 { font:italic 800 clamp(28px,5vw,62px)/1 var(--race-display); letter-spacing:-.04em; margin:7px 0; text-align:left; text-shadow:none }
+.pit-pause header strong { font-size:16px; }
+.pit-actions { min-height:0; display:grid; grid-template-rows:minmax(0,1fr) auto; gap:12px; padding:clamp(10px,2vw,22px) }
+.pit-actions nav,.pit-guide-scroll { overflow:auto; overscroll-behavior:contain; touch-action:pan-y; scrollbar-width:thin; scrollbar-color:#696496 transparent }
+.pit-actions button,.pit-guide button { cursor:pointer; color:inherit; }
+.pit-actions nav button { width:100%; border:0; border-bottom:1px solid #4b4868; min-height:42px; background:#191d36; text-align:left; padding:8px 12px; font:600 15px system-ui,sans-serif }
+.pit-actions nav button::after { content:"›"; float:right; color:#91b9ea }
+.pit-actions .pit-primary,.pit-guide .pit-primary { min-height:44px; font:italic 800 18px var(--race-display); text-transform:uppercase; background:linear-gradient(108deg,#5b37ac,#96318f); border:1px solid #d892f7; padding:8px 18px; text-align:left }
+.pit-primary i { float:right }
+.pit-pause button:active,.pit-guide button:active { filter:brightness(1.24) }
+.pit-pause button:focus-visible,.pit-guide button:focus-visible { outline:2px solid #92f1ff; outline-offset:-3px }
+dialog.tutorial { border-radius:0; max-height:calc(100dvh - 24px); }
+.tutorial .pit-guide { width:min(660px,calc(100vw - 32px)); max-height:calc(100dvh - 28px); border-radius:0; border-top:3px solid #9b76ff; padding:clamp(12px,2vw,22px); display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:10px }
+.tutorial .pit-guide h3 { font-size:clamp(23px,4vw,38px); }
+.pit-guide-scroll { display:grid; grid-template-columns:1fr 1fr; gap:8px; min-height:0 }
+.pit-hint { border-left:2px solid #7c85d0; margin:0; background:#20243b; padding:10px; align-items:start; font-size:14px; }
+.pit-hint h4 { margin:0 0 5px; color:#aad7ff; font-size:14px }
+.pit-hint p { margin:0; line-height:1.35 }
+.weekly-event-shade .weekly-event-card {
+  width:min(550px,100%); padding:clamp(18px,4vw,38px); box-sizing:border-box;
+  background:linear-gradient(90deg,#11112bf2 12%,#17142bc9 68%,#171a4766),var(--event-art) center/cover;
+  border:1px solid #737199; border-left:4px solid #c78cfa; border-radius:0;
+}
+.weekly-event-card .journey-eyebrow { color:#a5edff; }
+.weekly-event-card #weekly-event-title { font-size:clamp(28px,4.3vw,48px); line-height:1; }
+.weekly-event-card p { max-width:35ch; color:#f2edff; }
+.weekly-event-actions .btn { min-height:44px; border-radius:0; }
