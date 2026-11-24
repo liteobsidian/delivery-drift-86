@@ -38,15 +38,48 @@
 .garage-ingress {display:flex;align-items:center;justify-content:space-between;gap:8px}
 .garage-ingress .garage-status {margin:0;font-size:12px;color:#d6c6f5}
 .car-counter,.pit-readout small {font:700 11px/1.2 ui-monospace,monospace;letter-spacing:.09em;color:#a5dfff}
-.garage-inspection .garage-specs {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
-.garage-inspection .garage-specs > div {padding:.4em 0 .5em;border-block:1px solid #655977}
-.garage-inspection .garage-specs dd {font-size:clamp(16px,2.1vw,32px);line-height:1.1}
-.garage-specs dd small {font-weight:500;font-size:.58em}
+.garage-inspection .garage-specs {grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(4px,.8vw,10px)}
+.garage-speed {--stat-accent:#9ce7ff}
+.garage-accel {--stat-accent:#ffc3e8}
+.garage-grip {--stat-accent:#d6c3ff}
+.garage-inspection .garage-specs > div {
+  display:grid;align-content:start;min-width:0;gap:5px;padding:8px clamp(4px,.85vw,12px);
+  border:1px solid #504764;border-top:2px solid var(--stat-accent);border-radius:5px;
+  background:linear-gradient(145deg,#302a45,#171a30)
+}
+.garage-specs dt {font-size:clamp(10px,1vw,13px);font-weight:700;line-height:1.15;color:#ded5ed}
+.garage-inspection .garage-specs dd {
+  display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 4px;color:var(--stat-accent);
+  font:italic 800 clamp(24px,3.1vw,42px)/1 var(--race-display,system-ui,sans-serif);
+  font-variant-numeric:tabular-nums;letter-spacing:-.035em
+}
+.garage-specs dd small {color:#d9d4ea;font:650 11px/1.15 system-ui,sans-serif;letter-spacing:0}
 .garage-unlock {margin:0;color:#dccde8;font-size:12px;line-height:1.4}
 .garage-picker,.pit-rack {border-top:1px solid #8676a0}
-.garage-roster .garage-tab {isolation:isolate;position:relative;overflow:hidden;background:#171829;color:#d6cde9}
-.garage-roster .garage-tab[aria-pressed=true],.pit-rack [aria-pressed=true] {background:linear-gradient(135deg,#45305c,#242038);color:white}
-.garage-tab[aria-pressed=true]::after,.pit-rack [aria-pressed=true]::after {
+.garage-picker {
+  gap:6px;padding:5px max(7px,env(safe-area-inset-right)) max(5px,env(safe-area-inset-bottom)) max(7px,env(safe-area-inset-left));
+  background:#101122
+}
+.garage-roster {block-size:clamp(54px,10.5dvh,82px);gap:5px;scrollbar-width:none}
+.garage-roster .garage-tab {
+  display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;
+  flex:1 0 max-content;min-width:106px;align-items:stretch;gap:0;padding:0;overflow:hidden;
+  border:1px solid #4b425e;border-radius:6px;background:#201e34;color:#e6dff4
+}
+.garage-tab img {display:block;width:100%;height:100%;min-height:0;object-fit:cover;object-position:center 64%}
+.garage-tab-name {
+  display:flex;align-items:center;justify-content:center;gap:6px;padding:4px 7px;
+  font-size:11px;font-weight:650;line-height:1.15;white-space:nowrap
+}
+.garage-tab-name::before {
+  content:"";flex:0 0 7px;height:7px;border-radius:50%;background:var(--car-paint);box-shadow:0 0 0 1px #edf1ff50
+}
+.garage-roster .garage-tab[aria-pressed=true] {border-color:#d3aaff;background:#3b2852;color:white;box-shadow:none}
+.garage-roster .garage-tab:hover,.garage-picker .garage-arrow:hover {border-color:var(--signal-blue)}
+.garage-roster .garage-tab:focus-visible {outline-offset:-3px}
+.garage-picker .garage-arrow {border-color:#4b425e;border-radius:6px;background:#1c1d34;color:var(--signal-blue)}
+.pit-rack [aria-pressed=true] {background:linear-gradient(135deg,#45305c,#242038);color:white}
+.pit-rack [aria-pressed=true]::after {
   content:"";position:absolute;inset:auto 0 0;height:3px;background:linear-gradient(90deg,#82d6ff,#c497ff,#ff95da)
 }
 .garage-header,.pit-head,.career-mast {background:linear-gradient(100deg,#17162aef,#161729f7 60%,#2a1d36f5);border-bottom:1px solid #655a7f}
@@ -72,11 +105,16 @@
   .home-box .home-links svg {width:17px;height:17px}
   .career-brief,.garage-display .garage-detail,.pit .pit-detail {padding:8px 11px max(8px,env(safe-area-inset-bottom))}
   .career-objectives,.garage-inspection,.pit-readout {gap:5px}
-  .garage-inspection .garage-specs > div {padding:3px 0}
+  .garage-inspection h3 {font-size:clamp(18px,3.1vw,24px)}
+  .garage-inspection .garage-specs > div {gap:3px;padding-block:5px}
   .pit-car {padding:8px 12px}
   .pit-car button {min-height:36px}
   .career-mast h2 {font-size:16px}
   .career-mast nav button {padding:0 6px}
+}
+@media (max-height:350px) and (orientation:landscape) {
+  .garage-display .garage-detail,.garage-inspection {gap:4px}
+  .garage-inspection .garage-specs > div {padding-block:4px}
 }
 .garage-purchase .btn,.pit button.pit-install {min-height:44px}
 .garage-inspection h3,.pit-readout h3,.career-caption h3,.career-objectives h3 {

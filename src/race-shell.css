@@ -6,6 +6,23 @@
   font-display: swap;
 }
 :root { --race-display: "Rubik Race", "Arial Black", sans-serif; }
+.race-countdown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, #0c0a2499, transparent 55%);
+}
+.race-countdown[hidden] { display: none; }
+.race-countdown-digit {
+  color: #f5f6ff;
+  font: italic 800 clamp(76px, 24vmin, 190px)/1 var(--race-display);
+  text-shadow: 0 4px 0 #6441ac, 0 7px 0 #24143c, 0 0 32px #af79ffb3, 0 0 70px #71caff70;
+}
+@media (prefers-reduced-motion: reduce) {
+  .race-countdown-digit { opacity: 1 !important; transform: none !important; }
+}
 #ui-overlay .screen-wrap :is(h1,h2), .pit-guide h3 {
   font-family: var(--race-display);
   font-style: italic;
