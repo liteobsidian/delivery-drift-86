@@ -61,6 +61,13 @@ const server = createServer(async (req, res) => {
 
 const fail = (msg) => { console.error("VERIFY FAIL:", msg); server.close(); process.exit(1); };
 
+async function waitForRaceStart(page) {
+  await page.waitForFunction(() => {
+    const debug = window.__gameDebug;
+    return debug.screen() === "playing" && debug.modeState().elapsed > 0;
+  });
+}
+
 await new Promise((r) => server.listen(0, r));
 const port = server.address().port;
 // prefer the playwright-bundled browser; fall back to system chrome (CHROMIUM_PATH overrides)
@@ -208,7 +215,43 @@ await page.screenshot({ path: join(SHOTS, "04-tracks-locked.png") });
 await page.locator('[data-a="map:tokyo"]').press("Space");
 const firstTutorial = page.locator("dialog.tutorial[open]");
 if (!(await firstTutorial.getByText(/WASD/).isVisible())) fail("Desktop tutorial did not show keyboard controls");
+const raceCountdown = page.locator(".race-countdown");
+const tutorialTick = await page.evaluate(() => window.__gameDebug.ticks());
+await page.waitForFunction((tick) => window.__gameDebug.ticks() > tick + 8, tutorialTick);
+if (await raceCountdown.isVisible() || (await page.evaluate(() => window.__gameDebug.modeState().elapsed)) !== 0) {
+  fail("The race countdown did not wait for the tutorial");
+}
+const countdownTrace = await page.evaluateHandle(() => {
+  const overlay = document.querySelector(".race-countdown");
+  const digit = overlay.querySelector(".race-countdown-digit");
+  const startPosition = JSON.stringify(window.__gameProbe());
+  const trace = { digits: [], frozen: true };
+  requestAnimationFrame(function sample() {
+    const elapsed = window.__gameDebug.modeState().elapsed;
+    if (!overlay.hidden) {
+      const current = digit.textContent.trim();
+      if (trace.digits.at(-1) !== current) trace.digits.push(current);
+      if (elapsed !== 0 || JSON.stringify(window.__gameProbe()) !== startPosition) trace.frozen = false;
+    } else if (trace.digits.length || elapsed > 0) {
+      return;
+    }
+    requestAnimationFrame(sample);
+  });
+  return trace;
+});
 await firstTutorial.locator('[data-a="tut-ok"]').press("Space");
+await page.keyboard.down("KeyW");
+try {
+  await waitForRaceStart(page);
+} finally {
+  await page.keyboard.up("KeyW");
+}
+const countdownResult = await countdownTrace.jsonValue();
+await countdownTrace.dispose();
+if (countdownResult.digits.join(",") !== "3,2,1" || await raceCountdown.isVisible()) {
+  fail(`Expected a 3, 2, 1 countdown that clears at the start, saw ${JSON.stringify(countdownResult.digits)}`);
+}
+if (!countdownResult.frozen) fail("The car moved or the race timer advanced during the countdown");
 if (await page.evaluate(() => window.__gameDebug?.mapId?.()) !== "tokyo") fail("Neon Tokyo could not be selected");
 if (await page.evaluate(() => window.__gameDebug?.portVisuals?.())) fail("Port-only props leaked into Neon Tokyo");
 if (await page.evaluate(() => window.__gameDebug?.screen?.()) !== "playing") fail("Choosing a map did not start the selected delivery");
@@ -285,7 +328,7 @@ const yokohamaLayout = await page.evaluate(() => window.__gameDebug.layoutSnapsh
 if (!yokohamaLayout.signals.length || (await page.evaluate((signals) => signals.some((point) => !window.__gameDebug.roadProbe(point.x, point.z).onRoad), yokohamaLayout.signals))) fail("Yokohama signal junctions are not on authored roads");
 const layoutSignature = (layout) => JSON.stringify(layout.roads.map(({ id, points }) => [id, points]));
 if (layoutSignature(tokyoLayout) === layoutSignature(yokohamaLayout)) fail("Tokyo and Yokohama minimap road topologies are identical");
-await page.waitForTimeout(700);
+await waitForRaceStart(page);
 await page.screenshot({ path: join(SHOTS, "07-yokohama-network.png") });
 // Inspect the port props from a normal approach road, at the same following-camera height as play.
 await page.evaluate(() => window.__gameDebug.teleport(45, 47, 0));
@@ -336,12 +379,14 @@ await shelfBack.click();
 await page.setViewportSize({ width: 1280, height: 720 });
 await page.locator('[data-a="weekly-tab"]').click();
 await page.locator('[data-a="weekly:0"]').click();
+await waitForRaceStart(page);
 await page.evaluate(() => window.__gameDebug?.finishWeekly?.());
 if ((await page.evaluate(() => window.__gameDebug?.weeklyProgress?.()?.completed?.length)) !== 1) fail("Completing a weekly route was not saved");
 await page.locator('[data-a="menu"]').click();
 await page.locator('[data-a="profile"]').click();
 await page.locator('[data-a="weekly-tab"]').click();
 await page.locator('[data-a="weekly:0"]').click();
+await waitForRaceStart(page);
 await page.evaluate(() => window.__gameDebug?.finishWeekly?.());
 if ((await page.evaluate(() => window.__gameDebug?.weeklyProgress?.()?.completed?.length)) !== 1) fail("Replaying a weekly route changed completed route progress");
 await page.locator('[data-a="menu"]').click();
@@ -371,6 +416,7 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
   if (/груз|красн.{0,10}сигнал|штраф/i.test(await tutorial.textContent() ?? "")) fail(`${label} still shows delivery-only hints`);
   if (modeState.elapsed !== 0) fail(`${label} timer advanced while the tutorial was open`);
   await tutorial.locator('[data-a="tut-ok"]').click();
+  await waitForRaceStart(page);
   await page.screenshot({ path: join(SHOTS, `mode-${mode}-hud.png`) });
   if (mode === "time-attack") {
     if (!modeState?.course || modeState.course.checkpoints.length !== 5 || modeState.checkpoint !== 0) fail("Time Attack did not start a fixed five-gate course");
@@ -426,9 +472,11 @@ for (const [mode, label] of [["drift-trial", "DRIFT TRIAL"], ["time-attack", "TI
   }
   else await page.locator('[data-a="replay"]').click();
   if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} replay did not restart the same mode`);
+  if (!(await raceCountdown.isVisible())) fail(`${label} replay did not start a countdown`);
   await page.keyboard.press("Escape");
   await page.locator('[data-a="retry"]').click();
   if (await page.evaluate(() => window.__gameDebug?.mode?.()) !== mode) fail(`${label} paused retry did not restart the same mode`);
+  if (!(await raceCountdown.isVisible())) fail(`${label} paused retry did not start a countdown`);
   if (mode === "time-attack" && (await page.evaluate(() => window.__gameDebug.modeState().checkpoint)) !== 0) fail("Time Attack retry did not reset its checkpoint sequence");
   await page.evaluate(() => window.__gameDebug?.exitMode?.());
 }
@@ -451,6 +499,7 @@ for (let i = 0; i < 2; i++) {
   await page.locator('[data-a="map:tokyo"]').click();
   const orderDest = await page.evaluate(() => window.__gameDebug.orderDest());
   if (!orderDest || !(await page.evaluate((point) => window.__gameDebug.roadProbe(point.x, point.z).onRoad, orderDest))) fail("A regular delivery destination is outside the authored road network");
+  await waitForRaceStart(page);
   await page.evaluate(() => window.__gameDebug?.finishDelivery?.());
   await page.locator('[data-a="menu"]').click();
 }
@@ -540,7 +589,7 @@ await page.screenshot({ path: join(SHOTS, "01-title.png") });
 await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="activity:delivery"]').click();
 await page.locator('[data-a="map:tokyo"]').click();
-await page.waitForTimeout(400);
+await waitForRaceStart(page);
 const nitroBefore = await page.evaluate(() => window.__gameDebug?.nitroFuel?.());
 if (typeof nitroBefore !== "number") fail("Nitro fuel meter is not exposed");
 await page.keyboard.down("KeyW");
@@ -598,11 +647,15 @@ if (probe) {
   console.warn("WARN: window.__gameProbe not injected, skipping direction assertions (expose a player-coordinate probe in src/game/boot.ts)");
 }
 
-// 4) Gameplay screenshot + Esc pause + restart
+// 4) Gameplay screenshot + pause and resume an active race
 await page.screenshot({ path: join(SHOTS, "02-gameplay.png") });
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
 await page.screenshot({ path: join(SHOTS, "03-paused.png") });
+const elapsedAtPause = await page.evaluate(() => window.__gameDebug.modeState().elapsed);
+await page.locator('[data-a="resume"]').click();
+if (await raceCountdown.isVisible()) fail("Resuming an active race started a countdown");
+await page.waitForFunction((elapsed) => window.__gameDebug.modeState().elapsed > elapsed, elapsedAtPause);
 
 console.log("Gameplay smoke passed; checking audit regressions across maps and tabs.");
 // Audit regressions across maps, mobile input, and shared saves.
@@ -677,6 +730,7 @@ await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="activity:delivery"]').click();
 await page.locator('[data-a="map:tokyo"]').click();
 const deliveriesBefore = await page.evaluate(() => window.__gameDebug.profile().deliveries);
+await waitForRaceStart(page);
 await page.evaluate(() => {
   const debug = window.__gameDebug;
   const dest = debug.orderDest();
@@ -690,6 +744,7 @@ await page.locator('[data-a="menu"]').click();
 await page.locator('[data-a="play"]').click();
 await page.locator('[data-a="activity:time-attack"]').click();
 await page.locator('[data-a="map:tokyo"]').click();
+await waitForRaceStart(page);
 await page.evaluate(() => window.__gameDebug.setElapsedForTest(9999));
 await page.locator(".result.bad").waitFor();
 if (!(await page.getByText("Время до схода", { exact: false }).isVisible())) fail("Failed Time Attack was presented as a finished lap");
@@ -701,6 +756,7 @@ await page.locator('[data-a="chapter-1"]').click();
 if (!(await page.locator('[data-a="launch"]').isDisabled())) fail("Unplayed chapter let the player skip its qualifier");
 await page.locator('[data-a="chapter-0"]').click();
 await page.locator('[data-a="launch"]').click();
+await waitForRaceStart(page);
 await page.evaluate(() => window.__gameDebug.finishDelivery());
 await page.getByText("ЭТАП ПРОЙДЕН", {exact:true}).waitFor();
 await page.locator('[data-a="career-next"]').click();
@@ -734,7 +790,8 @@ const tickBefore = await mobile.evaluate(() => window.__gameDebug.ticks());
 await mobile.waitForFunction((start) => window.__gameDebug.ticks() > start + 8, tickBefore);
 if (await mobile.evaluate(() => window.__gameDebug.modeState().elapsed) !== 0) fail("Mobile tutorial consumed race time");
 await touchTutorial.locator('[data-a="tut-ok"]').tap();
-if (!(await mobile.locator("#touch-controls").isVisible())) fail("Touch controls were not enabled after the tutorial");
+await waitForRaceStart(mobile);
+if (!(await mobile.locator("#touch-controls").isVisible())) fail("Touch controls were not enabled after the countdown");
 await mobile.setViewportSize({width:390,height:844});
 await mobile.locator("#turn-phone:modal").waitFor();
 const frozenTime = await mobile.evaluate(() => window.__gameDebug.modeState().elapsed);
@@ -793,6 +850,7 @@ const radioStart = await radioPage.evaluate(() => {
 if (radioStart.hp !== 100 || radioStart.mode !== "radio-silence" || radioStart.phase !== "transmitter" || radioStart.time !== 120 ||
   await radioPage.locator(".hud-cargo").isVisible()) fail(`Invalid Radio Silence start: ${JSON.stringify(radioStart)}`);
 await radioPage.locator('[data-a="tut-ok"]').click();
+await waitForRaceStart(radioPage);
 await radioPage.keyboard.down("KeyW");
 await radioPage.waitForFunction(() => window.__gameDebug.radio()?.phase === "pursuit");
 await radioPage.keyboard.up("KeyW");
@@ -831,6 +889,7 @@ await radioPage.locator('[data-a="replay"]').click();
 if (await radioPage.evaluate(() => window.__gameDebug.radio().escapes !== 0) || await radioPage.locator("dialog.tutorial[open]").count()) {
   fail("Radio Silence replay reused progress or repeated the tutorial");
 }
+await waitForRaceStart(radioPage);
 await radioPage.evaluate(() => window.__gameDebug.setElapsedForTest(120));
 await radioPage.locator(".result.bad").waitFor();
 if ((await radioPage.evaluate(() => window.__gameDebug.profile().money)) !== radioSave.money) fail("A timed-out attempt paid a reward");
@@ -864,6 +923,7 @@ await nevaPage.waitForFunction(() => {
   return visual.wing && visual.wheels.every(Boolean);
 });
 await nevaPage.locator('[data-a="tut-ok"]').click();
+await waitForRaceStart(nevaPage);
 await nevaPage.keyboard.down("KeyW");
 await nevaPage.keyboard.down("KeyA");
 await nevaPage.waitForFunction(() => {
@@ -911,6 +971,7 @@ if (link.searchParams.get("challenge") !== "neva-v1" || Number(link.searchParams
 await nevaPage.locator('[data-a="replay"]').click();
 if ((await nevaPage.evaluate(() => window.__gameDebug.neva()?.cleanSectors)) !== 0 ||
     await nevaPage.locator("dialog.tutorial[open]").count()) fail("Contract replay did not reset its sectors or repeated the tutorial");
+await waitForRaceStart(nevaPage);
 await nevaPage.evaluate(() => window.__gameDebug.setCargoForTest(0));
 await nevaPage.locator(".result.bad").waitFor();
 if ((await nevaPage.evaluate(() => window.__gameDebug.profile().money)) !== resultSave.money) fail("Failed contract paid a bonus");
@@ -925,6 +986,7 @@ await rival.goto(link.href);
 await rival.getByText(`Результат друга · ${resultSave.neva.bestScore} очк.`).waitFor();
 await rival.locator('[data-a="start-neva"]').tap();
 await rival.locator('[data-a="tut-ok"]').tap();
+await waitForRaceStart(rival);
 await rival.evaluate(() => {
   const debug = window.__gameDebug;
   const dest = debug.orderDest();

@@ -47,6 +47,7 @@ import {
 } from "./retention";
 
 const VERIFICATION = import.meta.env.DEV || import.meta.env.MODE === "verification";
+const COUNTDOWN_BEAT_MS = 1000;
 const WORLD_CACHE_LIMIT = 2;
 const NEVA_CAR = CARS.find(({ id }) => id === NEVA_CONTRACT.carId)!;
 const STOCK_UPGRADES: UpgradeLevels = { engine: 0, tires: 0, turbo: 0, suspension: 0 };
@@ -190,6 +191,8 @@ export class Game {
   private camLook = new THREE.Vector3();
   private toastTimer = 0;
   private hudTimer = 0;
+  private countdownLeft = 0;
+  private countdownFrameTime?: number;
   nitroFuel = 100;
   private hNitro!: HTMLElement;
   private readyFlagged = false;
@@ -198,6 +201,9 @@ export class Game {
   private overlay: HTMLElement;
   private screenEl: HTMLElement;
   private hudEl: HTMLElement;
+  private countdownEl!: HTMLElement;
+  private countdownDigit!: HTMLElement;
+  private countdownPulse!: Animation;
   private toastEl!: HTMLElement;
   private mmCanvas!: HTMLCanvasElement;
   private mmBase!: HTMLCanvasElement;
@@ -589,6 +595,8 @@ export class Game {
     this.screenEl.dataset.screen = s;
     if (s !== "playing" && s !== "paused") this.tutorialEl.close();
     this.hudEl.style.display = s === "playing" ? "block" : "none";
+    if (s !== "playing" && s !== "paused" && s !== "settings") this.countdownLeft = 0;
+    this.updateCountdown();
     this.input.setDriving(s === "playing" && !this.tutorialEl.open && this.saveStatus !== "conflict");
     if (s === "title") this.renderTitle();
     else if (s === "career") this.renderCareer();
@@ -634,6 +642,7 @@ export class Game {
     });
     if (conflict) {
       this.tutorialEl.close();
+      this.updateCountdown();
       this.input.setDriving(false);
       this.audio.stopMusic();
       this.screenEl.inert = true;
@@ -886,9 +895,9 @@ export class Game {
   }
 
   private renderCars(): void {
-    const roster = CARS.map(car => `<button type="button" class="garage-tab" data-a="inspect:${car.id}" aria-pressed="false">
+    const roster = CARS.map(car => `<button type="button" class="garage-tab" data-a="inspect:${car.id}" aria-pressed="false" style="--car-paint:#${car.color.toString(16).padStart(6, "0")}">
       <img src="${new URL(`../assets/ui/roster/${car.id}.webp`, import.meta.url).href}" alt="">
-      <span>${car.name.split(" «")[0]}</span>
+      <span class="garage-tab-name">${car.name.split(" «")[0]}</span>
     </button>`).join("");
     this.screenEl.style.display = "grid";
     this.screenEl.innerHTML = `
@@ -947,9 +956,9 @@ export class Game {
       <div class="garage-inspection"><div class="garage-ingress"><span class="car-counter">${String(this.garageIndex + 1).padStart(2, "0")} / ${String(CARS.length).padStart(2, "0")}</span><p class="garage-status">${owned ? "В гараже" : locked ? "Закрыта" : "Доступна"}</p></div>
       <h3 id="garage-car-name">${car.name}</h3>
       <dl class="garage-specs">
-        <div><dt>Скорость</dt><dd>${speedKmh(tuned.topSpeed)} <small>км/ч</small></dd></div>
-        <div><dt>Разгон</dt><dd>${tuned.accel.toFixed(1).replace(".", ",")}</dd></div>
-        <div><dt>Сцепление</dt><dd>${tuned.grip.toFixed(1).replace(".", ",")}</dd></div>
+        <div class="garage-speed"><dt>Скорость</dt><dd>${speedKmh(tuned.topSpeed)} <small>км/ч</small></dd></div>
+        <div class="garage-accel"><dt>Разгон</dt><dd>${tuned.accel.toFixed(1).replace(".", ",")}</dd></div>
+        <div class="garage-grip"><dt>Сцепление</dt><dd>${tuned.grip.toFixed(1).replace(".", ",")}</dd></div>
       </dl>
       ${note ? `<p class="garage-unlock">${note}</p>` : ""}
       ${car.id === NEVA_CAR.id ? `<a class="garage-credit" href="https://sketchfab.com/3d-models/lada-2107-low-poly-5959908e4e304234b22f3436291cb588" target="_blank" rel="noopener">Кузов · Name’s_Been_Classified · CC BY 4.0</a>` : ""}</div>
@@ -1717,11 +1726,9 @@ export class Game {
     this.orders = this.orders.filter((x) => x.id !== o.id);
     if (this.nevaRun) {
       this.car.resetPose(NEVA_START.x, NEVA_START.z, NEVA_START.heading);
-      this.camPos.set(NEVA_START.x + 9, 4.2, NEVA_START.z);
     } else if (this.radioRun) {
       const { x, z, dx, dz } = this.radioRun.course.start;
       this.car.resetPose(x, z, Math.atan2(dx, dz));
-      this.camPos.set(x - dx * 10, 4.2, z - dz * 10);
     } else if (mode === "time-attack" && this.timeAttackCourse) {
       const tangent = { x: Math.sin(this.timeAttackCourse.heading), z: Math.cos(this.timeAttackCourse.heading) };
       const start = trafficLanePosition(this.timeAttackCourse.start, tangent, ROAD_W / 4);
@@ -1757,6 +1764,7 @@ export class Game {
     }
     this.debris = [];
     this.wasInPuddle = false;
+    this.shake = 0;
     this.wreckTimer = -1;
     this.routeGuide = null;
     this.arrowAngle = null;
@@ -1769,10 +1777,29 @@ export class Game {
     this.setTutorialContent(mode);
     this.hCargo.style.display = mode === "delivery" ? "flex" : "none";
     this.audio.ensure();
+    this.countdownLeft = 3 * COUNTDOWN_BEAT_MS;
     this.showScreen("playing");
     this.updateHud();
     if (!(this.nevaRun ? this.profile.neva.seenHelp : this.profile.seenTutorials[mode])) this.showTutorial();
     else this.audio.startMusic();
+  }
+
+  private updateCountdown(now?: number): void {
+    const active = this.screen === "playing" && !this.tutorialEl.open && this.saveStatus !== "conflict";
+    if (active && now !== undefined && this.countdownFrameTime !== undefined) {
+      // A stalled frame must not skip an entire digit.
+      const step = Math.min(now - this.countdownFrameTime, COUNTDOWN_BEAT_MS / 2);
+      this.countdownLeft = Math.max(0, this.countdownLeft - step);
+    }
+    this.countdownFrameTime = active ? now : undefined;
+    this.countdownEl.hidden = !active || this.countdownLeft === 0;
+    if (this.countdownEl.hidden) return;
+
+    const digit = Math.ceil(this.countdownLeft / COUNTDOWN_BEAT_MS);
+    const label = String(digit);
+    if (this.countdownDigit.textContent !== label) this.countdownDigit.textContent = label;
+    // Scrub the pulse with the race countdown so pausing also freezes the animation.
+    this.countdownPulse.currentTime = digit * COUNTDOWN_BEAT_MS - this.countdownLeft;
   }
 
   private togglePause(): void {
@@ -1846,6 +1873,20 @@ export class Game {
     pauseBtn.addEventListener("click", () => this.togglePause());
     this.hudEl.appendChild(pauseBtn);
 
+    this.countdownEl = el("div", "race-countdown");
+    this.countdownEl.hidden = true;
+    this.countdownEl.setAttribute("aria-hidden", "true");
+    this.countdownDigit = el("span", "race-countdown-digit");
+    this.countdownEl.appendChild(this.countdownDigit);
+    this.hudEl.appendChild(this.countdownEl);
+    this.countdownPulse = this.countdownDigit.animate([
+      { opacity: 0, transform: "scale(1.45)", offset: 0, easing: "ease-out" },
+      { opacity: 1, transform: "scale(1)", offset: 0.2 },
+      { opacity: 1, transform: "scale(1)", offset: 0.78, easing: "ease-in" },
+      { opacity: 0, transform: "scale(0.92)", offset: 1 },
+    ], { duration: COUNTDOWN_BEAT_MS, fill: "both" });
+    this.countdownPulse.pause();
+
     this.tutorialEl = document.createElement("dialog");
     this.tutorialEl.className = "tutorial";
     this.tutorialEl.setAttribute("aria-labelledby", "tutorial-title");
@@ -1858,6 +1899,7 @@ export class Game {
       else this.profile.seenTutorials[this.mode] = true;
       this.persistProfile();
       this.tutorialEl.close();
+      this.updateCountdown();
       if (this.screen === "playing" && this.saveStatus !== "conflict") {
         this.input.setDriving(true);
         this.audio.startMusic();
@@ -1870,6 +1912,7 @@ export class Game {
     if (this.tutorialEl.open || this.saveStatus === "conflict") return;
     this.input.setDriving(false);
     this.tutorialEl.showModal();
+    this.updateCountdown();
   }
 
   private setTutorialContent(mode: ActivityMode): void {
@@ -2041,7 +2084,7 @@ export class Game {
     this.renderFrame(0);
     this.running = true;
     this.clock.start();
-    const loop = () => {
+    const loop = (now: number) => {
       if (!this.running) return;
       this.raf = requestAnimationFrame(loop);
       this.tickCount++;
@@ -2055,6 +2098,7 @@ export class Game {
         n++;
       }
       if (this.acc >= step) this.acc = 0;
+      if (this.countdownLeft > 0) this.updateCountdown(now);
       this.renderFrame(dt);
     };
     this.raf = requestAnimationFrame(loop);
@@ -2074,11 +2118,12 @@ export class Game {
 
   stop(): void {
     this.running = false;
+    this.countdownFrameTime = undefined;
     cancelAnimationFrame(this.raf);
   }
 
   private fixedStep(dt: number): void {
-    if (this.screen !== "playing" || !this.order || this.tutorialEl.open || this.saveStatus === "conflict") {
+    if (this.screen !== "playing" || !this.order || this.countdownLeft > 0 || this.tutorialEl.open || this.saveStatus === "conflict") {
       this.audio.updateEngine(0, 0, 0);
       return;
     }
@@ -2823,7 +2868,7 @@ export class Game {
       height,
       this.car.pos.z - fwd.z * dist
     );
-    const k = 1 - Math.exp(-dt * 4.6);
+    const k = this.countdownLeft > 0 ? 1 : 1 - Math.exp(-dt * 4.6);
     this.camPos.lerp(desired, k);
     this.camera.position.copy(this.camPos);
     if (this.shake > 0.01) {
